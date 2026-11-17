@@ -48,4 +48,10 @@ export const ja = {
   missNote: "一致なし。見出し語一覧の続き：",
   startHint: "語を入力してください。↑ ↓ で見出し語を選び、Enter で引きます。",
   lookupFailed: (reason: string) => `検索に失敗しました：${reason}`,
+  updateAvailable: (version: string) => `OpenDict ${version} が公開されています。`,
+  updateInstall: "インストールして再起動",
+  updateDownloading: (version: string, percent: number | null) =>
+    percent === null ? `OpenDict ${version} をダウンロード中…` : `OpenDict ${version} をダウンロード中… ${percent}%`,
+  updateInstalling: (version: string) => `OpenDict ${version} をインストール中…`,
+  updateFailed: (version: string, reason: string) => `OpenDict ${version} をインストールできませんでした：${reason}`,
 } satisfies Catalogue;

@@ -48,4 +48,10 @@ export const zhCN = {
   missNote: "没有匹配。词头表里接下来的词：",
   startHint: "输入词头。↑ ↓ 选词，Enter 查词。",
   lookupFailed: (reason: string) => `查词失败：${reason}`,
+  updateAvailable: (version: string) => `OpenDict ${version} 已发布。`,
+  updateInstall: "安装并重新启动",
+  updateDownloading: (version: string, percent: number | null) =>
+    percent === null ? `正在下载 OpenDict ${version}…` : `正在下载 OpenDict ${version}… ${percent}%`,
+  updateInstalling: (version: string) => `正在安装 OpenDict ${version}…`,
+  updateFailed: (version: string, reason: string) => `无法安装 OpenDict ${version}：${reason}`,
 } satisfies Catalogue;

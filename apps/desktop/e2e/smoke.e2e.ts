@@ -72,6 +72,9 @@ test("typing a headword shows its Entry in a sandboxed frame", async () => {
   // The status line fills in once the Library has been opened.
   await page.waitForFunction(() => Boolean(document.querySelector("footer")?.textContent?.trim()), null, { timeout: 30_000 });
   const search = page.getByRole("combobox", { name: "Type a word" });
+  // Key presses sent over DevTools are sometimes dropped when the field was focused by autoFocus
+  // before DevTools attached; a real click first makes WebView2 deliver them.
+  await search.click();
   await search.fill("serendipity");
   await search.press("Enter");
 

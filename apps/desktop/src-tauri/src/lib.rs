@@ -14,7 +14,12 @@ pub const LIBRARY_FOLDER_ENV: &str = "OPENDICT_LIBRARY_FOLDER";
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_process::init())
         .setup(|app| {
+            // Updates come from GitHub Releases, checked by the interface (see UpdateNotice.tsx).
+            #[cfg(desktop)]
+            app.handle()
+                .plugin(tauri_plugin_updater::Builder::new().build())?;
             let library_file = app.path().app_data_dir()?.join("library.json");
             let override_folder = std::env::var_os(LIBRARY_FOLDER_ENV).map(Into::into);
             app.manage(AppState::load(&library_file, override_folder));

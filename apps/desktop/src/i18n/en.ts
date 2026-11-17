@@ -47,6 +47,12 @@ export const en = {
   missNote: "No match. Next in the headword index:",
   startHint: "Type a word. ↑ and ↓ move through the headwords; Enter looks one up.",
   lookupFailed: (reason: string) => `The lookup failed: ${reason}`,
+  updateAvailable: (version: string) => `OpenDict ${version} is available.`,
+  updateInstall: "Install and restart",
+  updateDownloading: (version: string, percent: number | null) =>
+    percent === null ? `Downloading OpenDict ${version}…` : `Downloading OpenDict ${version}… ${percent}%`,
+  updateInstalling: (version: string) => `Installing OpenDict ${version}…`,
+  updateFailed: (version: string, reason: string) => `OpenDict ${version} could not be installed: ${reason}`,
 };
 
 export type Catalogue = typeof en;
