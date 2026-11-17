@@ -7,11 +7,12 @@
 //! behind the same interface.
 
 use crate::format::DictionaryReader;
+use crate::normalization::normalize;
 
-/// The key a headword is filed under in index order. The same function orders the index
-/// and places a query in it.
+/// The key a headword is filed under in index order: its [`normalize`]d form. The same
+/// function orders the index and places a query in it.
 pub fn index_key(headword: &str) -> String {
-    headword.to_lowercase()
+    normalize(headword)
 }
 
 /// One headword in index order, with the key it is filed under.
