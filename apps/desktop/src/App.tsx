@@ -5,6 +5,7 @@ import { NavButtons } from "./components/NavButtons";
 import { RecentLookups } from "./components/RecentLookups";
 import { sectionId, ThumbIndex } from "./components/ThumbIndex";
 import { EmptyLibrary, LibraryPage, OutlineButton, type LibraryActions } from "./components/LibraryPage";
+import { ReadingSettings } from "./components/ReadingSettings";
 import { SearchField } from "./components/SearchField";
 import { UpdateNotice } from "./components/UpdateNotice";
 import { WordBookPage, type WordBookActions } from "./components/WordBookPage";
@@ -26,6 +27,7 @@ import {
   removeLibraryFolder,
   rescanLibrary,
   setAllowNetwork,
+  setAsAuthored,
   setDictionaryEnabled,
   chooseWordBook,
   createWordBook,
@@ -44,6 +46,7 @@ import {
   type Suggestion,
   type WordBooks,
 } from "./lib/ipc";
+import { useAppearance, type Scheme } from "./lib/useAppearance";
 import { MOD, withMod } from "./lib/platform";
 import { canStep, emptyTrail, step, visit } from "./lib/trail";
 import { useHeadwordColumn } from "./lib/useHeadwordColumn";
@@ -91,6 +94,7 @@ export function App() {
     page.kind === "found" && currentBook ? currentBook.words.findIndex((word) => word.headword === page.headword) : -1;
   const pageRef = useRef<HTMLElement>(null);
   const column = useHeadwordColumn();
+  const appearance = useAppearance();
   const { refresh } = column;
   /** Counts page requests, so only the latest one lands. */
   const pageRequests = useRef(0);
@@ -402,6 +406,46 @@ export function App() {
     }
   }
 
+  /** Changes one Entry on the page, if it is still there. */
+  function updateEntry(dictionaryId: string, change: Partial<Entry>) {
+    setPage((current) =>
+      current.kind === "found"
+        ? { ...current, entries: current.entries.map((e) => (e.dictionaryId === dictionaryId ? { ...e, ...change } : e)) }
+        : current,
+    );
+  }
+
+  async function toggleNetwork(entry: Entry) {
+    const allow = !entry.allowNetwork;
+    try {
+      await setAllowNetwork(entry.dictionaryId, allow);
+    } catch {
+      return; // the switch stays as it was: the preference was not saved
+    }
+    updateEntry(entry.dictionaryId, { allowNetwork: allow });
+  }
+
+  async function toggleAsAuthored(entry: Entry) {
+    const asAuthored = !entry.asAuthored;
+    try {
+      await setAsAuthored(entry.dictionaryId, asAuthored);
+    } catch {
+      return;
+    }
+    updateEntry(entry.dictionaryId, { asAuthored });
+  }
+
+  const reading = {
+    ...appearance,
+    /** Every Dictionary at once, the ones on the page included. */
+    setAllAsAuthored: async (asAuthored: boolean) => {
+      await appearance.setAllAsAuthored(asAuthored);
+      setPage((current) =>
+        current.kind === "found" ? { ...current, entries: current.entries.map((e) => ({ ...e, asAuthored })) } : current,
+      );
+    },
+  };
+
   const actions: LibraryActions = {
     addFolder: () => change(addLibraryFolder, () => setView("library")),
     removeFolder: (path) => change(() => removeLibraryFolder(path)),
@@ -520,7 +564,10 @@ export function App() {
       <div className="grid min-h-0 grid-cols-[minmax(0,1fr)_auto] bg-paper">
         <main ref={pageRef} aria-label={t.pageLabel} className="min-h-0 overflow-y-auto pt-[18px] pr-[30px] pb-12 pl-xl">
           {view === "library" && library ? (
-            <LibraryPage library={library} busy={busy} notice={notice} actions={actions} />
+            <>
+              <LibraryPage library={library} busy={busy} notice={notice} actions={actions} />
+              <ReadingSettings controls={reading} />
+            </>
           ) : view === "wordBook" ? (
             <WordBookPage wordBooks={wordBooks ?? { books: [], current: null }} busy={busy} notice={bookNotice} actions={bookActions} />
           ) : (
@@ -531,6 +578,9 @@ export function App() {
               busy={busy}
               notice={notice}
               onAddFolder={actions.addFolder}
+              reading={{ scheme: appearance.scheme, textSize: appearance.appearance.textSize }}
+              onToggleNetwork={(entry) => void toggleNetwork(entry)}
+              onToggleAsAuthored={(entry) => void toggleAsAuthored(entry)}
               onLookUp={followLink}
               onSearch={search}
               recent={<RecentLookups words={history} onPick={(word) => void commit(word)} />}
@@ -573,6 +623,9 @@ function PageContent({
   busy,
   notice,
   onAddFolder,
+  reading,
+  onToggleNetwork,
+  onToggleAsAuthored,
   onLookUp,
   onSearch,
   recent,
@@ -586,6 +639,9 @@ function PageContent({
   busy: boolean;
   notice: string | null;
   onAddFolder: () => void;
+  reading: Reading;
+  onToggleNetwork: (entry: Entry) => void;
+  onToggleAsAuthored: (entry: Entry) => void;
   onLookUp: (headword: string) => void;
   onSearch: (text: string) => void;
   /** Recent lookups, offered on the empty page. */
@@ -603,6 +659,9 @@ function PageContent({
           headword={page.headword}
           entries={page.entries}
           asked={asked}
+          reading={reading}
+          onToggleNetwork={onToggleNetwork}
+          onToggleAsAuthored={onToggleAsAuthored}
           onLookUp={onLookUp}
           saved={saved}
           onToggleSave={onToggleSave}
@@ -639,6 +698,12 @@ function PageContent({
   }
 }
 
+/** What the page needs to know of the reader's appearance settings. */
+interface Reading {
+  scheme: Scheme;
+  textSize: number;
+}
+
 /**
  * The page head and one section per answering Dictionary. `asked` is how many Dictionaries
  * the Lookup ran against. An `entry://` link in any Entry looks its headword up; a
@@ -646,21 +711,27 @@ function PageContent({
  */
 function EntryPage({
   headword,
-  entries: initial,
+  entries,
   asked,
   onLookUp,
+  reading,
+  onToggleNetwork,
+  onToggleAsAuthored,
   saved,
   onToggleSave,
 }: {
   headword: string;
   entries: Entry[];
   asked: number;
+  reading: Reading;
+  onToggleNetwork: (entry: Entry) => void;
+  onToggleAsAuthored: (entry: Entry) => void;
   onLookUp: (headword: string) => void;
   saved: boolean;
   onToggleSave: () => void;
 }) {
   const { t } = useI18n();
-  const [entries, setEntries] = useState(initial);
+  const dark = reading.scheme === "dark";
   const pronunciation = entries.find((entry) => entry.pronunciation)?.pronunciation;
   const sound = firstSound(entries);
   const [folded, setFolded] = useState<ReadonlySet<string>>(new Set());
@@ -688,16 +759,6 @@ function EntryPage({
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [sound]);
 
-  async function toggleNetwork(entry: Entry) {
-    const allow = !entry.allowNetwork;
-    try {
-      await setAllowNetwork(entry.dictionaryId, allow);
-    } catch {
-      return; // the switch stays as it was: the preference was not saved
-    }
-    setEntries((current) => current.map((e) => (e.dictionaryId === entry.dictionaryId ? { ...e, allowNetwork: allow } : e)));
-  }
-
   return (
     <article>
       <div className="flex flex-wrap items-baseline gap-x-md gap-y-xs border-b-[3px] border-double border-rule pb-2.5">
@@ -711,6 +772,8 @@ function EntryPage({
       </div>
       {entries.map((entry) => {
         const open = !folded.has(entry.dictionaryId);
+        // In the dark theme an Entry is recoloured, or keeps its own white page as authored.
+        const whitePage = dark && entry.asAuthored;
         const body = `${sectionId(entry.dictionaryId)}-body`;
         return (
           <section
@@ -722,19 +785,24 @@ function EntryPage({
           >
             <div className="flex h-9 items-center gap-sm">
               <h2 className="-ml-[7px] min-w-0 flex-1 truncate text-title font-bold">【{entry.dictionaryTitle}】</h2>
-              <NetworkSwitch allowed={entry.allowNetwork} onToggle={() => void toggleNetwork(entry)} />
+              {dark ? <AsAuthoredSwitch on={entry.asAuthored} onToggle={() => onToggleAsAuthored(entry)} /> : null}
+              <NetworkSwitch allowed={entry.allowNetwork} onToggle={() => onToggleNetwork(entry)} />
               <FoldButton open={open} controls={body} onToggle={() => toggleFold(entry.dictionaryId)} />
             </div>
             {/* Folded, the Entry stays loaded out of sight, so unfolding shows it as it was. */}
             <div id={body} hidden={!open} className="pb-3.5">
-              {/* A new frame when the switch changes, so the document reloads under its new policy. */}
-              <EntryFrame
-                key={String(entry.allowNetwork)}
-                dictionaryTitle={entry.dictionaryTitle}
-                src={entry.src}
-                onLink={onLookUp}
-                onSound={playSound}
-              />
+              <div className={whitePage ? "max-w-[860px] rounded-sharp bg-india-paper px-3 pt-2.5 pb-3" : undefined}>
+                {/* A new frame when the switch changes, so the document reloads under its new policy. */}
+                <EntryFrame
+                  key={String(entry.allowNetwork)}
+                  dictionaryTitle={entry.dictionaryTitle}
+                  src={entry.src}
+                  onLink={onLookUp}
+                  onSound={playSound}
+                  textSize={reading.textSize}
+                  recolour={dark && !entry.asAuthored}
+                />
+              </div>
             </div>
           </section>
         );
@@ -836,6 +904,26 @@ function SaveButton({ saved, onToggle }: { saved: boolean; onToggle: () => void 
       <kbd aria-hidden="true" className="font-sans text-label text-current opacity-70">
         {MOD} D
       </kbd>
+    </button>
+  );
+}
+
+/** The dark theme's switch in the section header: pressed when the Entry keeps its own white page. */
+function AsAuthoredSwitch({ on, onToggle }: { on: boolean; onToggle: () => void }) {
+  const { t } = useI18n();
+  return (
+    <button
+      type="button"
+      aria-pressed={on}
+      aria-label={t.asAuthored}
+      title={on ? t.shownAsAuthored : t.shownRecoloured}
+      onClick={onToggle}
+      className="grid size-6.5 flex-none place-items-center rounded-sharp text-text-secondary hover:bg-shade hover:text-text aria-pressed:bg-text aria-pressed:text-paper"
+    >
+      <svg className="size-4 fill-none stroke-current stroke-[1.2]" viewBox="0 0 16 16" aria-hidden="true">
+        <path d="M4 2.5h5.5L12 5v8.5H4z" />
+        <path d="M9.5 2.5V5H12" />
+      </svg>
     </button>
   );
 }

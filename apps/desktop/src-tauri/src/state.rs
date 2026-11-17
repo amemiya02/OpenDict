@@ -5,6 +5,7 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+pub use opendict_core::Theme;
 use opendict_core::{
     Error as CoreError, ExportFormat, History, IndexState, Library, Move, OpenError, Preferences,
     Registration, SavedFrom, Suggestion, WordBookId, WordBooks,
@@ -51,6 +52,23 @@ pub struct EntryView {
     pub sound: Option<String>,
     /// How the headword is said, where the Entry shows that plainly. Plain text.
     pub pronunciation: Option<String>,
+    /// In the dark theme, whether the Entry keeps its Dictionary's own white page rather
+    /// than being recoloured.
+    pub as_authored: bool,
+}
+
+/// How the page reads: the reader's theme, text size and zoom.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AppearanceView {
+    pub theme: Theme,
+    /// In the dark theme, every Dictionary shows as authored unless the reader chose
+    /// otherwise for it.
+    pub all_as_authored: bool,
+    /// The base text size of Entries, in CSS pixels.
+    pub text_size: u32,
+    /// Page zoom, in percent.
+    pub zoom: u32,
 }
 
 /// What the headword column offers for a query: the Lookup result shape settled by the
@@ -291,6 +309,7 @@ impl AppState {
             .map(|entry| EntryView {
                 src: entry_protocol::entry_url(&entry.dictionary_id, headword),
                 allow_network: self.allows_network(&entry.dictionary_id),
+                as_authored: self.as_authored(&entry.dictionary_id),
                 sound: entry.sounds().into_iter().next(),
                 pronunciation: opendict_core::pronunciation(&entry.html),
                 dictionary_id: entry.dictionary_id,
@@ -385,15 +404,78 @@ impl AppState {
     }
 
     pub fn set_allow_network(&self, dictionary_id: &str, allow: bool) -> Result<(), String> {
+        self.change_preferences(|p| p.set_allows_network(dictionary_id, allow))
+    }
+
+    /// The reading preferences. If the preferences cannot be read, the defaults.
+    pub fn appearance(&self) -> AppearanceView {
+        let preferences = self
+            .inner
+            .preferences
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        match preferences.as_ref() {
+            Ok(p) => AppearanceView {
+                theme: p.theme(),
+                all_as_authored: p.all_as_authored(),
+                text_size: p.text_size(),
+                zoom: p.zoom(),
+            },
+            Err(_) => AppearanceView {
+                theme: Theme::System,
+                all_as_authored: false,
+                text_size: opendict_core::DEFAULT_TEXT_SIZE,
+                zoom: opendict_core::DEFAULT_ZOOM,
+            },
+        }
+    }
+
+    /// Whether, in the dark theme, the Dictionary shows as authored. If the preferences
+    /// cannot be read, every Dictionary is recoloured.
+    pub fn as_authored(&self, dictionary_id: &str) -> bool {
+        let preferences = self
+            .inner
+            .preferences
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        preferences
+            .as_ref()
+            .is_ok_and(|p| p.as_authored(dictionary_id))
+    }
+
+    pub fn set_as_authored(&self, dictionary_id: &str, as_authored: bool) -> Result<(), String> {
+        self.change_preferences(|p| p.set_as_authored(dictionary_id, as_authored))
+    }
+
+    pub fn set_all_as_authored(&self, as_authored: bool) -> Result<(), String> {
+        self.change_preferences(|p| p.set_all_as_authored(as_authored))
+    }
+
+    pub fn set_theme(&self, theme: Theme) -> Result<(), String> {
+        self.change_preferences(|p| p.set_theme(theme))
+    }
+
+    /// Returns the size as set, within readable limits.
+    pub fn set_text_size(&self, pixels: u32) -> Result<u32, String> {
+        self.change_preferences(|p| p.set_text_size(pixels))
+    }
+
+    /// Returns the zoom as set, within limits.
+    pub fn set_zoom(&self, percent: u32) -> Result<u32, String> {
+        self.change_preferences(|p| p.set_zoom(percent))
+    }
+
+    fn change_preferences<T>(
+        &self,
+        change: impl FnOnce(&mut Preferences) -> opendict_core::Result<T>,
+    ) -> Result<T, String> {
         let mut preferences = self
             .inner
             .preferences
             .lock()
             .unwrap_or_else(|e| e.into_inner());
         match preferences.as_mut() {
-            Ok(p) => p
-                .set_allows_network(dictionary_id, allow)
-                .map_err(|e| e.to_string()),
+            Ok(p) => change(p).map_err(|e| e.to_string()),
             Err(reason) => Err(reason.clone()),
         }
     }
@@ -909,7 +991,8 @@ mod tests {
                 "src": entry_protocol::entry_url(id, "serendipity"),
                 "allowNetwork": false,
                 "sound": null,
-                "pronunciation": null
+                "pronunciation": null,
+                "asAuthored": false
             }])
         );
     }
@@ -1293,5 +1376,55 @@ mod tests {
             .collect();
 
         assert_eq!(said, [Some("/ˈserɪf/".to_owned()), None]);
+    }
+
+    #[test]
+    fn the_reading_preferences_are_kept_in_the_data_directory() {
+        let data = tempfile::tempdir().unwrap();
+        let library_file = data.path().join("library.json");
+        let state = AppState::load(&library_file, None, data.path());
+        assert_eq!(
+            state.appearance(),
+            AppearanceView {
+                theme: Theme::System,
+                all_as_authored: false,
+                text_size: 16,
+                zoom: 100
+            }
+        );
+
+        state.set_theme(Theme::Dark).unwrap();
+        state.set_all_as_authored(true).unwrap();
+        assert_eq!(state.set_text_size(99).unwrap(), 32);
+        assert_eq!(state.set_zoom(150).unwrap(), 150);
+
+        let again = AppState::load(&library_file, None, data.path());
+        assert_eq!(
+            again.appearance(),
+            AppearanceView {
+                theme: Theme::Dark,
+                all_as_authored: true,
+                text_size: 32,
+                zoom: 150
+            }
+        );
+    }
+
+    #[test]
+    fn the_interface_sends_and_receives_themes_as_words() {
+        assert_eq!(
+            serde_json::to_value(Theme::System).unwrap(),
+            json!("system")
+        );
+        assert_eq!(
+            serde_json::from_value::<Theme>(json!("dark")).unwrap(),
+            Theme::Dark
+        );
+        let data = tempfile::tempdir().unwrap();
+        let state = AppState::load(&data.path().join("library.json"), None, data.path());
+        assert_eq!(
+            serde_json::to_value(state.appearance()).unwrap(),
+            json!({"theme": "system", "allAsAuthored": false, "textSize": 16, "zoom": 100})
+        );
     }
 }

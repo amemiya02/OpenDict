@@ -20,7 +20,7 @@ const library: Library = {
 const headwords = ["apple", "banter", "serendipity"];
 
 function entry(dictionaryId: string, dictionaryTitle: string, headword: string): Entry {
-  return { dictionaryId, dictionaryTitle, src: `http://odentry.localhost/${dictionaryId}/?headword=${headword}`, allowNetwork: false, sound: null, pronunciation: null };
+  return { dictionaryId, dictionaryTitle, src: `http://odentry.localhost/${dictionaryId}/?headword=${headword}`, allowNetwork: false, sound: null, pronunciation: null, asAuthored: false };
 }
 
 /** 2026-11-17 09:30 UTC */

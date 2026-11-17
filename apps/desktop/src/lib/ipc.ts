@@ -16,6 +16,21 @@ export interface Entry {
   sound: string | null;
   /** How the headword is said, as this Entry gives it, if it shows that plainly (plain text). */
   pronunciation: string | null;
+  /** In the dark theme, whether the Entry keeps its Dictionary's own white page rather than being recoloured. */
+  asAuthored: boolean;
+}
+
+export type Theme = "system" | "light" | "dark";
+
+/** How the page reads; the shell keeps it in the reader's preferences. */
+export interface Appearance {
+  theme: Theme;
+  /** In the dark theme, every Dictionary shows as authored unless the reader chose otherwise for it. */
+  allAsAuthored: boolean;
+  /** The base text size of Entries, in CSS pixels: the size of text a Dictionary does not size itself. */
+  textSize: number;
+  /** Page zoom, in percent. */
+  zoom: number;
 }
 
 /** One headword in the headword column. */
@@ -187,6 +202,34 @@ export async function registerDictionary(path: string, email: string, code: stri
 
 export function setAllowNetwork(dictionaryId: string, allow: boolean): Promise<void> {
   return invoke<void>("set_allow_network", { dictionaryId, allow });
+}
+
+export function getAppearance(): Promise<Appearance> {
+  return invoke<Appearance>("appearance");
+}
+
+/** Saves the theme; the shell also gives it to the windows. */
+export function setTheme(theme: Theme): Promise<void> {
+  return invoke<void>("set_theme", { theme });
+}
+
+export function setAsAuthored(dictionaryId: string, asAuthored: boolean): Promise<void> {
+  return invoke<void>("set_as_authored", { dictionaryId, asAuthored });
+}
+
+/** Shows every Dictionary as authored, or recoloured, in the dark theme, replacing choices for single ones. */
+export function setAllAsAuthored(asAuthored: boolean): Promise<void> {
+  return invoke<void>("set_all_as_authored", { asAuthored });
+}
+
+/** Resolves to the size as saved, within the shell's limits. */
+export function setTextSize(size: number): Promise<number> {
+  return invoke<number>("set_text_size", { size });
+}
+
+/** Zooms the window's page; resolves to the zoom as saved, within the shell's limits. */
+export function setZoom(percent: number): Promise<number> {
+  return invoke<number>("set_zoom", { percent });
 }
 
 /** A Headword saved in a Word Book. */
