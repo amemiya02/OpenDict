@@ -11,6 +11,8 @@ export interface Entry {
   src: string;
   /** Whether the reader allowed this Dictionary network access. */
   allowNetwork: boolean;
+  /** How the headword is said, as this Entry gives it, if it shows that plainly (plain text). */
+  pronunciation: string | null;
 }
 
 export interface LibraryFolder {

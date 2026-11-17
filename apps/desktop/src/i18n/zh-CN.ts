@@ -7,7 +7,7 @@ export const zhCN = {
   lookUp: "查词",
   pageLabel: "词条",
   entryFrameTitle: (dictionary: string) => `${dictionary} 的词条`,
-  answered: (n: number) => `${n} 本词典有此词条`,
+  answered: (n: number, all: number) => `${all} 本词典中 ${n} 本有此词条`,
   notFound: (query: string) => `没有找到「${query}」。`,
   libraryUnavailable: (reason: string) => `无法打开词库：${reason}`,
   libraryCount: (n: number) => `${n} 本词典`,

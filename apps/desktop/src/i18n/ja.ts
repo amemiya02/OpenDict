@@ -7,7 +7,7 @@ export const ja = {
   lookUp: "検索",
   pageLabel: "項目",
   entryFrameTitle: (dictionary: string) => `${dictionary} の項目`,
-  answered: (n: number) => `辞書 ${n} 冊に項目があります`,
+  answered: (n: number, all: number) => `${all} 冊中 ${n} 冊に項目があります`,
   notFound: (query: string) => `「${query}」は見つかりませんでした。`,
   libraryUnavailable: (reason: string) => `ライブラリを開けませんでした：${reason}`,
   libraryCount: (n: number) => `辞書 ${n} 冊`,

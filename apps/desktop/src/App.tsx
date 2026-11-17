@@ -133,7 +133,14 @@ function PageContent({
   const { t } = useI18n();
   switch (page.kind) {
     case "found":
-      return <EntryPage key={page.headword} headword={page.headword} entries={page.entries} />;
+      return (
+        <EntryPage
+          key={page.headword}
+          headword={page.headword}
+          entries={page.entries}
+          asked={library?.dictionaries.filter((d) => d.enabled).length ?? page.entries.length}
+        />
+      );
     case "missing":
       return <Lead>{t.notFound(page.query)}</Lead>;
     case "failed":
@@ -160,10 +167,11 @@ function PageContent({
   }
 }
 
-/** The page head and one section per answering Dictionary. */
-function EntryPage({ headword, entries: initial }: { headword: string; entries: Entry[] }) {
+/** The page head and one section per answering Dictionary. `asked` is how many Dictionaries the Lookup ran against. */
+function EntryPage({ headword, entries: initial, asked }: { headword: string; entries: Entry[]; asked: number }) {
   const { t } = useI18n();
   const [entries, setEntries] = useState(initial);
+  const pronunciation = entries.find((entry) => entry.pronunciation)?.pronunciation;
 
   async function toggleNetwork(entry: Entry) {
     const allow = !entry.allowNetwork;
@@ -179,7 +187,8 @@ function EntryPage({ headword, entries: initial }: { headword: string; entries: 
     <article>
       <div className="flex flex-wrap items-baseline gap-x-md gap-y-xs border-b-[3px] border-double border-rule pb-2.5">
         <h1 className="-ml-3.5 font-serif text-display font-bold [overflow-wrap:anywhere]">【{headword}】</h1>
-        <span className="text-[12px] text-text-secondary">{t.answered(entries.length)}</span>
+        {pronunciation ? <span className="font-serif text-[16px] text-text-secondary">{pronunciation}</span> : null}
+        <span className="text-[12px] text-text-secondary">{t.answered(entries.length, Math.max(asked, entries.length))}</span>
       </div>
       {entries.map((entry) => (
         <section key={entry.dictionaryId} aria-label={entry.dictionaryTitle} className="border-rule [&+&]:border-t">

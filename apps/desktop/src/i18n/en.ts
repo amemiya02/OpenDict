@@ -6,7 +6,7 @@ export const en = {
   lookUp: "Look up",
   pageLabel: "Entries",
   entryFrameTitle: (dictionary: string) => `Entry from ${dictionary}`,
-  answered: (n: number) => (n === 1 ? "in 1 dictionary" : `in ${n} dictionaries`),
+  answered: (n: number, all: number) => (all === 1 ? "in 1 of 1 dictionary" : `in ${n} of ${all} dictionaries`),
   notFound: (query: string) => `Nothing found for “${query}”.`,
   libraryUnavailable: (reason: string) => `The Library could not be opened: ${reason}`,
   libraryCount: (n: number) => (n === 1 ? "1 dictionary" : `${n} dictionaries`),
