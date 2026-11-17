@@ -18,6 +18,27 @@ pub enum Error {
     /// The preferences file could not be read or written.
     #[error("cannot read or write the preferences file {file}: {reason}")]
     Preferences { file: PathBuf, reason: String },
+
+    /// The Word Books file could not be read or written.
+    #[error("cannot read or write the Word Books file {file}: {reason}")]
+    WordBooks { file: PathBuf, reason: String },
+
+    /// A Word Book could not be exported to this file.
+    #[error("cannot export to {file}: {reason}")]
+    Export { file: PathBuf, reason: String },
+
+    /// There is no Word Book with this id.
+    #[error("there is no Word Book {0}")]
+    UnknownWordBook(u64),
+
+    /// The headword is not in the Word Book.
+    #[error("{0} is not in the Word Book")]
+    NotInWordBook(String),
+
+    /// A Word Book needs a name that is not blank.
+    #[error("a Word Book needs a name")]
+    BlankWordBookName,
+
     /// No Dictionary in the Library has this key.
     #[error("no Dictionary in the Library has the key {0}")]
     UnknownDictionary(String),

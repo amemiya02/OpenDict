@@ -11,6 +11,7 @@ mod preferences;
 mod pronunciation;
 mod registrations;
 mod scan;
+mod word_books;
 
 pub use error::{Error, Result};
 pub use format::{
@@ -24,3 +25,4 @@ pub use library::{
 };
 pub use preferences::Preferences;
 pub use pronunciation::pronunciation;
+pub use word_books::{ExportFormat, SavedFrom, SavedWord, WordBook, WordBookId, WordBooks};
