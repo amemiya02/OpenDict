@@ -27,6 +27,12 @@ Do this once, before the first release. The release workflow refuses to run unti
    gh secret set TAURI_SIGNING_PRIVATE_KEY_PASSWORD
    ```
 
+   In PowerShell, `<` does not work and piping the file (`Get-Content … | gh secret set …`) adds a byte-order mark that breaks signing ("Invalid symbol 239, offset 0"). Let cmd redirect the file instead:
+
+   ```powershell
+   cmd /c "gh secret set TAURI_SIGNING_PRIVATE_KEY < %USERPROFILE%\.tauri\opendict.key"
+   ```
+
    (or in the GitHub web interface: Settings → Secrets and variables → Actions). The secret holds the contents of the key file, not its path.
 
 5. **Let workflows write releases.** The workflow asks for `contents: write`. If the repository's Settings → Actions → General → Workflow permissions is set to read-only and the release job fails with a 403, switch it to "Read and write permissions".
