@@ -47,6 +47,8 @@ function fakeShell(stored: Partial<Appearance> = {}, authored: string[] = []) {
       case "history":
       case "record_lookup":
         return [];
+      case "window_chrome":
+        return { platform: "windows", material: null };
     }
     if (command.startsWith("plugin:")) return null; // the updater, which has nothing to offer
     changes.push({ command, args });

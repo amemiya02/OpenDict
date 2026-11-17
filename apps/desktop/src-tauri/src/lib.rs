@@ -43,14 +43,15 @@ pub fn run() {
             };
             let library_file = data_dir.join("library.json");
             let state = AppState::load(&library_file, override_folder, &data_dir);
-            // The reader's theme and zoom from the last session, before the page shows.
             let appearance = state.appearance();
-            commands::apply_theme(app.handle(), appearance.theme);
-            commands::apply_zoom(app.handle(), appearance.zoom);
             commands::start_indexing(app.handle(), &state);
             app.manage(state);
             let chrome = window::build_main(app)?;
             app.manage(chrome);
+            // The reader's theme and zoom from the last session, as soon as the window is
+            // there: its frame and Mica follow the theme too.
+            commands::apply_theme(app.handle(), appearance.theme);
+            commands::apply_zoom(app.handle(), appearance.zoom);
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![

@@ -441,7 +441,7 @@ test("in the dark theme Entries are recoloured unless shown as authored; text si
   let reading = await openReading();
   await reading.getByRole("radio", { name: "Dark" }).check();
   await page.waitForFunction(() => document.documentElement.dataset.theme === "dark");
-  assert.equal(await page.evaluate(() => getComputedStyle(document.body).backgroundColor), "rgb(17, 26, 48)", "bookcloth navy");
+  assert.equal(await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue("--paper").trim()), "#111a30", "bookcloth navy");
   // The shell gave the window the theme as well, so its native frame (and Mica) match the page.
   assert.equal(await invoke("plugin:window|theme", { label: "main" }), "dark");
   await reading.getByRole("button", { name: "Larger text" }).click();
