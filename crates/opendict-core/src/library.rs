@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 use crate::error::{Error, Result};
 use crate::format::{DictionaryFormat, DictionaryReader, MdictFormat, OpenError, RawRecord};
 use crate::index::{HeadwordIndex, IndexedHeadword, MemoryIndex, Start, index_key};
+use crate::lemma;
 use crate::scan::{self, Unit};
 
 /// Every Dictionary the reader has made available: the Dictionaries found in their
@@ -365,20 +366,65 @@ impl Library {
     /// order, like a page of a printed index. An empty query browses the index from its
     /// start.
     pub fn suggest(&self, query: &str, limit: usize) -> Result<Suggestions> {
-        let key = index_key(query.trim());
-        let items = self.merged(Start::AtKey(&key), limit)?;
+        let typed = query.trim();
+        let key = index_key(typed);
+        let mut items = self.merged(Start::AtKey(&key), limit)?;
         let browse = key.is_empty();
-        let miss = !browse
-            && !items
-                .first()
-                .is_some_and(|(first, _)| first.key.starts_with(&key));
+        let matched = items
+            .first()
+            .is_some_and(|(first, _)| first.key.starts_with(&key));
+        let mut miss = !browse && !matched;
+        let mut lemma = None;
+        if !browse && limit > 0 {
+            // A query that is itself a headword stays first; its base form follows it.
+            let is_headword = items.first().is_some_and(|(first, _)| first.key == key);
+            if let Some(base) = self.base_headword(&key, is_headword)? {
+                lemma = Some(Lemma {
+                    from: typed.to_owned(),
+                    to: base.0.headword.clone(),
+                });
+                if matched {
+                    items.retain(|(headword, _)| *headword != base.0);
+                    items.insert(usize::from(is_headword), base);
+                    items.truncate(limit);
+                } else {
+                    // Nothing starts with the query: the column reads on from the base form.
+                    let after = self.merged(Start::After(&base.0), limit - 1)?;
+                    items = std::iter::once(base).chain(after).collect();
+                    miss = false;
+                }
+            }
+        }
         Ok(Suggestions {
             items: items.into_iter().map(suggestion).collect(),
-            lemma: None,
+            lemma,
             near: false,
             miss,
             browse,
         })
+    }
+
+    /// The headword of the most likely base form of the query `key` that an enabled
+    /// Dictionary files, with how many of them file it: Lemmatization.
+    fn base_headword(
+        &self,
+        key: &str,
+        query_is_headword: bool,
+    ) -> Result<Option<(IndexedHeadword, usize)>> {
+        for base in lemma::base_forms(key) {
+            if base.doubtful && query_is_headword {
+                continue;
+            }
+            let base_key = index_key(&base.form);
+            if base_key.is_empty() || base_key == key {
+                continue;
+            }
+            let first = self.merged(Start::AtKey(&base_key), 1)?.into_iter().next();
+            if let Some(found) = first.filter(|(headword, _)| headword.key == base_key) {
+                return Ok(Some(found));
+            }
+        }
+        Ok(None)
     }
 
     /// Up to `limit` headwords that follow `headword` in index order, from enabled

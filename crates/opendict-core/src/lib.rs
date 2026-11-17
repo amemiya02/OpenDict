@@ -6,6 +6,7 @@
 mod error;
 mod format;
 mod index;
+mod lemma;
 mod library;
 mod preferences;
 mod scan;
@@ -14,6 +15,7 @@ pub use error::{Error, Result};
 pub use format::{
     DictionaryFormat, DictionaryReader, FormatError, MdictFormat, OpenError, RawRecord,
 };
+pub use lemma::{BaseForm, base_forms};
 pub use index::{HeadwordIndex, IndexError, IndexedHeadword, MemoryIndex, Start, index_key};
 pub use library::{
     DictionaryInfo, Entry, Lemma, Library, LibraryFolder, Move, OpenFailure, Suggestion,
