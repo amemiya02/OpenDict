@@ -30,8 +30,8 @@ pub use index::{HeadwordIndex, IndexError, IndexedHeadword, Start, index_key};
 pub use indexing::{BuiltIndex, IndexJob, IndexOutcome, IndexResult, IndexState};
 pub use lemma::{BaseForm, base_forms};
 pub use library::{
-    DictionaryInfo, Entry, Lemma, Library, LibraryFolder, Move, OpenFailure, Suggestion,
-    Suggestions,
+    DictionaryInfo, Elsewhere, Entry, Group, Lemma, Library, LibraryFolder, Move, OpenFailure,
+    Suggestion, Suggestions,
 };
 pub use preferences::Preferences;
 pub use pronunciation::pronunciation;

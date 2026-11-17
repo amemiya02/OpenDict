@@ -27,6 +27,14 @@ pub enum Error {
     #[error("no Dictionary in the Library has the key {0}")]
     UnknownDictionary(String),
 
+    /// No Group has this key.
+    #[error("no Group has the key {0}")]
+    UnknownGroup(String),
+
+    /// A Group name that is blank or already another Group's.
+    #[error("a Group needs a name of its own: \"{0}\" is blank or taken")]
+    GroupName(String),
+
     /// The registration code or e-mail entered does not unlock the Dictionary at this path.
     #[error("the registration code or e-mail does not unlock {0}")]
     WrongRegistration(PathBuf),
