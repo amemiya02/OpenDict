@@ -3,5 +3,15 @@
   "identifier": "default",
   "description": "The main window may call OpenDict's own commands and the core window defaults, nothing else. Entry frames are sandboxed and get nothing.",
   "windows": ["main"],
-  "permissions": ["core:default", "allow-look-up", "allow-library-status", "allow-set-allow-network"]
+  "permissions": [
+    "core:default",
+    "allow-look-up",
+    "allow-library",
+    "allow-add-library-folder",
+    "allow-remove-library-folder",
+    "allow-rescan-library",
+    "allow-set-dictionary-enabled",
+    "allow-move-dictionary",
+    "allow-set-allow-network"
+  ]
 }

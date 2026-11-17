@@ -220,6 +220,9 @@ mod tests {
     struct Fixture {
         _folder: tempfile::TempDir,
         state: AppState,
+        /// The Dictionaries' keys.
+        illustrated: String,
+        plain: String,
     }
 
     fn fixture() -> Fixture {
@@ -244,13 +247,24 @@ mod tests {
             .write_to(library.join("plain.mdx"))
             .unwrap();
         let state = AppState::load(
-            folder.path().join("config.json"),
+            &folder.path().join("library.json"),
             Some(library),
-            folder.path().join("data"),
+            &folder.path().join("data"),
         );
+        let id = |title: &str| {
+            let view = state.library();
+            view.dictionaries
+                .into_iter()
+                .find(|d| d.title == title)
+                .unwrap()
+                .id
+        };
+        let (illustrated, plain) = (id("Illustrated"), id("Plain"));
         Fixture {
             _folder: folder,
             state,
+            illustrated,
+            plain,
         }
     }
 
@@ -268,7 +282,7 @@ mod tests {
     fn serves_an_entry_as_a_sandboxed_document_with_no_network_access() {
         let f = fixture();
 
-        let response = get(&f.state, &entry_url("illustrated.mdx", "cat"));
+        let response = get(&f.state, &entry_url(&f.illustrated, "cat"));
 
         assert_eq!(response.status(), StatusCode::OK);
         assert_eq!(
@@ -281,13 +295,13 @@ mod tests {
         assert!(policy.starts_with("sandbox allow-scripts;"), "{policy}");
         assert!(policy.contains("connect-src 'none'"), "{policy}");
         assert!(!policy.contains("https:"), "{policy}");
-        assert!(policy.contains(&format!("img-src {}", dictionary_base("illustrated.mdx"))));
+        assert!(policy.contains(&format!("img-src {}", dictionary_base(&f.illustrated))));
     }
 
     #[test]
     fn serves_a_resource_beneath_its_dictionary() {
         let f = fixture();
-        let url = format!("{}img/cat.png", dictionary_base("illustrated.mdx"));
+        let url = format!("{}img/cat.png", dictionary_base(&f.illustrated));
 
         let response = get(&f.state, &url);
 
@@ -303,17 +317,17 @@ mod tests {
 
         let elsewhere = get(
             &f.state,
-            &format!("{}img/cat.png", dictionary_base("plain.mdx")),
+            &format!("{}img/cat.png", dictionary_base(&f.plain)),
         );
         let missing = get(
             &f.state,
-            &format!("{}img/dog.png", dictionary_base("illustrated.mdx")),
+            &format!("{}img/dog.png", dictionary_base(&f.illustrated)),
         );
         let unknown = get(
             &f.state,
             &format!("{}img/cat.png", dictionary_base("nope.mdx")),
         );
-        let no_entry = get(&f.state, &entry_url("plain.mdx", "dog"));
+        let no_entry = get(&f.state, &entry_url(&f.plain, "dog"));
 
         for response in [elsewhere, missing, unknown, no_entry] {
             assert_eq!(response.status(), StatusCode::NOT_FOUND);
@@ -325,19 +339,19 @@ mod tests {
     fn allowing_network_access_opens_the_network_for_that_dictionary_only() {
         let f = fixture();
 
-        f.state.set_allow_network("illustrated.mdx", true).unwrap();
+        f.state.set_allow_network(&f.illustrated, true).unwrap();
 
-        let allowed = get(&f.state, &entry_url("illustrated.mdx", "cat"));
+        let allowed = get(&f.state, &entry_url(&f.illustrated, "cat"));
         assert!(csp(&allowed).contains("connect-src https: wss:"));
         assert!(csp(&allowed).contains("img-src") && csp(&allowed).contains("https: http:"));
-        let other = get(&f.state, &entry_url("plain.mdx", "cat"));
+        let other = get(&f.state, &entry_url(&f.plain, "cat"));
         assert!(csp(&other).contains("connect-src 'none'"));
     }
 
     #[test]
     fn look_up_points_each_entry_at_its_document() {
         let f = fixture();
-        f.state.set_allow_network("plain.mdx", true).unwrap();
+        f.state.set_allow_network(&f.plain, true).unwrap();
 
         let entries = f.state.look_up("cat").unwrap();
 
@@ -350,10 +364,10 @@ mod tests {
             [
                 (
                     "Illustrated",
-                    entry_url("illustrated.mdx", "cat").as_str(),
+                    entry_url(&f.illustrated, "cat").as_str(),
                     false
                 ),
-                ("Plain", entry_url("plain.mdx", "cat").as_str(), true),
+                ("Plain", entry_url(&f.plain, "cat").as_str(), true),
             ]
         );
     }

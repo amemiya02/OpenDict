@@ -1,57 +1,87 @@
-//! The public interface of `opendict-mdict` for MDD resource files, against fixtures.
+//! Reading MDD resource files through the public interface of `opendict-mdict`.
 
 use opendict_mdict::Mdd;
 use opendict_mdict_fixture::MddBuilder;
+use tempfile::TempDir;
 
-/// Bytes with NULs and high bytes in them, so a reader that stops at NUL or decodes
-/// text would get them wrong.
-const PICTURE: &[u8] = b"\x89PNG\r\n\x1a\n\0\0\0\rIHDR\xff\x00sample";
-
-#[test]
-fn resolves_a_resource_by_its_path() {
+fn write(builder: &MddBuilder) -> (TempDir, std::path::PathBuf) {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("fixture.mdd");
+    builder.write_to(&path).unwrap();
+    (dir, path)
+}
+
+/// Bytes that look like a PNG and contain NULs, so a reader that stops at NUL fails.
+const IMAGE: &[u8] = b"\x89PNG\r\n\x1a\n\0\0\0\rIHDR\0\0\0\x01";
+const STYLE: &[u8] = b".hw { font-weight: bold; }";
+const SOUND: &[u8] = b"Speex   \0\x01\x02\x03";
+
+fn sample() -> MddBuilder {
     MddBuilder::new()
-        .resource("\\img\\cat.png", PICTURE)
-        .resource("\\style.css", b"p { color: teal }")
-        .keys_per_block(1)
-        .write_to(&path)
-        .unwrap();
-
-    let mdd = Mdd::open(&path).unwrap();
-
-    assert_eq!(
-        mdd.resource("\\img\\cat.png").unwrap().as_deref(),
-        Some(PICTURE)
-    );
-    assert_eq!(
-        mdd.resource("\\style.css").unwrap().as_deref(),
-        Some(&b"p { color: teal }"[..])
-    );
-    assert_eq!(mdd.resource("\\missing.png").unwrap(), None);
+        .resource("\\img\\a.png", IMAGE)
+        .resource("\\style.css", STYLE)
+        .resource("\\sound\\word.spx", SOUND)
+        .keys_per_block(2)
+        .records_per_block(2)
 }
 
 #[test]
-fn accepts_web_style_paths_in_any_letter_case() {
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("fixture.mdd");
-    MddBuilder::new()
-        .resource("\\img\\Cat.PNG", PICTURE)
-        .write_to(&path)
-        .unwrap();
+fn lists_resource_paths_in_file_order() {
+    let (_dir, path) = write(&sample());
 
     let mdd = Mdd::open(&path).unwrap();
 
-    for spelling in [
-        "img/cat.png",
-        "/img/cat.png",
-        "\\IMG\\cat.png",
-        "img\\Cat.PNG",
-    ] {
-        assert_eq!(
-            mdd.resource(spelling).unwrap().as_deref(),
-            Some(PICTURE),
-            "{spelling}"
-        );
-    }
+    assert_eq!(
+        mdd.resource_paths().collect::<Vec<_>>(),
+        ["\\img\\a.png", "\\style.css", "\\sound\\word.spx"]
+    );
+}
+
+#[test]
+fn extracts_a_resource_byte_for_byte_by_its_stored_path() {
+    let (_dir, path) = write(&sample());
+
+    let mdd = Mdd::open(&path).unwrap();
+
+    assert_eq!(
+        mdd.resource("\\img\\a.png").unwrap().as_deref(),
+        Some(IMAGE)
+    );
+    assert_eq!(mdd.resource("\\style.css").unwrap().as_deref(), Some(STYLE));
+    assert_eq!(
+        mdd.resource("\\sound\\word.spx").unwrap().as_deref(),
+        Some(SOUND)
+    );
+}
+
+#[test]
+fn resolves_a_path_as_html_refers_to_it() {
+    let (_dir, path) = write(&sample());
+
+    let mdd = Mdd::open(&path).unwrap();
+
+    // Forward slashes, no leading separator, different letter case.
+    assert_eq!(mdd.resource("img/a.png").unwrap().as_deref(), Some(IMAGE));
+    assert_eq!(mdd.resource("/IMG/A.PNG").unwrap().as_deref(), Some(IMAGE));
+    assert_eq!(mdd.resource("Style.CSS").unwrap().as_deref(), Some(STYLE));
+}
+
+#[test]
+fn finds_nothing_for_a_path_the_file_does_not_have() {
+    let (_dir, path) = write(&sample());
+
+    let mdd = Mdd::open(&path).unwrap();
+
+    assert_eq!(mdd.resource("img/b.png").unwrap(), None);
+    assert_eq!(mdd.resource("a.png").unwrap(), None);
+}
+
+#[test]
+fn reads_the_header_of_a_resource_file() {
+    let (_dir, path) = write(&sample());
+
+    let mdd = Mdd::open(&path).unwrap();
+
+    assert_eq!(mdd.header().engine_version(), "2.0");
+    assert_eq!(mdd.header().encoding(), "");
 }

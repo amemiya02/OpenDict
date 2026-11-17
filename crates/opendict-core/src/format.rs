@@ -12,13 +12,16 @@ pub trait DictionaryFormat: Send + Sync {
     fn recognises(&self, path: &Path) -> bool;
 
     /// Opens the Dictionary whose main file is `path`.
-    fn open(&self, path: &Path) -> Result<Box<dyn DictionaryReader>, FormatError>;
+    fn open(&self, path: &Path) -> Result<Box<dyn DictionaryReader>, OpenError>;
 }
 
 /// An open Dictionary, as a format presents it to the core.
 pub trait DictionaryReader: Send + Sync {
     /// The Dictionary's title as its file states it; may be empty.
     fn title(&self) -> &str;
+
+    /// How many Entries (headwords, redirects included) the Dictionary files.
+    fn entry_count(&self) -> usize;
 
     /// The records filed under exactly `headword`, in the file's order.
     fn records(&self, headword: &str) -> Result<Vec<RawRecord>, FormatError>;
@@ -46,6 +49,31 @@ pub enum RawRecord {
 #[error("{0}")]
 pub struct FormatError(pub String);
 
+/// Why a Dictionary could not be opened, in words meant for the reader.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[non_exhaustive]
+pub enum OpenError {
+    /// The file exists but could not be read.
+    #[error("the file cannot be read: {0}")]
+    Unreadable(String),
+    /// The file is not a dictionary in the format its name suggests.
+    #[error("this is not a dictionary file")]
+    NotADictionary,
+    /// The file uses a format version OpenDict does not read.
+    #[error("format version {0} is not supported")]
+    UnsupportedVersion(String),
+    /// Part of the file is damaged.
+    #[error("the file is damaged")]
+    Damaged,
+    /// The Dictionary is encrypted (`Encrypted=1`) and opens only with its registration
+    /// code or e-mail.
+    #[error("it needs a registration code")]
+    NeedsRegistrationCode,
+    /// The file uses a feature OpenDict does not read yet.
+    #[error("it uses {0}, which OpenDict cannot read yet")]
+    Unsupported(String),
+}
+
 /// MDict (`.mdx`), read with `opendict-mdict`.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct MdictFormat;
@@ -56,8 +84,8 @@ impl DictionaryFormat for MdictFormat {
             .is_some_and(|ext| ext.eq_ignore_ascii_case("mdx"))
     }
 
-    fn open(&self, path: &Path) -> Result<Box<dyn DictionaryReader>, FormatError> {
-        let mdx = opendict_mdict::Mdx::open(path).map_err(mdict_error)?;
+    fn open(&self, path: &Path) -> Result<Box<dyn DictionaryReader>, OpenError> {
+        let mdx = opendict_mdict::Mdx::open(path).map_err(open_error)?;
         Ok(Box::new(MdictReader {
             mdx,
             resource_files: open_resource_files(path),
@@ -77,6 +105,10 @@ struct MdictReader {
 impl DictionaryReader for MdictReader {
     fn title(&self) -> &str {
         self.mdx.header().title()
+    }
+
+    fn entry_count(&self) -> usize {
+        self.mdx.headwords().count()
     }
 
     fn records(&self, headword: &str) -> Result<Vec<RawRecord>, FormatError> {
@@ -154,6 +186,19 @@ fn is_loose_resource(path: &Path) -> bool {
     ];
     path.extension()
         .is_some_and(|ext| TYPES.iter().any(|t| ext.eq_ignore_ascii_case(t)))
+}
+
+fn open_error(error: opendict_mdict::Error) -> OpenError {
+    use opendict_mdict::Error;
+    match error {
+        Error::Io(error) => OpenError::Unreadable(error.to_string()),
+        Error::NotMdict(_) => OpenError::NotADictionary,
+        Error::UnsupportedVersion(version) => OpenError::UnsupportedVersion(version),
+        Error::Corrupt(_) => OpenError::Damaged,
+        Error::Encrypted => OpenError::NeedsRegistrationCode,
+        Error::Unsupported(feature) => OpenError::Unsupported(feature),
+        other => OpenError::Unsupported(other.to_string()),
+    }
 }
 
 fn mdict_error(error: opendict_mdict::Error) -> FormatError {

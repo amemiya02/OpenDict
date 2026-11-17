@@ -15,7 +15,13 @@ const sample = {
 function fakeShell(calls: { command: string; args: unknown }[] = []) {
   mockIPC((command, args) => {
     calls.push({ command, args });
-    if (command === "library_status") return { kind: "ready", folder: "/library", dictionaryCount: 1 };
+    if (command === "library")
+      return {
+        folders: [{ path: "/library", dictionaryCount: 1, problem: null }],
+        dictionaries: [{ id: "sample", title: "Sample Dictionary", path: "/library/sample.mdx", entryCount: 1, size: 2048, enabled: true }],
+        failures: [],
+        problem: null,
+      };
     if (command === "look_up") return (args as { headword: string }).headword === "serendipity" ? [sample] : [];
     if (command === "set_allow_network") return null;
     throw new Error(`unexpected command ${command}`);

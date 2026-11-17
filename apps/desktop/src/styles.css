@@ -72,6 +72,8 @@
   --field-ink: var(--color-ink);
   --field-ink-secondary: var(--color-ink-secondary);
   --field-hover: var(--color-paper-shade);
+  --notch: var(--color-ink);
+  --notch-ink: var(--color-india-paper);
 }
 
 @media (prefers-color-scheme: dark) {
@@ -88,6 +90,8 @@
     --field-ink: var(--color-night-paper-ink);
     --field-ink-secondary: var(--color-night-ink-secondary);
     --field-hover: #2a385e;
+    --notch: var(--color-cloth-notch);
+    --notch-ink: var(--color-night-paper-ink);
   }
 }
 
@@ -104,6 +108,8 @@
   --color-field-text: var(--field-ink);
   --color-field-text-secondary: var(--field-ink-secondary);
   --color-field-hover: var(--field-hover);
+  --color-notch: var(--notch);
+  --color-notch-text: var(--notch-ink);
 }
 
 @layer base {

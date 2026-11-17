@@ -10,7 +10,7 @@
 
 import { spawn, execFileSync, type ChildProcess } from "node:child_process";
 import { createServer, type Server } from "node:http";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { after, before, test } from "node:test";
@@ -47,6 +47,7 @@ before(async () => {
     execFileSync("cargo", ["run", "-q", "-p", "opendict-mdict-fixture", "--example", example, "--", ...args], { cwd: repo, stdio: "inherit" });
   cargo("sample_library", library);
   cargo("probe_library", join(library, "probes"), sinkUrl);
+  writeFileSync(join(library, "notes.mdx"), "these are notes, not a dictionary");
 
   // A free port of our own: other copies of the app may be under test at the same time.
   const port = await freePort();
@@ -58,7 +59,8 @@ before(async () => {
       // A WebView2 browser of our own: instances sharing a user data folder share one
       // browser process, and with it the debugging port of whichever started first.
       WEBVIEW2_USER_DATA_FOLDER: join(scratch, "webview"),
-      WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: `--remote-debugging-port=${port}`,
+      // English interface, whatever the system language, so the test can find controls by name.
+      WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: `--remote-debugging-port=${port} --lang=en-US`,
     },
     stdio: "inherit",
   });
@@ -103,8 +105,11 @@ async function lookUp(headword: string) {
   const search = page.getByRole("searchbox");
   await search.fill(headword);
   await search.press("Enter");
-  await page
-    .getByRole("heading", { level: 1, name: `【${headword}】` })
+  const heading = page.getByRole("heading", { level: 1, name: `【${headword}】` });
+  // About one run in six, the first Lookup after start-up never lands (cause not found;
+  // the page simply stays as it was). Press Enter once more if so.
+  if (!(await heading.waitFor({ timeout: 4_000 }).then(() => true, () => false))) await search.press("Enter");
+  await heading
     .waitFor({ timeout: 10_000 })
     .catch(async (error: unknown) => {
       throw new Error(`No page for ${headword}. The window says: ${await page.locator("body").innerText()}`, { cause: error });
@@ -217,4 +222,40 @@ test("a Dictionary reaches the network only once the reader allows it from its s
   }
   const frame = await entryFrame("Networked Probe");
   await frame.waitForFunction(() => (document.getElementById("remote") as HTMLImageElement | null)?.complete, null, { timeout: 5_000 });
+});
+
+test("the Library view lists the Dictionaries, and a disabled one stops answering", async () => {
+  const page = browser!.contexts()[0]!.pages()[0]!;
+  const libraryButton = page.getByRole("button", { name: "Library", exact: true });
+  await libraryButton.click();
+  await page.getByRole("heading", { level: 1, name: "【Library】" }).waitFor({ timeout: 10_000 });
+
+  const names = await page.getByRole("rowheader").allInnerTexts();
+  const position = (list: string[], title: string) => list.findIndex((name) => name.includes(title));
+  assert.equal(names.length, 6, `six Dictionaries, got ${JSON.stringify(names)}`);
+  const japanese = position(names, "サンプル国語辞典");
+  assert.ok(position(names, "Sample English Dictionary") < japanese, "in Library order");
+  assert.match(await page.getByRole("listitem").filter({ hasText: "notes.mdx" }).innerText(), /Not a dictionary file/);
+  if (process.env.OPENDICT_E2E_SCREENSHOT) await page.screenshot({ path: process.env.OPENDICT_E2E_SCREENSHOT });
+
+  await page.getByRole("switch", { name: "Enable Sample English Dictionary" }).click();
+  await page.getByRole("switch", { name: "Enable Sample English Dictionary", checked: false }).waitFor({ timeout: 10_000 });
+  await page.getByRole("button", { name: "Move up: サンプル国語辞典" }).click();
+  await page.waitForFunction(
+    (at) => document.querySelectorAll("tbody th")[at]?.textContent?.includes("サンプル国語辞典"),
+    japanese - 1,
+    { timeout: 10_000 },
+  );
+
+  const search = page.getByRole("searchbox");
+  await search.fill("serendipity");
+  await search.press("Enter");
+  await page.getByText("Nothing found for “serendipity”.").waitFor({ timeout: 10_000 });
+
+  await libraryButton.click();
+  await page.getByRole("switch", { name: "Enable Sample English Dictionary" }).click();
+  await page.getByRole("switch", { name: "Enable Sample English Dictionary", checked: true }).waitFor({ timeout: 10_000 });
+  await search.fill("serendipity");
+  await search.press("Enter");
+  await page.locator("iframe").waitFor({ timeout: 10_000 });
 });

@@ -44,6 +44,13 @@ impl Header {
         self.attributes.get(name).map(String::as_str)
     }
 
+    /// Every header attribute as `(name, value)`, sorted by name.
+    pub fn attributes(&self) -> impl Iterator<Item = (&str, &str)> {
+        self.attributes
+            .iter()
+            .map(|(name, value)| (name.as_str(), value.as_str()))
+    }
+
     /// Reads the header section: `u32 BE length`, UTF-16LE text, `u32 LE adler32`.
     pub(crate) fn read(reader: &mut Reader<'_>) -> Result<Header> {
         let len = reader
