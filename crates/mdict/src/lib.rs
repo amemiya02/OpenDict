@@ -15,6 +15,7 @@ mod file;
 mod header;
 mod mdd;
 mod mdx;
+mod salsa;
 
 pub use error::{Error, Result};
 pub use header::Header;
