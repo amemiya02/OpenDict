@@ -48,6 +48,9 @@ export const zhCN = {
   missNote: "没有匹配。词头表里接下来的词：",
   startHint: "输入词头。↑ ↓ 选词，Enter 查词。",
   lookupFailed: (reason: string) => `查词失败：${reason}`,
+  allowNetwork: "允许访问网络",
+  networkAllowed: "此词典可以访问网络。点击以禁止。",
+  networkBlocked: "此词典无法访问网络。点击以允许。",
   updateAvailable: (version: string) => `OpenDict ${version} 已发布。`,
   updateInstall: "安装并重新启动",
   updateDownloading: (version: string, percent: number | null) =>

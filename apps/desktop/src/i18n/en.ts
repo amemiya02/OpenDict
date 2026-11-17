@@ -47,6 +47,9 @@ export const en = {
   missNote: "No match. Next in the headword index:",
   startHint: "Type a word. ↑ and ↓ move through the headwords; Enter looks one up.",
   lookupFailed: (reason: string) => `The lookup failed: ${reason}`,
+  allowNetwork: "Allow network access",
+  networkAllowed: "This dictionary may use the network. Click to block it.",
+  networkBlocked: "This dictionary is kept off the network. Click to allow it.",
   updateAvailable: (version: string) => `OpenDict ${version} is available.`,
   updateInstall: "Install and restart",
   updateDownloading: (version: string, percent: number | null) =>

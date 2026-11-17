@@ -7,8 +7,10 @@ export interface Entry {
   dictionaryId: string;
   /** The Dictionary's title, from its header. */
   dictionaryTitle: string;
-  /** The Entry's HTML, untrusted: it must only ever render inside an EntryFrame. */
-  html: string;
+  /** The Entry document's URL on the Entry scheme. Its HTML never passes through the interface. */
+  src: string;
+  /** Whether the reader allowed this Dictionary network access. */
+  allowNetwork: boolean;
 }
 
 /** One headword in the headword column. */
@@ -108,4 +110,8 @@ export function setDictionaryEnabled(id: string, enabled: boolean): Promise<Libr
 
 export function moveDictionary(id: string, direction: "up" | "down"): Promise<Library> {
   return invoke<Library>("move_dictionary", { id, direction });
+}
+
+export function setAllowNetwork(dictionaryId: string, allow: boolean): Promise<void> {
+  return invoke<void>("set_allow_network", { dictionaryId, allow });
 }

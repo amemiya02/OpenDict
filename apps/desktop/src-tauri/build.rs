@@ -5,6 +5,7 @@ fn main() {
         "look_up",
         "suggest",
         "headwords_after",
+        "set_allow_network",
         "library",
         "add_library_folder",
         "remove_library_folder",

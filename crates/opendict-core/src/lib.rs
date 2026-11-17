@@ -7,6 +7,7 @@ mod error;
 mod format;
 mod index;
 mod library;
+mod preferences;
 mod scan;
 
 pub use error::{Error, Result};
@@ -18,3 +19,4 @@ pub use library::{
     DictionaryInfo, Entry, Lemma, Library, LibraryFolder, Move, OpenFailure, Suggestion,
     Suggestions,
 };
+pub use preferences::Preferences;

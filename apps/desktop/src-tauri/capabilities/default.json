@@ -14,6 +14,7 @@
     "allow-rescan-library",
     "allow-set-dictionary-enabled",
     "allow-move-dictionary",
+    "allow-set-allow-network",
     "updater:default",
     "process:allow-restart"
   ]

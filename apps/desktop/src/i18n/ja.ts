@@ -48,6 +48,9 @@ export const ja = {
   missNote: "一致なし。見出し語一覧の続き：",
   startHint: "語を入力してください。↑ ↓ で見出し語を選び、Enter で引きます。",
   lookupFailed: (reason: string) => `検索に失敗しました：${reason}`,
+  allowNetwork: "ネットワークへのアクセスを許可",
+  networkAllowed: "この辞書はネットワークを使えます。クリックで遮断します。",
+  networkBlocked: "この辞書はネットワークから遮断されています。クリックで許可します。",
   updateAvailable: (version: string) => `OpenDict ${version} が公開されています。`,
   updateInstall: "インストールして再起動",
   updateDownloading: (version: string, percent: number | null) =>
