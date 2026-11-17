@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { EntryFrame } from "./components/EntryFrame";
+import { sectionId } from "./components/ThumbIndex";
 import { EmptyLibrary, LibraryPage, OutlineButton, type LibraryActions } from "./components/LibraryPage";
 import { SearchField } from "./components/SearchField";
 import { UpdateNotice } from "./components/UpdateNotice";
@@ -172,6 +173,15 @@ function EntryPage({ headword, entries: initial, asked }: { headword: string; en
   const { t } = useI18n();
   const [entries, setEntries] = useState(initial);
   const pronunciation = entries.find((entry) => entry.pronunciation)?.pronunciation;
+  const [folded, setFolded] = useState<ReadonlySet<string>>(new Set());
+
+  function toggleFold(dictionaryId: string) {
+    setFolded((current) => {
+      const next = new Set(current);
+      if (!next.delete(dictionaryId)) next.add(dictionaryId);
+      return next;
+    });
+  }
 
   async function toggleNetwork(entry: Entry) {
     const allow = !entry.allowNetwork;
@@ -190,16 +200,30 @@ function EntryPage({ headword, entries: initial, asked }: { headword: string; en
         {pronunciation ? <span className="font-serif text-[16px] text-text-secondary">{pronunciation}</span> : null}
         <span className="text-[12px] text-text-secondary">{t.answered(entries.length, Math.max(asked, entries.length))}</span>
       </div>
-      {entries.map((entry) => (
-        <section key={entry.dictionaryId} aria-label={entry.dictionaryTitle} className="border-rule [&+&]:border-t">
-          <div className="flex h-9 items-center gap-sm">
-            <h2 className="-ml-[7px] min-w-0 flex-1 truncate text-title font-bold">【{entry.dictionaryTitle}】</h2>
-            <NetworkSwitch allowed={entry.allowNetwork} onToggle={() => void toggleNetwork(entry)} />
-          </div>
-          {/* A new frame when the switch changes, so the document reloads under its new policy. */}
-          <EntryFrame key={String(entry.allowNetwork)} dictionaryTitle={entry.dictionaryTitle} src={entry.src} />
-        </section>
-      ))}
+      {entries.map((entry) => {
+        const open = !folded.has(entry.dictionaryId);
+        const body = `${sectionId(entry.dictionaryId)}-body`;
+        return (
+          <section
+            key={entry.dictionaryId}
+            id={sectionId(entry.dictionaryId)}
+            tabIndex={-1}
+            aria-label={entry.dictionaryTitle}
+            className="scroll-mt-3 border-rule outline-offset-4 [&+&]:border-t"
+          >
+            <div className="flex h-9 items-center gap-sm">
+              <h2 className="-ml-[7px] min-w-0 flex-1 truncate text-title font-bold">【{entry.dictionaryTitle}】</h2>
+              <NetworkSwitch allowed={entry.allowNetwork} onToggle={() => void toggleNetwork(entry)} />
+              <FoldButton open={open} controls={body} onToggle={() => toggleFold(entry.dictionaryId)} />
+            </div>
+            {/* Folded, the Entry stays loaded out of sight, so unfolding shows it as it was. */}
+            <div id={body} hidden={!open} className="pb-3.5">
+              {/* A new frame when the switch changes, so the document reloads under its new policy. */}
+              <EntryFrame key={String(entry.allowNetwork)} dictionaryTitle={entry.dictionaryTitle} src={entry.src} />
+            </div>
+          </section>
+        );
+      })}
     </article>
   );
 }
@@ -219,6 +243,29 @@ function NetworkSwitch({ allowed, onToggle }: { allowed: boolean; onToggle: () =
       <svg className="size-4 fill-none stroke-current stroke-[1.2]" viewBox="0 0 16 16" aria-hidden="true">
         <circle cx="8" cy="8" r="5.5" />
         <path d="M2.5 8h11M8 2.5c-1.8 1.6-2.6 3.4-2.6 5.5s.8 3.9 2.6 5.5c1.8-1.6 2.6-3.4 2.6-5.5S9.8 4.1 8 2.5Z" />
+      </svg>
+    </button>
+  );
+}
+
+/** The chevron at the right of a section header: points down while the Entry shows. */
+function FoldButton({ open, controls, onToggle }: { open: boolean; controls: string; onToggle: () => void }) {
+  const { t } = useI18n();
+  return (
+    <button
+      type="button"
+      aria-expanded={open}
+      aria-controls={controls}
+      aria-label={open ? t.collapse : t.expand}
+      onClick={onToggle}
+      className="grid size-6.5 flex-none place-items-center rounded-sharp text-text-secondary hover:bg-shade hover:text-text"
+    >
+      <svg
+        className={`size-4 fill-none stroke-current stroke-[1.2] motion-safe:transition-[rotate] motion-safe:duration-180 motion-safe:ease-out-expo ${open ? "" : "-rotate-90"}`}
+        viewBox="0 0 16 16"
+        aria-hidden="true"
+      >
+        <path d="M4 6l4 4 4-4" />
       </svg>
     </button>
   );

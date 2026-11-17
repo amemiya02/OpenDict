@@ -43,6 +43,8 @@ export const zhCN = {
   libraryActionFailed: (reason: string) => `操作没有成功：${reason}`,
   startHint: "输入词头，按 Enter 查词。",
   lookupFailed: (reason: string) => `查词失败：${reason}`,
+  collapse: "折叠",
+  expand: "展开",
   allowNetwork: "允许访问网络",
   networkAllowed: "此词典可以访问网络。点击以禁止。",
   networkBlocked: "此词典无法访问网络。点击以允许。",

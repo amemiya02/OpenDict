@@ -59,4 +59,30 @@ describe("the page of Entries", () => {
     expect(within(head).getByText("/ˌserənˈdɪpəti/")).toBeTruthy();
     expect(within(head).getByText("in 2 of 3 dictionaries")).toBeTruthy();
   });
+
+  it("gives each answering Dictionary its own section, in Library order", async () => {
+    fakeShell();
+    await lookUp("serendipity");
+
+    const sections = screen.getAllByRole("region").map((section) => section.getAttribute("aria-label"));
+    expect(sections).toEqual(["Sample Learner's Dictionary", "样例同义词典"]);
+  });
+
+  it("folds a section away and unfolds it again", async () => {
+    fakeShell();
+    await lookUp("serendipity");
+    const section = screen.getByRole("region", { name: "Sample Learner's Dictionary" });
+    const frame = within(section).getByTitle("Entry from Sample Learner's Dictionary");
+
+    await userEvent.click(within(section).getByRole("button", { name: "Collapse" }));
+    expect(frame.closest("[hidden]")).not.toBeNull();
+    expect(within(section).getByRole("button", { name: "Expand" }).getAttribute("aria-expanded")).toBe("false");
+    // The other Dictionary stays open, and the folded Entry keeps its frame.
+    expect(screen.getByTitle("Entry from 样例同义词典").closest("[hidden]")).toBeNull();
+
+    await userEvent.click(within(section).getByRole("button", { name: "Expand" }));
+    expect(within(section).getByTitle("Entry from Sample Learner's Dictionary")).toBe(frame);
+    expect(frame.closest("[hidden]")).toBeNull();
+    expect(within(section).getByRole("button", { name: "Collapse" }).getAttribute("aria-expanded")).toBe("true");
+  });
 });

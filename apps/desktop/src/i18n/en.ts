@@ -42,6 +42,8 @@ export const en = {
   libraryActionFailed: (reason: string) => `That did not work: ${reason}`,
   startHint: "Type a headword and press Enter.",
   lookupFailed: (reason: string) => `The lookup failed: ${reason}`,
+  collapse: "Collapse",
+  expand: "Expand",
   allowNetwork: "Allow network access",
   networkAllowed: "This dictionary may use the network. Click to block it.",
   networkBlocked: "This dictionary is kept off the network. Click to allow it.",
