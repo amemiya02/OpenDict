@@ -9,9 +9,11 @@ use crate::error::{Error, Result};
 use crate::format::{
     DictionaryFormat, DictionaryReader, MdictFormat, OpenError, RawRecord, Registration,
 };
-use crate::index::{HeadwordIndex, IndexedHeadword, Start, StoredIndex, index_key};
+use crate::index::{HeadwordIndex, IndexError, IndexedHeadword, Start, StoredIndex, index_key};
 use crate::indexing::{Built, IndexJob, IndexOutcome, IndexResult, IndexState, index_file};
 use crate::lemma;
+use crate::near;
+use crate::pattern::Pattern;
 use crate::registrations::Registrations;
 use crate::scan::{self, Stamp, Unit};
 
@@ -52,6 +54,56 @@ struct Dictionary {
     /// Present when `info.index` is [`IndexState::Ready`].
     index: Option<StoredIndex>,
 }
+
+impl Dictionary {
+    /// Up to `limit` headwords from `start` in index order that `scan` takes, reading the
+    /// index a page at a time until `scan` says stop or the index ends. A Dictionary whose
+    /// index is not built yet has none.
+    fn scan(
+        &self,
+        start: Start<'_>,
+        limit: usize,
+        scan: &dyn Fn(&IndexedHeadword) -> Scan,
+    ) -> std::result::Result<Vec<IndexedHeadword>, IndexError> {
+        let Some(index) = self.index.as_ref() else {
+            return Ok(Vec::new());
+        };
+        let page_size = limit.clamp(SCAN_PAGE, 16 * SCAN_PAGE);
+        let mut taken = Vec::new();
+        let mut page = index.headwords(start, page_size)?;
+        while taken.len() < limit {
+            let full = page.len() == page_size;
+            for headword in &page {
+                match scan(headword) {
+                    Scan::Take => taken.push(headword.clone()),
+                    Scan::Skip => {}
+                    Scan::Stop => return Ok(taken),
+                }
+                if taken.len() == limit {
+                    return Ok(taken);
+                }
+            }
+            match page.last() {
+                Some(last) if full => page = index.headwords(Start::After(last), page_size)?,
+                _ => break,
+            }
+        }
+        Ok(taken)
+    }
+}
+
+/// What a scan of the index does with one headword.
+enum Scan {
+    /// Keep it and read on.
+    Take,
+    /// Pass it over and read on.
+    Skip,
+    /// Read no further.
+    Stop,
+}
+
+/// How many headwords a scan reads from an index at least at a time.
+const SCAN_PAGE: usize = 256;
 
 /// A Library Folder and what was found in it.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -550,17 +602,21 @@ impl Library {
 
     /// Up to `limit` suggestions for `query`, from enabled Dictionaries: the headwords
     /// whose key starts with the query's, then the headwords that follow them in index
-    /// order, like a page of a printed index. An empty query browses the index from its
-    /// start.
+    /// order, like a page of a printed index. A query with wildcards (`*` for any run of
+    /// characters, `?` for one) offers only its matches. An empty query browses the index
+    /// from its start.
     pub fn suggest(&self, query: &str, limit: usize) -> Result<Suggestions> {
         let typed = query.trim();
         let key = index_key(typed);
+        // A pattern offers only its matches; Lemmatization does not apply to it.
+        if let Some(pattern) = Pattern::parse(&key) {
+            return self.suggest_pattern(&pattern, limit);
+        }
         let mut items = self.merged(Start::AtKey(&key), limit)?;
         let browse = key.is_empty();
         let matched = items
             .first()
             .is_some_and(|(first, _)| first.key.starts_with(&key));
-        let mut miss = !browse && !matched;
         let mut lemma = None;
         if !browse && limit > 0 {
             // A query that is itself a headword stays first; its base form follows it.
@@ -578,16 +634,71 @@ impl Library {
                     // Nothing starts with the query: the column reads on from the base form.
                     let after = self.merged(Start::After(&base.0), limit - 1)?;
                     items = std::iter::once(base).chain(after).collect();
-                    miss = false;
                 }
+            }
+        }
+        // No headword starts with the query and it has no base form filed: offer close
+        // spellings, and failing those, the index from where the query would stand.
+        let unanswered = !browse && !matched && lemma.is_none();
+        let mut near = false;
+        if unanswered {
+            let close = self.near(&key, limit)?;
+            if !close.is_empty() {
+                items = close;
+                near = true;
             }
         }
         Ok(Suggestions {
             items: items.into_iter().map(suggestion).collect(),
             lemma,
+            near,
+            miss: unanswered && !near,
+            browse,
+        })
+    }
+
+    /// Up to `limit` headwords spelt nearly like `key`, nearest first, then in index order,
+    /// each with how many enabled Dictionaries file it.
+    fn near(&self, key: &str, limit: usize) -> Result<Vec<(IndexedHeadword, usize)>> {
+        let query: Vec<char> = key.chars().collect();
+        let tolerance = near::tolerance(&query);
+        let distance = |headword: &IndexedHeadword| {
+            let candidate: Vec<char> = headword.key.chars().collect();
+            near::distance(&query, &candidate, tolerance)
+        };
+        let close = |headword: &IndexedHeadword| match distance(headword) {
+            Some(_) => Scan::Take,
+            None => Scan::Skip,
+        };
+        let counts = self.counted(Start::AtKey(""), usize::MAX, &close)?;
+        let mut found: Vec<(usize, IndexedHeadword, usize)> = counts
+            .into_iter()
+            .filter_map(|(headword, count)| Some((distance(&headword)?, headword, count)))
+            .collect();
+        found.sort();
+        Ok(found
+            .into_iter()
+            .take(limit)
+            .map(|(_, headword, count)| (headword, count))
+            .collect())
+    }
+
+    fn suggest_pattern(&self, pattern: &Pattern, limit: usize) -> Result<Suggestions> {
+        let prefix = pattern.prefix();
+        let items = self.merged_where(Start::AtKey(prefix), limit, matching(pattern))?;
+        let miss = items.is_empty();
+        // Nothing matches: the index from where the pattern's letters would stand.
+        let items = if miss {
+            self.merged(Start::AtKey(prefix), limit)?
+        } else {
+            items
+        };
+        Ok(Suggestions {
+            items: items.into_iter().map(suggestion).collect(),
+            lemma: None,
             near: false,
             miss,
-            browse,
+            browse: false,
         })
     }
 
@@ -625,28 +736,67 @@ impl Library {
             .collect())
     }
 
+    /// Up to `limit` more suggestions for `query`, after `headword`: the column continued as
+    /// the reader scrolls. A pattern's column continues with its matches; any other column
+    /// continues through the index.
+    pub fn suggest_after(
+        &self,
+        query: &str,
+        headword: &str,
+        limit: usize,
+    ) -> Result<Vec<Suggestion>> {
+        let after = IndexedHeadword::new(headword);
+        let items = match Pattern::parse(&index_key(query.trim())) {
+            Some(pattern) if pattern.matches(&after.key) => {
+                self.merged_where(Start::After(&after), limit, matching(&pattern))?
+            }
+            _ => self.merged(Start::After(&after), limit)?,
+        };
+        Ok(items.into_iter().map(suggestion).collect())
+    }
+
     /// The first `limit` headwords from `start` across enabled Dictionaries, each once,
     /// with how many of them file it.
     fn merged(&self, start: Start<'_>, limit: usize) -> Result<Vec<(IndexedHeadword, usize)>> {
+        self.merged_where(start, limit, |_| Scan::Take)
+    }
+
+    /// Like [`Library::merged`], keeping only the headwords `scan` takes and reading each
+    /// index only until `scan` says stop.
+    fn merged_where(
+        &self,
+        start: Start<'_>,
+        limit: usize,
+        scan: impl Fn(&IndexedHeadword) -> Scan,
+    ) -> Result<Vec<(IndexedHeadword, usize)>> {
         // Each headword among the first `limit` overall is among the first `limit` of
         // every Dictionary that files it, so `limit` from each is enough to count it.
+        let counts = self.counted(start, limit, &scan)?;
+        Ok(counts.into_iter().take(limit).collect())
+    }
+
+    /// Up to `limit` headwords `scan` takes from each enabled Dictionary, from `start`,
+    /// with how many of them file each.
+    fn counted(
+        &self,
+        start: Start<'_>,
+        limit: usize,
+        scan: &dyn Fn(&IndexedHeadword) -> Scan,
+    ) -> Result<BTreeMap<IndexedHeadword, usize>> {
         let mut counts: BTreeMap<IndexedHeadword, usize> = BTreeMap::new();
         for dictionary in self.dictionaries.iter().filter(|d| d.info.enabled) {
-            // A Dictionary answers once its index is built.
-            let Some(index) = &dictionary.index else {
-                continue;
-            };
-            let headwords = index
-                .headwords(start, limit)
-                .map_err(|error| Error::Dictionary {
-                    dictionary: dictionary.info.title.clone(),
-                    reason: error.to_string(),
-                })?;
+            let headwords =
+                dictionary
+                    .scan(start, limit, scan)
+                    .map_err(|error| Error::Dictionary {
+                        dictionary: dictionary.info.title.clone(),
+                        reason: error.to_string(),
+                    })?;
             for headword in headwords {
                 *counts.entry(headword).or_default() += 1;
             }
         }
-        Ok(counts.into_iter().take(limit).collect())
+        Ok(counts)
     }
 
     /// The Entry for exactly `headword` in the Dictionary with `dictionary_id`, if that
@@ -723,6 +873,20 @@ impl Library {
         let partial = file.with_extension("json.partial");
         std::fs::write(&partial, text).map_err(|error| failed(error.to_string()))?;
         std::fs::rename(&partial, file).map_err(|error| failed(error.to_string()))
+    }
+}
+
+/// A scan for `pattern`'s matches. They all start with its prefix, so the scan stops at
+/// the first headword that does not.
+fn matching(pattern: &Pattern) -> impl Fn(&IndexedHeadword) -> Scan {
+    move |headword| {
+        if !headword.key.starts_with(pattern.prefix()) {
+            Scan::Stop
+        } else if pattern.matches(&headword.key) {
+            Scan::Take
+        } else {
+            Scan::Skip
+        }
     }
 }
 

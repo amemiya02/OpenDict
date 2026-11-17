@@ -10,13 +10,14 @@ use std::path::Path;
 use memmap2::Mmap;
 
 use crate::format::Location;
+use crate::normalization::normalize;
 use crate::scan::Stamp;
 
-/// The key a headword is filed under in index order. The same function orders the index
-/// and places a query in it. Changing it changes every stored index: bump
-/// [`INDEX_VERSION`] with it so old indexes are rebuilt.
+/// The key a headword is filed under in index order: its [`normalize`]d form. The same
+/// function orders the index and places a query in it. Changing it changes every stored
+/// index: bump [`INDEX_VERSION`] with it so old indexes are rebuilt.
 pub fn index_key(headword: &str) -> String {
-    headword.to_lowercase()
+    normalize(headword)
 }
 
 /// One headword in index order, with the key it is filed under.
@@ -60,7 +61,7 @@ pub struct IndexError(pub String);
 
 /// The version of the stored index layout and of [`index_key`]. An index stored with
 /// another version is rebuilt.
-pub(crate) const INDEX_VERSION: u32 = 1;
+pub(crate) const INDEX_VERSION: u32 = 2;
 
 const MAGIC: &[u8; 4] = b"ODXI";
 
