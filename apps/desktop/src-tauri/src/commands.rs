@@ -76,3 +76,12 @@ pub async fn move_dictionary(
 ) -> Result<LibraryView, String> {
     state.move_dictionary(&id, direction)
 }
+
+#[tauri::command]
+pub fn set_allow_network(
+    state: State<'_, AppState>,
+    dictionary_id: String,
+    allow: bool,
+) -> Result<(), String> {
+    state.set_allow_network(&dictionary_id, allow)
+}

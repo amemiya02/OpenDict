@@ -28,7 +28,7 @@
         "img-src": "'self' data:",
         "font-src": "'self'",
         "connect-src": "ipc: http://ipc.localhost",
-        "frame-src": "'self'",
+        "frame-src": "http://odentry.localhost odentry:",
         "object-src": "'none'",
         "base-uri": "'none'"
       },
@@ -47,6 +47,22 @@
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ]
+    ],
+    "createUpdaterArtifacts": true,
+    "macOS": {
+      "signingIdentity": "-"
+    }
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "",
+      "endpoints": [
+        "https://github.com/amemiya02/OpenDict/releases/latest/download/latest.json"
+      ],
+      "requireSignedVersion": true,
+      "windows": {
+        "installMode": "passive"
+      }
+    }
   }
 }

@@ -1,22 +1,29 @@
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, MutexGuard};
 
-use opendict_core::{Error as CoreError, Library, Move, OpenError, Registration};
+use opendict_core::{Error as CoreError, Library, Move, OpenError, Preferences, Registration};
 use serde::{Deserialize, Serialize};
 
-/// What the shell holds between commands: the Library, or why it could not be loaded.
+use crate::entry_protocol;
+
+/// What the shell holds between commands: the Library, or why it could not be loaded, and
+/// the reader's preferences, or why they could not be read.
 pub struct AppState {
     library: Mutex<Result<Library, String>>,
+    preferences: Mutex<Result<Preferences, String>>,
 }
 
-/// An Entry as the interface receives it.
+/// An Entry as the interface receives it. Its HTML never passes through the interface:
+/// the frame loads it from the Entry scheme at `src`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct EntryView {
     pub dictionary_id: String,
     pub dictionary_title: String,
-    /// Untrusted HTML; the interface renders it only inside a sandboxed frame.
-    pub html: String,
+    /// The Entry document's URL, for a sandboxed frame.
+    pub src: String,
+    /// Whether the reader allowed this Dictionary network access.
+    pub allow_network: bool,
 }
 
 /// The Library as the Library view shows it.
@@ -95,14 +102,21 @@ pub enum Direction {
 impl AppState {
     /// Loads the Library recorded in `library_file`. With `override_folder` (from the
     /// environment, for tests and development) the Library is that one folder instead,
-    /// kept only in memory, so the reader's own Library is never touched.
-    pub fn load(library_file: &Path, override_folder: Option<PathBuf>) -> AppState {
+    /// kept only in memory, so the reader's own Library is never touched. Preferences
+    /// live in `data_dir`.
+    pub fn load(
+        library_file: &Path,
+        override_folder: Option<PathBuf>,
+        data_dir: &Path,
+    ) -> AppState {
         let library = match override_folder {
             Some(folder) => Library::open(&folder),
             None => Library::load(library_file),
         };
+        let preferences = Preferences::load(&data_dir.join("preferences.json"));
         AppState {
             library: Mutex::new(library.map_err(|error| error.to_string())),
+            preferences: Mutex::new(preferences.map_err(|error| error.to_string())),
         }
     }
 
@@ -137,11 +151,58 @@ impl AppState {
         Ok(entries
             .into_iter()
             .map(|entry| EntryView {
+                src: entry_protocol::entry_url(&entry.dictionary_id, headword),
+                allow_network: self.allows_network(&entry.dictionary_id),
                 dictionary_id: entry.dictionary_id,
                 dictionary_title: entry.dictionary_title,
-                html: entry.html,
             })
             .collect())
+    }
+
+    /// The HTML of one Dictionary's Entry for exactly `headword`.
+    pub fn entry_html(
+        &self,
+        dictionary_id: &str,
+        headword: &str,
+    ) -> Result<Option<String>, String> {
+        let guard = self.lock();
+        let Ok(library) = &*guard else {
+            return Ok(None);
+        };
+        library
+            .entry(dictionary_id, headword)
+            .map(|entry| entry.map(|e| e.html))
+            .map_err(|error| error.to_string())
+    }
+
+    /// A file one Dictionary's Entries refer to.
+    pub fn resource(&self, dictionary_id: &str, path: &str) -> Result<Option<Vec<u8>>, String> {
+        let guard = self.lock();
+        let Ok(library) = &*guard else {
+            return Ok(None);
+        };
+        library
+            .resource(dictionary_id, path)
+            .map_err(|error| error.to_string())
+    }
+
+    /// Whether the reader allowed the Dictionary network access. If the preferences
+    /// cannot be read, no Dictionary has it.
+    pub fn allows_network(&self, dictionary_id: &str) -> bool {
+        let preferences = self.preferences.lock().unwrap_or_else(|e| e.into_inner());
+        preferences
+            .as_ref()
+            .is_ok_and(|p| p.allows_network(dictionary_id))
+    }
+
+    pub fn set_allow_network(&self, dictionary_id: &str, allow: bool) -> Result<(), String> {
+        let mut preferences = self.preferences.lock().unwrap_or_else(|e| e.into_inner());
+        match preferences.as_mut() {
+            Ok(p) => p
+                .set_allows_network(dictionary_id, allow)
+                .map_err(|e| e.to_string()),
+            Err(reason) => Err(reason.clone()),
+        }
     }
 
     pub fn library(&self) -> LibraryView {
@@ -292,7 +353,7 @@ mod tests {
             .registered_to(EMAIL, CODE, Identity::Utf16)
             .write_to(&bought)
             .unwrap();
-        let state = AppState::load(&data.path().join("library.json"), None);
+        let state = AppState::load(&data.path().join("library.json"), None, data.path());
         let view = serde_json::to_value(state.add_folder(folder.path()).unwrap()).unwrap();
         assert_eq!(
             view["failures"],
@@ -315,7 +376,7 @@ mod tests {
         assert_eq!(view.dictionaries[0].title, "Bought");
         assert!(view.failures.is_empty());
         assert_eq!(state.look_up("serendipity").unwrap().len(), 1);
-        let kept = AppState::load(&data.path().join("library.json"), None);
+        let kept = AppState::load(&data.path().join("library.json"), None, data.path());
         assert_eq!(kept.library().dictionaries.len(), 1, "kept for next time");
     }
 
@@ -331,7 +392,7 @@ mod tests {
     fn a_new_library_is_empty() {
         let data = tempfile::tempdir().unwrap();
 
-        let state = AppState::load(&data.path().join("library.json"), None);
+        let state = AppState::load(&data.path().join("library.json"), None, data.path());
 
         assert_eq!(
             serde_json::to_value(state.library()).unwrap(),
@@ -344,7 +405,7 @@ mod tests {
     fn an_added_folder_is_shown_and_answers_lookups() {
         let data = tempfile::tempdir().unwrap();
         let folder = library_folder();
-        let state = AppState::load(&data.path().join("library.json"), None);
+        let state = AppState::load(&data.path().join("library.json"), None, data.path());
 
         let view = serde_json::to_value(state.add_folder(folder.path()).unwrap()).unwrap();
 
@@ -367,7 +428,8 @@ mod tests {
             json!([{
                 "dictionaryId": id,
                 "dictionaryTitle": "Sample Dictionary",
-                "html": "<p>a happy accident (sample)</p>"
+                "src": entry_protocol::entry_url(id, "serendipity"),
+                "allowNetwork": false
             }])
         );
     }
@@ -376,7 +438,7 @@ mod tests {
     fn a_disabled_dictionary_no_longer_answers() {
         let data = tempfile::tempdir().unwrap();
         let folder = library_folder();
-        let state = AppState::load(&data.path().join("library.json"), None);
+        let state = AppState::load(&data.path().join("library.json"), None, data.path());
         let id = state.add_folder(folder.path()).unwrap().dictionaries[0]
             .id
             .clone();
@@ -405,7 +467,7 @@ mod tests {
         let folder = library_folder();
         let file = data.path().join("library.json");
 
-        let state = AppState::load(&file, Some(folder.path().to_owned()));
+        let state = AppState::load(&file, Some(folder.path().to_owned()), data.path());
         state.rescan().unwrap();
 
         assert_eq!(state.look_up("serendipity").unwrap().len(), 1);
@@ -418,7 +480,7 @@ mod tests {
         let file = data.path().join("library.json");
         std::fs::write(&file, "{ folders: ").unwrap();
 
-        let state = AppState::load(&file, None);
+        let state = AppState::load(&file, None, data.path());
 
         assert!(state.library().problem.is_some());
         assert!(state.rescan().is_err());

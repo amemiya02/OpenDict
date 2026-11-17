@@ -6,6 +6,7 @@
 mod error;
 mod format;
 mod library;
+mod preferences;
 mod registrations;
 mod scan;
 
@@ -15,3 +16,4 @@ pub use format::{
     Registration,
 };
 pub use library::{DictionaryInfo, Entry, Library, LibraryFolder, Move, OpenFailure};
+pub use preferences::Preferences;

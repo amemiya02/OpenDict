@@ -220,3 +220,24 @@ fn a_registration_never_shows_in_debug_output() {
     let shown = format!("{:?}", registration(EMAIL, CODE));
     assert!(!shown.contains(EMAIL) && !shown.contains(CODE), "{shown}");
 }
+
+#[test]
+fn the_resources_of_a_registered_dictionary_open_with_the_same_registration() {
+    let data = tempfile::tempdir().unwrap();
+    let folder = tempfile::tempdir().unwrap();
+    let path = put(folder.path(), "bought.mdx", &bought());
+    opendict_mdict_fixture::MddBuilder::new()
+        .resource(r"\img\a.png", b"\x89PNG sample picture")
+        .registered_to(EMAIL, CODE, Identity::Utf16)
+        .write_to(folder.path().join("bought.mdd"))
+        .unwrap();
+    let mut library = load(data.path());
+    library.add_folder(folder.path()).unwrap();
+    library.register(&path, registration(EMAIL, CODE)).unwrap();
+
+    let id = library.dictionaries().next().unwrap().id.clone();
+    assert_eq!(
+        library.resource(&id, "img/a.png").unwrap().as_deref(),
+        Some(&b"\x89PNG sample picture"[..])
+    );
+}
