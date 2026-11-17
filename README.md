@@ -4,7 +4,7 @@
 
 OpenDict is an open-source, cross-platform dictionary reader for the MDict dictionary files (`.mdx` / `.mdd`) you already own. It aims to match MDict feature for feature with a completely rebuilt interface: every dictionary answers on one page, each in its own typographic style, and every action is reachable from the keyboard.
 
-> **Status: pre-alpha.** No application code exists yet. This repository holds the founding documents and a clickable design prototype. Nothing is ready to install.
+> **Status: pre-alpha.** The first end-to-end path works: the app opens one Library Folder and looks up an exact headword in MDX 2.0 files. Nothing is ready to install.
 
 ## What is here
 
@@ -16,6 +16,10 @@ OpenDict is an open-source, cross-platform dictionary reader for the MDict dicti
 | [`docs/adr/`](docs/adr/) | Architecture decision records |
 | [`DESIGN.md`](DESIGN.md) | The design system ("The Lexicographer's Page") |
 | [`design/prototype/`](design/prototype/) | Clickable HTML prototype of the main window and the Mini Window |
+| [`crates/mdict/`](crates/mdict/) | `opendict-mdict`, the MDict parser (MIT OR Apache-2.0) |
+| [`crates/opendict-core/`](crates/opendict-core/) | `opendict-core`: Library and Lookup, no interface |
+| [`crates/mdict-fixture/`](crates/mdict-fixture/) | Writes the small MDX files the tests use |
+| [`apps/desktop/`](apps/desktop/) | The desktop app: Tauri 2 shell and React interface |
 
 To try the prototype, serve the repository root over HTTP and open `/design/prototype/`:
 
@@ -24,6 +28,21 @@ python -m http.server 8000
 ```
 
 Then open <http://localhost:8000/design/prototype/>. Every entry in the prototype is a written sample, not taken from a real dictionary.
+
+## Developing
+
+You need Rust (stable), Node.js 24 or later, and the [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/) for your platform.
+
+```bash
+cargo test --workspace                       # parser, core and shell tests
+cargo run -p opendict-mdict-fixture --example sample_library -- sample-library
+cd apps/desktop
+npm ci
+npm run typecheck && npm run lint && npm test
+OPENDICT_LIBRARY_FOLDER=../../sample-library npx tauri dev
+```
+
+The app reads its Library Folder from `libraryFolder` in `config.json` in its configuration directory, or from the `OPENDICT_LIBRARY_FOLDER` environment variable. On Windows, `npx tauri build --debug --no-bundle && npm run e2e` runs the end-to-end smoke test against the built app.
 
 ## Planned
 
@@ -38,7 +57,7 @@ See [`docs/roadmap.md`](docs/roadmap.md) for the full plan.
 
 ## License
 
-The application is licensed under the [GNU GPL v3.0 or later](LICENSE). The MDict parsing library (`crates/mdict`, not yet written) will be licensed MIT OR Apache-2.0 so other projects can reuse it. See [ADR-0001](docs/adr/0001-gpl-app-permissive-parser.md).
+The application is licensed under the [GNU GPL v3.0 or later](LICENSE). The MDict parsing library (`crates/mdict`) is licensed MIT OR Apache-2.0 so other projects can reuse it. See [ADR-0001](docs/adr/0001-gpl-app-permissive-parser.md).
 
 OpenDict ships no dictionaries. Use dictionaries you have the right to use.
 
@@ -48,7 +67,7 @@ OpenDict ships no dictionaries. Use dictionaries you have the right to use.
 
 OpenDict 是一个开源、跨平台的词典客户端，用来阅读你已有的 MDict 词典文件（`.mdx` / `.mdd`）。目标是在功能上全面对标 MDict，界面完全重新设计：一次查询里所有词典在同一页作答，各自保留原有排版，所有操作都能用键盘完成。
 
-> **当前状态：预览前阶段。** 还没有应用代码，本仓库目前只有项目文档和一个可点击的设计原型，暂无可安装的版本。
+> **当前状态：预览前阶段。** 第一条端到端路径已经打通：应用能打开一个词库文件夹，在 MDX 2.0 文件里精确查找词头。暂无可安装的版本。
 
 ### 仓库内容
 
@@ -60,6 +79,10 @@ OpenDict 是一个开源、跨平台的词典客户端，用来阅读你已有�
 | [`docs/adr/`](docs/adr/) | 架构决策记录 |
 | [`DESIGN.md`](DESIGN.md) | 设计系统（「辞书版面」） |
 | [`design/prototype/`](design/prototype/) | 主窗口和迷你窗口的可点击 HTML 原型 |
+| [`crates/mdict/`](crates/mdict/) | `opendict-mdict`，MDict 解析库（MIT 或 Apache-2.0） |
+| [`crates/opendict-core/`](crates/opendict-core/) | `opendict-core`：词库与查词，不含界面 |
+| [`crates/mdict-fixture/`](crates/mdict-fixture/) | 生成测试用的小型 MDX 文件 |
+| [`apps/desktop/`](apps/desktop/) | 桌面应用：Tauri 2 外壳和 React 界面 |
 
 试用原型：在仓库根目录启动一个 HTTP 服务，再打开 `/design/prototype/`：
 
@@ -68,6 +91,10 @@ python -m http.server 8000
 ```
 
 然后访问 <http://localhost:8000/design/prototype/>。原型里的词条都是手写的示例，并非来自真实词典。
+
+### 开发
+
+需要 Rust（stable）、Node.js 24 或更新版本，以及所用平台的 [Tauri 前置依赖](https://v2.tauri.app/start/prerequisites/)。命令见上方英文部分的 “Developing”。应用从配置目录下 `config.json` 的 `libraryFolder` 读取词库文件夹，也可以用环境变量 `OPENDICT_LIBRARY_FOLDER` 指定。
 
 ### 计划
 
@@ -82,6 +109,6 @@ python -m http.server 8000
 
 ### 许可证
 
-应用以 [GNU GPL v3.0 或更新版本](LICENSE) 发布。MDict 解析库（`crates/mdict`，尚未编写）将以 MIT 或 Apache-2.0 双许可发布，方便其他项目复用。详见 [ADR-0001](docs/adr/0001-gpl-app-permissive-parser.md)。
+应用以 [GNU GPL v3.0 或更新版本](LICENSE) 发布。MDict 解析库（`crates/mdict`）以 MIT 或 Apache-2.0 双许可发布，方便其他项目复用。详见 [ADR-0001](docs/adr/0001-gpl-app-permissive-parser.md)。
 
 OpenDict 不附带任何词典，请使用你有权使用的词典。

@@ -1,0 +1,29 @@
+[package]
+name = "opendict-desktop"
+version = "0.1.0"
+description = "OpenDict desktop application"
+license = "GPL-3.0-or-later"
+publish = false
+edition.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+
+[lib]
+name = "opendict_desktop_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+opendict-core.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tauri = { version = "2", features = [] }
+
+[dev-dependencies]
+opendict-mdict-fixture.workspace = true
+tempfile.workspace = true
+
+[lints]
+workspace = true

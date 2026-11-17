@@ -1,0 +1,127 @@
+@import "tailwindcss";
+
+/*
+ * Design tokens from DESIGN.md ("The Lexicographer's Page").
+ * Raw palette first, then the semantic names the interface uses, which switch with the theme.
+ */
+@theme {
+  --color-*: initial;
+
+  --color-vermilion: #c9361d;
+  --color-vermilion-night: #f0553a;
+  --color-india-paper: #f5f5f0;
+  --color-paper-shade: #e8e8e0;
+  --color-ink: #141518;
+  --color-ink-secondary: #55575f;
+  --color-hairline: #cfcfc7;
+  --color-here-ink: #ffffff;
+  --color-cover-black: #16171a;
+  --color-cover-edge: #3a3c43;
+  --color-on-cover: #f0f0ea;
+  --color-on-cover-muted: #a6a8af;
+  --color-bookcloth-navy: #111a30;
+  --color-bookcloth-raised: #1b2745;
+  --color-night-cover: #0a1020;
+  --color-night-field: #1e2a4a;
+  --color-night-paper-ink: #ece9df;
+  --color-night-ink-secondary: #a6adc0;
+  --color-night-hairline: #2a3757;
+  --color-night-rule: #8791ad;
+  --color-cloth-notch: #33426a;
+
+  --font-serif: "Charis SIL", "Noto Serif SC", "Noto Serif JP", "Songti SC", "Yu Mincho", serif;
+  --font-serif-ja: "Charis SIL", "Noto Serif JP", "Yu Mincho", "Hiragino Mincho ProN", serif;
+  --font-sans: "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, "Microsoft YaHei UI", "PingFang SC", "Hiragino Sans", "Yu Gothic UI", sans-serif;
+
+  --text-display: 38px;
+  --text-display--line-height: 1.15;
+  --text-headline: 24px;
+  --text-headline--line-height: 1.15;
+  --text-search: 17px;
+  --text-index: 15px;
+  --text-index--line-height: 26px;
+  --text-title: 12px;
+  --text-body: 13px;
+  --text-body--line-height: 1.45;
+  --text-label: 11.5px;
+
+  --radius-sharp: 2px;
+  --radius-window: 8px;
+
+  --spacing-xs: 4px;
+  --spacing-sm: 8px;
+  --spacing-md: 12px;
+  --spacing-lg: 16px;
+  --spacing-xl: 34px;
+
+  --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+/* Semantic colours. Day is the open page; night is the closed book (navy bookcloth). */
+:root {
+  color-scheme: light dark;
+  --paper: var(--color-india-paper);
+  --paper-shade: var(--color-paper-shade);
+  --ink: var(--color-ink);
+  --ink-secondary: var(--color-ink-secondary);
+  --hairline: var(--color-hairline);
+  --rule: var(--color-ink);
+  --here: var(--color-vermilion);
+  --cover: var(--color-cover-black);
+  --field: var(--color-india-paper);
+  --field-ink: var(--color-ink);
+  --field-ink-secondary: var(--color-ink-secondary);
+  --field-hover: var(--color-paper-shade);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --paper: var(--color-bookcloth-navy);
+    --paper-shade: var(--color-bookcloth-raised);
+    --ink: var(--color-night-paper-ink);
+    --ink-secondary: var(--color-night-ink-secondary);
+    --hairline: var(--color-night-hairline);
+    --rule: var(--color-night-rule);
+    --here: var(--color-vermilion-night);
+    --cover: var(--color-night-cover);
+    --field: var(--color-night-field);
+    --field-ink: var(--color-night-paper-ink);
+    --field-ink-secondary: var(--color-night-ink-secondary);
+    --field-hover: #2a385e;
+  }
+}
+
+@theme inline {
+  --color-paper: var(--paper);
+  --color-shade: var(--paper-shade);
+  --color-text: var(--ink);
+  --color-text-secondary: var(--ink-secondary);
+  --color-hair: var(--hairline);
+  --color-rule: var(--rule);
+  --color-here: var(--here);
+  --color-cover: var(--cover);
+  --color-field: var(--field);
+  --color-field-text: var(--field-ink);
+  --color-field-text-secondary: var(--field-ink-secondary);
+  --color-field-hover: var(--field-hover);
+}
+
+@layer base {
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+  body {
+    @apply bg-paper font-sans text-body text-text antialiased;
+    caret-color: var(--here);
+    accent-color: var(--here);
+    overflow: hidden;
+  }
+  ::selection {
+    background: color-mix(in srgb, var(--here) 30%, transparent);
+  }
+  :lang(ja) {
+    --font-serif: var(--font-serif-ja);
+  }
+}
