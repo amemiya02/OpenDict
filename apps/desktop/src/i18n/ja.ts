@@ -63,6 +63,7 @@ export const ja = {
   indexFailed: (reason: string) => `索引を作成できませんでした：${reason}`,
   libraryActionFailed: (reason: string) => `うまくいきませんでした：${reason}`,
   headwordColumn: "見出し語欄",
+  toggleColumn: "見出し語欄の表示切り替え",
   headwords: "見出し語",
   suggestions: "候補",
   noMatchingHeadwords: "一致する見出し語がありません",

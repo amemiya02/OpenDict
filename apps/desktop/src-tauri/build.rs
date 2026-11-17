@@ -24,6 +24,7 @@ fn main() {
         "set_zoom",
         "index_library",
         "cancel_indexing",
+        "window_chrome",
     ]);
     tauri_build::try_build(tauri_build::Attributes::new().app_manifest(manifest))
         .expect("failed to run tauri-build");

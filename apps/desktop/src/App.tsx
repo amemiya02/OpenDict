@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { EntryFrame } from "./components/EntryFrame";
-import { HeadwordColumn, optionId, type ColumnList } from "./components/HeadwordColumn";
+import { COLUMN_ID, HeadwordColumn, optionId, type ColumnList } from "./components/HeadwordColumn";
 import { NavButtons } from "./components/NavButtons";
 import { RecentLookups } from "./components/RecentLookups";
 import { sectionId, ThumbIndex } from "./components/ThumbIndex";
@@ -28,9 +28,11 @@ import {
   setAllowNetwork,
   setAsAuthored,
   setDictionaryEnabled,
+  windowChrome,
   type Entry,
   type Library,
   type RegisterError,
+  type WindowChrome,
   type Suggestion,
 } from "./lib/ipc";
 import { useAppearance, type Scheme } from "./lib/useAppearance";
@@ -63,6 +65,11 @@ export function App() {
   const [trail, setTrail] = useState(emptyTrail);
   /** Where the word on the page stands in History, or -1. */
   const historySelected = page.kind === "found" ? history.indexOf(page.headword) : -1;
+  const [platform, setPlatform] = useState<WindowChrome["platform"] | null>(null);
+  /** Narrow windows: the reader opened the headword column with the toggle in the cover band. */
+  const [columnOpen, setColumnOpen] = useState(false);
+  /** Narrow windows: the reader is typing, so the column shows over the page until a word is chosen. */
+  const [typing, setTyping] = useState(false);
   const pageRef = useRef<HTMLElement>(null);
   const column = useHeadwordColumn();
   const appearance = useAppearance();
@@ -101,6 +108,22 @@ export function App() {
     getHistory().then((words) => setHistory(asWords(words)), () => {});
   }, []);
 
+  // The shell says what it built the window with: the styles leave room for the title bar
+  // controls and let the system material show through (see styles.css).
+  useEffect(() => {
+    windowChrome().then(
+      (chrome: WindowChrome | null) => {
+        if (!chrome) return; // a fake shell that answers nothing
+        const root = document.documentElement;
+        root.dataset.platform = chrome.platform;
+        if (chrome.material) root.dataset.material = chrome.material;
+        else delete root.dataset.material;
+        setPlatform(chrome.platform);
+      },
+      () => {}, // no shell (or an old one): plain solid window
+    );
+  }, []);
+
   // Moving between the page and the Library puts the reader at the top of the new view.
   useEffect(() => {
     pageRef.current?.scrollTo?.({ top: 0 });
@@ -132,6 +155,7 @@ export function App() {
   /** The reader's query changed: new suggestions, and the first match on the page at once. */
   async function changeQuery(text: string) {
     setList("suggestions");
+    setTyping(true);
     try {
       const answer = await column.refresh(text);
       if (!answer) return;
@@ -172,11 +196,18 @@ export function App() {
    * the latest step for Back and Forward.
    */
   async function commit(headword: string) {
+    putColumnAway();
     type(headword);
     await show(headword, () => {
       setTrail((now) => visit(now, headword));
       recordLookup(headword).then((words) => setHistory(asWords(words)), () => {});
     });
+  }
+
+  /** A narrow window's column overlay goes once a word is chosen. */
+  function putColumnAway() {
+    setTyping(false);
+    setColumnOpen(false);
   }
 
   /** An `entry://` link in an Entry: the linked headword, as if the reader had typed and chosen it. */
@@ -192,9 +223,12 @@ export function App() {
   }
 
   function commitCurrent() {
-    const { items, selected } = column.state;
-    const current = list === "history" ? history[historySelected] : items[selected]?.headword;
-    const headword = current ?? query.trim();
+    const { items, selected, query: answered } = column.state;
+    // Until the shell answers the latest text, the suggestions belong to an earlier query:
+    // Enter then takes what was typed, not the earlier query's current headword.
+    const fresh = answered === typed.current;
+    const current = list === "history" ? history[historySelected] : fresh ? items[selected]?.headword : undefined;
+    const headword = current ?? typed.current.trim();
     if (headword) void commit(headword);
   }
 
@@ -339,10 +373,32 @@ export function App() {
   const columnSelected = list === "history" ? historySelected : selected;
 
   return (
-    <div className="grid h-full grid-cols-[264px_minmax(0,1fr)] grid-rows-[48px_minmax(0,1fr)_26px] max-[860px]:grid-cols-[200px_minmax(0,1fr)]">
-      <header className="col-span-2 flex items-center bg-cover text-on-cover select-none">
-        <div className="flex w-[264px] flex-none items-center gap-sm pr-3.5 pl-lg max-[860px]:w-[200px]">
-          <span className="font-serif text-[17px] font-bold">{t.appName}</span>
+    <div className="grid h-full grid-cols-[264px_minmax(0,1fr)] grid-rows-[48px_minmax(0,1fr)_26px] max-[860px]:grid-cols-[200px_minmax(0,1fr)] max-[620px]:grid-cols-[minmax(0,1fr)]">
+      <header
+        // On macOS the cover band is the title bar (the system's controls sit at its left).
+        data-tauri-drag-region={platform === "macos" ? "deep" : undefined}
+        className="col-span-full flex items-center bg-cover text-on-cover select-none"
+      >
+        <div className="flex w-[264px] flex-none items-center gap-sm pr-3.5 pl-lg max-[860px]:w-[200px] max-[620px]:w-auto max-[620px]:pr-1.5 macos:pl-20">
+          <span className="font-serif text-[17px] font-bold max-[620px]:hidden">{t.appName}</span>
+          <button
+            type="button"
+            aria-label={t.toggleColumn}
+            aria-controls={COLUMN_ID}
+            aria-expanded={columnOpen || typing}
+            // Keep the caret in the search field: the toggle answers what is shown now.
+            onMouseDown={(event) => event.preventDefault()}
+            onClick={() => {
+              setTyping(false);
+              setColumnOpen(!(columnOpen || typing));
+            }}
+            className="hidden size-6.5 place-items-center rounded-sharp text-on-cover-muted hover:bg-cover-edge hover:text-on-cover max-[620px]:grid"
+          >
+            <svg className="size-4 fill-none stroke-current stroke-[1.2]" viewBox="0 0 16 16" aria-hidden="true">
+              <rect x="2.5" y="3" width="11" height="10" />
+              <path d="M6.5 3v10" />
+            </svg>
+          </button>
         </div>
         <NavButtons canGoBack={canStep(trail, -1)} canGoForward={canStep(trail, 1)} onGo={go} />
         <div className="flex min-w-0 flex-1 pr-lg">
@@ -353,6 +409,8 @@ export function App() {
             onQuery={(text) => void changeQuery(text)}
             onMove={(by) => void move(by)}
             onCommit={commitCurrent}
+            onEscape={putColumnAway}
+            onBlur={() => setTyping(false)}
           />
         </div>
       </header>
@@ -376,10 +434,14 @@ export function App() {
           setView("lookup");
         }}
         onClearHistory={forgetHistory}
-        onToggleLibrary={() => setView(view === "library" ? "lookup" : "library")}
+        onToggleLibrary={() => {
+          setColumnOpen(false);
+          setView(view === "library" ? "lookup" : "library");
+        }}
+        open={columnOpen || typing}
       />
 
-      <div className="grid min-h-0 grid-cols-[minmax(0,1fr)_auto]">
+      <div className="grid min-h-0 grid-cols-[minmax(0,1fr)_auto] bg-paper">
         <main ref={pageRef} aria-label={t.pageLabel} className="min-h-0 overflow-y-auto pt-[18px] pr-[30px] pb-12 pl-xl">
           {view === "library" && library ? (
             <>
@@ -417,7 +479,7 @@ export function App() {
         ) : null}
       </div>
 
-      <footer className="flex items-center gap-[18px] overflow-hidden border-t border-rule px-xl text-label whitespace-nowrap text-text-secondary tabular-nums select-none">
+      <footer className="flex items-center bg-paper gap-[18px] overflow-hidden border-t border-rule px-xl text-label whitespace-nowrap text-text-secondary tabular-nums select-none">
         <span>{library && !library.problem ? t.libraryCount(enabledCount) : null}</span>
         <UpdateNotice />
       </footer>

@@ -48,6 +48,37 @@ async function lookUpSerendipity() {
 }
 
 describe("main window", () => {
+  it("Enter takes the typed word when the suggestions still answer an earlier query", async () => {
+    const lookedUp: string[] = [];
+    mockIPC((command, args) => {
+      if (command === "library")
+        return { folders: [], dictionaries: [], indexing: null, failures: [], problem: null };
+      if (command === "look_up") {
+        const { headword } = args as { headword: string };
+        lookedUp.push(headword);
+        return [{ ...sample, src: `${sample.src}&for=${headword}` }];
+      }
+      if (command === "suggest") {
+        const query = (args as { query: string }).query.trim();
+        // The shell is slow to answer the whole word; earlier queries offered "serene".
+        if (query === "serendipity") return new Promise(() => {});
+        return { items: [{ headword: "serene", count: 1 }], lemma: null, near: false, miss: false, browse: !query };
+      }
+      if (command === "headwords_after") return [];
+      throw new Error(`unexpected command ${command}`);
+    }, { shouldMockEvents: true });
+    render(
+      <I18nProvider locale="en">
+        <App />
+      </I18nProvider>,
+    );
+
+    await userEvent.type(screen.getByRole("combobox", { name: "Type a word" }), "serendipity{Enter}");
+
+    expect(await screen.findByRole("heading", { level: 1, name: "【serendipity】" })).toBeTruthy();
+    expect(lookedUp.at(-1)).toBe("serendipity");
+  });
+
   it("loads the Entry into a frame that may run scripts but stays on an opaque origin", async () => {
     fakeShell();
 

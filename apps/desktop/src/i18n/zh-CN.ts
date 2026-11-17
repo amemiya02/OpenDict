@@ -63,6 +63,7 @@ export const zhCN = {
   indexFailed: (reason: string) => `无法建立索引：${reason}`,
   libraryActionFailed: (reason: string) => `操作没有成功：${reason}`,
   headwordColumn: "词头栏",
+  toggleColumn: "显示或隐藏词头栏",
   headwords: "词头",
   suggestions: "联想",
   noMatchingHeadwords: "没有匹配的词头",
