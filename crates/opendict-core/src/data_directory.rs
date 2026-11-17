@@ -31,6 +31,10 @@ const DATA: [&str; 6] = [
 /// The file in the home folder that says where the data directory is, once it has moved.
 const POINTER: &str = "data-directory.json";
 
+/// The file that says the OpenDict data beside it is not anyone's data: a move into the
+/// folder has not finished, or a move out of it has and left something behind.
+const MOVING: &str = ".opendict-moving";
+
 /// The folder the reader's Library record, registrations, indexes, preferences, History
 /// and Word Books are kept in.
 #[derive(Debug, Clone)]
@@ -74,6 +78,13 @@ impl DataDirectory {
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => home.to_owned(),
             Err(error) => return Err(failed(&pointer, error)),
         };
+        // The home folder is made when something is first saved; a folder the data was
+        // moved to must still be there.
+        if path != home && !path.is_dir() {
+            return Err(Error::DataDirectoryMissing(path));
+        }
+        // A move into this folder finished, but stopped before it could say so.
+        let _ = std::fs::remove_file(path.join(MOVING));
         Ok(DataDirectory {
             home: home.to_owned(),
             path,
@@ -124,11 +135,35 @@ impl DataDirectory {
         to: &Path,
         progress: &mut dyn FnMut(MoveProgress) -> ControlFlow<()>,
     ) -> Result<Option<Relocation>> {
+        let here = resolve(&self.path);
+        let there = resolve(to);
+        if there == here {
+            return Ok(Some(Relocation::default()));
+        }
+        if there.starts_with(&here) {
+            return Err(failed(to, "it is inside the data directory"));
+        }
+        let marker = to.join(MOVING);
+        if marker.exists() {
+            // An earlier move into this folder was cut short; what it copied is not
+            // anyone's data yet.
+            clear_unfinished(to).map_err(|error| failed(to, error))?;
+        }
+        if holds_data(to) {
+            return Err(Error::DataDirectoryHoldsData(to.to_owned()));
+        }
         let present: Vec<&str> = DATA
             .into_iter()
             .filter(|name| self.path.join(name).exists())
             .collect();
+        let made = !to.exists();
         std::fs::create_dir_all(to).map_err(|error| failed(to, error))?;
+        // Marks everything copied as unfinished until the move is done, so a move cut
+        // short is recognised (and cleared) when the folder is chosen again.
+        if let Err(error) = write_durably(&marker, b"") {
+            undo(to, made);
+            return Err(failed(to, error));
+        }
 
         let mut copy = Copy {
             done: 0,
@@ -138,53 +173,75 @@ impl DataDirectory {
                 .sum(),
             progress,
         };
-        let mut copied = Vec::new();
         let mut outcome = Ok(ControlFlow::Continue(()));
         for name in &present {
-            copied.push(to.join(name));
             outcome = copy.entry(&self.path.join(name), &to.join(name));
             if !matches!(outcome, Ok(ControlFlow::Continue(()))) {
                 break;
             }
         }
         let switched = match outcome {
-            Ok(ControlFlow::Continue(())) => self.point_to(to),
+            Ok(ControlFlow::Continue(())) => point(&self.home, to),
             Ok(ControlFlow::Break(())) => {
-                remove_all(&copied);
+                undo(to, made);
                 return Ok(None);
             }
             Err(error) => Err(error),
         };
         if let Err(error) = switched {
-            remove_all(&copied);
+            undo(to, made);
             return Err(error);
         }
+        // The data is in its new place from here on; the marker only says so twice.
+        let _ = std::fs::remove_file(&marker);
 
+        // The old copy goes last. It is marked first, so whatever of it cannot be removed
+        // now is known for a leftover and never stops the data moving back.
         let old = std::mem::replace(&mut self.path, to.to_owned());
-        let left_behind = present
+        let _ = write_durably(&old.join(MOVING), b"");
+        let left_behind: Vec<PathBuf> = present
             .iter()
             .map(|name| old.join(name))
             .filter(|path| remove(path).is_err())
             .collect();
+        if left_behind.is_empty() {
+            let _ = std::fs::remove_file(old.join(MOVING));
+        }
         Ok(Some(Relocation { left_behind }))
     }
 
-    /// Records in the home folder that the data directory is `to`, in one step.
-    fn point_to(&self, to: &Path) -> Result<()> {
-        let pointer = self.home.join(POINTER);
-        if to == self.home {
-            return match std::fs::remove_file(&pointer) {
-                Ok(()) => Ok(()),
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
-                Err(error) => Err(failed(&pointer, error)),
-            };
+    /// Uses the data already in `folder` (made if it does not exist, to start afresh
+    /// there) from now on, given the app's home. The data in use until now is left as it
+    /// was, wherever it is. This is how a second computer takes up data from a synced
+    /// folder, and how a reader whose data directory has gone chooses another.
+    pub fn use_folder(home: &Path, folder: &Path) -> Result<DataDirectory> {
+        std::fs::create_dir_all(folder).map_err(|error| failed(folder, error))?;
+        if folder.join(MOVING).exists() {
+            // Only a copy that never finished, or a leftover, is here: not data to use.
+            clear_unfinished(folder).map_err(|error| failed(folder, error))?;
         }
-        let text = serde_json::to_string_pretty(&Pointer { path: to.to_owned() })
-            .expect("the pointer serialises");
-        let partial = pointer.with_extension("json.partial");
-        write_durably(&partial, text.as_bytes()).map_err(|error| failed(&pointer, error))?;
-        std::fs::rename(&partial, &pointer).map_err(|error| failed(&pointer, error))
+        point(home, folder)?;
+        DataDirectory::locate(home)
     }
+}
+
+/// Records in the app's `home` that the data directory is `to`, in one step.
+fn point(home: &Path, to: &Path) -> Result<()> {
+    let pointer = home.join(POINTER);
+    if resolve(to) == resolve(home) {
+        return match std::fs::remove_file(&pointer) {
+            Ok(()) => Ok(()),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(error) => Err(failed(&pointer, error)),
+        };
+    }
+    let text = serde_json::to_string_pretty(&Pointer {
+        path: to.to_owned(),
+    })
+    .expect("the pointer serialises");
+    let partial = pointer.with_extension("json.partial");
+    write_durably(&partial, text.as_bytes()).map_err(|error| failed(&pointer, error))?;
+    std::fs::rename(&partial, &pointer).map_err(|error| failed(&pointer, error))
 }
 
 /// A copy in progress, reporting as it goes.
@@ -228,6 +285,30 @@ impl Copy<'_> {
     }
 }
 
+/// Whether `folder` holds any of a reader's data.
+fn holds_data(folder: &Path) -> bool {
+    DATA.iter().any(|name| folder.join(name).exists())
+}
+
+/// `path` with links and `..` resolved, as far as it exists, so two spellings of one
+/// folder compare equal.
+fn resolve(path: &Path) -> PathBuf {
+    let mut rest = Vec::new();
+    let mut existing = path;
+    loop {
+        if let Ok(resolved) = existing.canonicalize() {
+            return rest.iter().rev().fold(resolved, |path, name| path.join(name));
+        }
+        match (existing.parent(), existing.file_name()) {
+            (Some(parent), Some(name)) => {
+                rest.push(name.to_owned());
+                existing = parent;
+            }
+            _ => return path.to_owned(),
+        }
+    }
+}
+
 /// The bytes in the file or folder at `path`.
 fn size(path: &Path) -> u64 {
     match std::fs::metadata(path) {
@@ -252,10 +333,22 @@ fn remove(path: &Path) -> std::io::Result<()> {
     }
 }
 
-/// Removes what a failed copy made, as far as it can.
-fn remove_all(paths: &[PathBuf]) {
-    for path in paths {
-        let _ = remove(path);
+/// Removes what an unfinished move copied into `folder`, and the marker last.
+fn clear_unfinished(folder: &Path) -> std::io::Result<()> {
+    for name in DATA {
+        let path = folder.join(name);
+        if path.exists() {
+            remove(&path)?;
+        }
+    }
+    std::fs::remove_file(folder.join(MOVING))
+}
+
+/// Takes back a move into `folder` that did not finish, as far as it can: what was
+/// copied, and the folder itself if the move `made` it.
+fn undo(folder: &Path, made: bool) {
+    if clear_unfinished(folder).is_ok() && made {
+        let _ = std::fs::remove_dir(folder);
     }
 }
 
