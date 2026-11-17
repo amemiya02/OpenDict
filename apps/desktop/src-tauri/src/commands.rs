@@ -9,11 +9,60 @@ use tauri_plugin_dialog::DialogExt;
 
 use opendict_core::ExportFormat;
 
-use crate::EXPORT_DIR_ENV;
 use crate::state::{
-    AppState, AppearanceView, Direction, ElsewhereView, EntryView, LibraryView, RegisterError,
-    SuggestionView, SuggestionsView, Theme, WordBooksView,
+    AppState, AppearanceView, DataDirectoryError, DataDirectoryView, Direction, ElsewhereView,
+    EntryView, LibraryView, RegisterError, SuggestionView, SuggestionsView, Theme, WordBooksView,
 };
+use crate::{EXPORT_DIR_ENV, PICK_DATA_FOLDER_ENV};
+
+/// Where the reader's data is kept.
+#[tauri::command]
+pub fn data_directory(state: State<'_, AppState>) -> DataDirectoryView {
+    state.data_directory()
+}
+
+/// Asks the reader for a folder for their data with the system dialog. Returns `None`
+/// when the reader cancels. The dialog runs on the Rust side, so the interface needs no
+/// dialog permission of its own.
+#[tauri::command]
+pub async fn choose_data_folder(app: AppHandle) -> Result<Option<PathBuf>, String> {
+    if let Some(folder) = std::env::var_os(PICK_DATA_FOLDER_ENV) {
+        return Ok(Some(folder.into()));
+    }
+    let Some(folder) = app.dialog().file().blocking_pick_folder() else {
+        return Ok(None);
+    };
+    folder
+        .into_path()
+        .map(Some)
+        .map_err(|error| error.to_string())
+}
+
+/// Moves the reader's data into `path` and uses it from then on. Indexing that was
+/// stopped for the move starts again.
+#[tauri::command]
+pub async fn move_data_directory(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    path: PathBuf,
+) -> Result<DataDirectoryView, DataDirectoryError> {
+    let moved = state.move_data_directory(&path);
+    start_indexing(&app, &state);
+    moved
+}
+
+/// Uses the data already in `path` from then on, leaving the data used until now where
+/// it is.
+#[tauri::command]
+pub async fn use_data_directory(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    path: PathBuf,
+) -> Result<DataDirectoryView, DataDirectoryError> {
+    let used = state.use_data_directory(&path);
+    start_indexing(&app, &state);
+    used
+}
 
 /// Unlocks a Dictionary that needs a registration code with the code and e-mail the
 /// reader entered; they are kept locally when they work. The unlocked Dictionary is

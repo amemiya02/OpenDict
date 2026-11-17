@@ -4,6 +4,7 @@
 //! never depends on a particular file format. Each Dictionary is indexed once (see
 //! [`Library::index_jobs`]); Lookup and the headword column read the index.
 
+mod data_directory;
 mod error;
 mod format;
 mod history;
@@ -21,6 +22,7 @@ mod registrations;
 mod scan;
 mod word_books;
 
+pub use data_directory::{DataDirectory, MoveProgress, Relocation};
 pub use error::{Error, Result};
 pub use format::{
     DictionaryFormat, DictionaryReader, FormatError, Location, MdictFormat, OpenError, RawRecord,

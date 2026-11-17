@@ -7,6 +7,7 @@ import { RecentLookups } from "./components/RecentLookups";
 import { sectionId, ThumbIndex } from "./components/ThumbIndex";
 import { EmptyLibrary, LibraryPage, OutlineButton, type LibraryActions } from "./components/LibraryPage";
 import { ReadingSettings } from "./components/ReadingSettings";
+import { DataSettings } from "./components/DataSettings";
 import { SearchField } from "./components/SearchField";
 import { UpdateNotice } from "./components/UpdateNotice";
 import { WordBookPage, type WordBookActions } from "./components/WordBookPage";
@@ -627,6 +628,7 @@ export function App() {
             <>
               <LibraryPage library={library} busy={busy} notice={notice} actions={actions} />
               <ReadingSettings controls={reading} />
+              <DataSettings />
             </>
           ) : view === "wordBook" ? (
             <WordBookPage wordBooks={wordBooks ?? { books: [], current: null }} busy={busy} notice={bookNotice} actions={bookActions} />
