@@ -115,3 +115,17 @@ export function moveDictionary(id: string, direction: "up" | "down"): Promise<Li
 export function setAllowNetwork(dictionaryId: string, allow: boolean): Promise<void> {
   return invoke<void>("set_allow_network", { dictionaryId, allow });
 }
+
+/** The headwords of committed Lookups, newest first. */
+export function getHistory(): Promise<string[]> {
+  return invoke<string[]>("history");
+}
+
+/** Records a committed Lookup (Enter, a click, a followed link); resolves to History as it now is. */
+export function recordLookup(headword: string): Promise<string[]> {
+  return invoke<string[]>("record_lookup", { headword });
+}
+
+export function clearHistory(): Promise<void> {
+  return invoke<void>("clear_history");
+}
