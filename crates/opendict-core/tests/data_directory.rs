@@ -20,7 +20,7 @@ fn sample() -> MdxBuilder {
 /// Fills `data` the way the app does: a Library with one indexed Dictionary from
 /// `dictionaries`, History, a Word Book and a per-Dictionary preference.
 fn fill(data: &DataDirectory, dictionaries: &Path) {
-    sample().write_to(&dictionaries.join("sample.mdx")).unwrap();
+    sample().write_to(dictionaries.join("sample.mdx")).unwrap();
     let mut library = Library::load(&data.library_file()).unwrap();
     library.add_folder(dictionaries).unwrap();
     library.build_indexes();
