@@ -33,7 +33,7 @@ Vocabulary (Dictionary, Library, Group, Entry, Lookup and so on) is defined in [
 - **Shell.** Tauri 2 (stable). Move to Tauri 3 once it is stable; it was at 3.0.0-alpha in November 2026. Keep Tauri-specific code in a thin layer so the move stays cheap.
 - **Stack.** Rust for parsing, indexing and Lookup. React 19, TypeScript, Vite and Tailwind CSS 4 for the interface, which runs in the system WebView (see `CLAUDE.md` for the web platform policy).
 - **Repository layout.**
-  - `crates/mdict`: the MDict parser, licensed MIT OR Apache-2.0, publishable on its own.
+  - `crates/mdict`: the MDict parser, licensed MIT OR Apache-2.0, publishable on its own as the package `opendict-mdict` (imported as `opendict_mdict`; the names `mdict`, `mdict-rs` and `mdx` are taken on crates.io).
   - `crates/opendict-core`: Library, index, Lookup, Word Books; no UI. GPL-3.0-or-later.
   - `apps/desktop`: the Tauri shell and React interface. GPL-3.0-or-later.
 
