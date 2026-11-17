@@ -166,6 +166,169 @@ const n=d.size;if(Number.isInteger(n)&&n>=10&&n<=32)ts.textContent=":where(html)
 addEventListener("keydown",e=>{if(e.key==="Escape"&&!e.isComposing&&!e.defaultPrevented)parent.postMessage({opendict:"escape"},"*")});
 })();"#;
 
+/// Takes WebRTC away from the Entry before any of its scripts run. A peer connection
+/// reaches the network (STUN, TURN, peers) past every content security policy, so an
+/// Entry never has one, network access or not. Every `RTC…` interface object on the
+/// window is replaced by a fixed `undefined`. Frames the Entry makes cannot load anything
+/// (`frame-src 'none'`), so there is no fresh window to take the constructors from.
+const WEBRTC_LOCKDOWN: &str = r#"for(const n of Object.getOwnPropertyNames(window))if(/^(webkit)?RTC/.test(n))try{Object.defineProperty(window,n,{value:undefined,writable:false,configurable:false})}catch{}
+"#;
+
+/// The `rel` keywords of `<link>` that make the engine open connections or fetch ahead on
+/// its own. Chromium opens a connection for `preconnect` whatever the content security
+/// policy says, so a Dictionary without network access could still reach a host.
+const RESOURCE_HINTS: &[&str] = &[
+    "preconnect",
+    "dns-prefetch",
+    "prefetch",
+    "prerender",
+    "preload",
+    "modulepreload",
+];
+
+/// Entry HTML without its resource hints: every `<link>` tag whose `rel` names one is
+/// left out. Tags are read the way an HTML tokenizer reads them (any letter case,
+/// attributes split by white space or `/`, quoted or bare values, character references
+/// in values), so a hint cannot hide from this and still work. A `<link` inside a
+/// comment or script text is treated as a tag too; that only removes a hint that was
+/// never going to take effect.
+fn without_resource_hints(html: &str) -> std::borrow::Cow<'_, str> {
+    let bytes = html.as_bytes();
+    let mut out = String::new();
+    let mut copied = 0;
+    let mut at = 0;
+    while let Some(found) = html[at..].find('<') {
+        let start = at + found;
+        at = start + 1;
+        let name_end = start + 5;
+        let is_link = bytes.len() >= name_end
+            && bytes[start + 1..name_end].eq_ignore_ascii_case(b"link")
+            && bytes
+                .get(name_end)
+                .is_none_or(|b| matches!(b, b'\t' | b'\n' | b'\x0c' | b'\r' | b' ' | b'/' | b'>'));
+        if !is_link {
+            continue;
+        }
+        let (end, rel) = link_tag(html, name_end);
+        let hint = rel.is_some_and(|rel| {
+            decode_references(&rel)
+                .split(['\t', '\n', '\x0c', '\r', ' '])
+                .any(|token| {
+                    RESOURCE_HINTS
+                        .iter()
+                        .any(|hint| token.eq_ignore_ascii_case(hint))
+                })
+        });
+        if hint {
+            out.push_str(&html[copied..start]);
+            copied = end;
+        }
+        at = end.max(at);
+    }
+    if copied == 0 {
+        return std::borrow::Cow::Borrowed(html);
+    }
+    out.push_str(&html[copied..]);
+    std::borrow::Cow::Owned(out)
+}
+
+/// Reads the attributes of a tag from `from` (just after its name) to just past its `>`
+/// (or the end of the text); returns that position and the first `rel` value.
+fn link_tag(html: &str, from: usize) -> (usize, Option<String>) {
+    let bytes = html.as_bytes();
+    let space = |b: u8| matches!(b, b'\t' | b'\n' | b'\x0c' | b'\r' | b' ');
+    let mut rel = None;
+    let mut at = from;
+    loop {
+        while at < bytes.len() && (space(bytes[at]) || bytes[at] == b'/') {
+            at += 1;
+        }
+        if at >= bytes.len() {
+            return (bytes.len(), rel);
+        }
+        if bytes[at] == b'>' {
+            return (at + 1, rel);
+        }
+        // The name: up to white space, `/`, `>` or `=` (a leading `=` belongs to it).
+        let name_start = at;
+        at += 1;
+        while at < bytes.len() && !space(bytes[at]) && !matches!(bytes[at], b'/' | b'>' | b'=') {
+            at += 1;
+        }
+        let name = &html[name_start..at];
+        while at < bytes.len() && space(bytes[at]) {
+            at += 1;
+        }
+        let mut value = None;
+        if bytes.get(at) == Some(&b'=') {
+            at += 1;
+            while at < bytes.len() && space(bytes[at]) {
+                at += 1;
+            }
+            match bytes.get(at) {
+                Some(&quote @ (b'"' | b'\'')) => {
+                    let value_start = at + 1;
+                    let value_end = html[value_start..]
+                        .find(quote as char)
+                        .map_or(bytes.len(), |i| value_start + i);
+                    value = Some(&html[value_start..value_end]);
+                    at = (value_end + 1).min(bytes.len());
+                }
+                _ => {
+                    let value_start = at;
+                    while at < bytes.len() && !space(bytes[at]) && bytes[at] != b'>' {
+                        at += 1;
+                    }
+                    value = Some(&html[value_start..at]);
+                }
+            }
+        }
+        if rel.is_none() && name.eq_ignore_ascii_case("rel") {
+            rel = Some(value.unwrap_or("").to_owned());
+        }
+    }
+}
+
+/// `text` with its numeric character references (`&#99;`, `&#x63;`, with or without the
+/// `;`) decoded. Named references cannot spell a letter, digit or `-`, so a `rel`
+/// keyword spelt with one is no keyword.
+fn decode_references(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(at) = rest.find("&#") {
+        out.push_str(&rest[..at]);
+        let after = &rest[at + 2..];
+        let (hex, digits) = match after.strip_prefix(['x', 'X']) {
+            Some(digits) => (true, digits),
+            None => (false, after),
+        };
+        let len = digits
+            .bytes()
+            .take_while(|b| {
+                if hex {
+                    b.is_ascii_hexdigit()
+                } else {
+                    b.is_ascii_digit()
+                }
+            })
+            .count();
+        let value = u32::from_str_radix(&digits[..len], if hex { 16 } else { 10 }).ok();
+        match value.and_then(char::from_u32).filter(|_| len > 0) {
+            Some(c) => {
+                out.push(c);
+                let consumed = &digits[len..];
+                rest = consumed.strip_prefix(';').unwrap_or(consumed);
+            }
+            None => {
+                out.push_str("&#");
+                rest = after;
+            }
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
 /// Wraps Entry HTML in a document of its own. The app sets no type inside it (the
 /// Hands-Off Entry Rule): it removes the default page margin and gives the reader's text
 /// size as the base size, the way a browser's default font size works. That rule has no
@@ -174,7 +337,8 @@ fn entry_document(html: &str, text_size: u32) -> String {
     format!(
         "<!doctype html><html><head><meta charset=\"utf-8\"><style>html,body{{margin:0}}</style>\
          <style>:where(html){{font-size:{text_size}px}}</style>\
-         <script>{FRAME_SCRIPT}</script></head><body>{html}</body></html>"
+         <script>{WEBRTC_LOCKDOWN}{FRAME_SCRIPT}</script></head><body>{}</body></html>",
+        without_resource_hints(html)
     )
 }
 
@@ -292,6 +456,16 @@ mod tests {
         MdxBuilder::new()
             .title("Plain")
             .entry("cat", "<p>cat</p>")
+            .entry(
+                "hint",
+                concat!(
+                    r#"<LINK REL="Pre&#99;onnect" href="https://hinted.invalid/">"#,
+                    r#"<link rel=stylesheet href="preload.css">"#,
+                    r#"<link/rel="icon dns-prefetch"/href=//prefetched.invalid>"#,
+                    r#"<link href="https://later.invalid/" rel='modulepreload'>"#,
+                    "<p>hint</p>",
+                ),
+            )
             .write_to(library.join("plain.mdx"))
             .unwrap();
         let state = AppState::load(&folder.path().join("data"), Some(library));
@@ -403,6 +577,37 @@ mod tests {
         // Zero specificity, ahead of the Entry: any size the Dictionary sets itself wins.
         assert!(body.contains(":where(html){font-size:20px}"), "{body}");
         assert!(body.find(":where(html)").unwrap() < body.find("<body>").unwrap());
+    }
+
+    #[test]
+    fn an_entry_document_keeps_no_resource_hints_which_would_reach_the_network() {
+        let f = fixture();
+
+        let response = get(&f.state, &entry_url(&f.plain, "hint"));
+
+        let body = String::from_utf8(response.body().clone()).unwrap();
+        for host in ["hinted.invalid", "prefetched.invalid", "later.invalid"] {
+            assert!(!body.contains(host), "{host}: {body}");
+        }
+        assert!(
+            body.contains(r#"<link rel=stylesheet href="preload.css">"#),
+            "{body}"
+        );
+        assert!(body.contains("<p>hint</p>"), "{body}");
+    }
+
+    #[test]
+    fn an_entry_document_takes_webrtc_away_before_the_entry_can_use_it() {
+        let f = fixture();
+
+        for allowed in [false, true] {
+            f.state.set_allow_network(&f.plain, allowed).unwrap();
+            let response = get(&f.state, &entry_url(&f.plain, "cat"));
+
+            let body = String::from_utf8(response.body().clone()).unwrap();
+            let lockdown = body.find(WEBRTC_LOCKDOWN).expect("the lockdown is there");
+            assert!(lockdown < body.find("<body>").unwrap(), "before the Entry");
+        }
     }
 
     #[test]

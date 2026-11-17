@@ -9,6 +9,7 @@
 // from an Entry that was not allowed the network is a failure.
 
 import { spawn, execFileSync, type ChildProcess } from "node:child_process";
+import { createSocket, type Socket } from "node:dgram";
 import { createServer, type Server } from "node:http";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { release, tmpdir } from "node:os";
@@ -27,6 +28,16 @@ const appPath = process.env.OPENDICT_APP ?? join(targetDir, "debug", process.pla
 let app: ChildProcess | undefined;
 let browser: Browser | undefined;
 let sink: Server | undefined;
+/** A UDP socket standing in for a STUN server on the network. */
+let stun: Socket | undefined;
+/** Every UDP packet that reached the stand-in STUN server. */
+const stunPackets: string[] = [];
+/** How many connections were opened to the stand-in network (a preconnect opens one). */
+let sinkConnections = 0;
+/** Where "Wandering Probe" tries to go, and the connections opened to it. */
+let elsewhere: Server | undefined;
+let elsewhereConnections = 0;
+const elsewhereRequests: string[] = [];
 let page: Page;
 let scratch = "";
 /** Every request that reached the stand-in network, in order. */
@@ -41,15 +52,27 @@ before(async () => {
     sinkRequests.push(request.url ?? "");
     response.writeHead(200, { "Content-Type": "text/plain", "Access-Control-Allow-Origin": "*" }).end("reached");
   });
+  sink.on("connection", () => sinkConnections++);
   await new Promise<void>((done) => sink!.listen(0, "127.0.0.1", done));
   const address = sink.address();
   assert.ok(address && typeof address === "object");
   const sinkUrl = `http://127.0.0.1:${address.port}`;
+  elsewhere = createServer((request, response) => {
+    elsewhereRequests.push(request.url ?? "");
+    response.writeHead(200, { "Content-Type": "text/plain" }).end("reached");
+  });
+  elsewhere.on("connection", () => elsewhereConnections++);
+  await new Promise<void>((done) => elsewhere!.listen(0, "127.0.0.1", done));
+  const elsewhereUrl = `http://127.0.0.1:${(elsewhere.address() as { port: number }).port}`;
+  stun = createSocket("udp4");
+  stun.on("message", (_message, from) => stunPackets.push(`${from.address}:${from.port}`));
+  await new Promise<void>((done) => stun!.bind(0, "127.0.0.1", done));
+  const stunAddress = `127.0.0.1:${stun.address().port}`;
 
   const cargo = (example: string, ...args: string[]) =>
     execFileSync("cargo", ["run", "-q", "-p", "opendict-mdict-fixture", "--example", example, "--", ...args], { cwd: repo, stdio: "inherit" });
   cargo("sample_library", library);
-  cargo("probe_library", join(library, "probes"), sinkUrl);
+  cargo("probe_library", join(library, "probes"), sinkUrl, stunAddress, elsewhereUrl);
   writeFileSync(join(library, "notes.mdx"), "these are notes, not a dictionary");
   // Global shortcuts no other application is likely to hold, without Alt (whose release
   // would open the menu bar of whatever window is in front). They go when the app exits.
@@ -100,6 +123,8 @@ after(async () => {
     await exited;
   }
   sink?.close();
+  stun?.close();
+  elsewhere?.close();
   // WebView2's browser processes let go of their user data folder a moment after the app exits.
   if (scratch) rmSync(scratch, { recursive: true, force: true, maxRetries: 20, retryDelay: 500 });
 });
@@ -289,6 +314,10 @@ test("an Entry's scripts run but cannot reach the app, stored data, other Dictio
     assert.ok(!results[route]!.startsWith("answered"), `${route}: ${results[route]}`);
   }
   assert.ok(!results.topNavigation!.startsWith("allowed"), `topNavigation: ${results.topNavigation}`);
+  // No peer connection, from this window or from any frame it makes.
+  for (const route of ["rtcWindow", "rtcFrameInEntry", "rtcFrameIndexed", "rtcFrameContentWindow", "rtcFrameSrcdoc"]) {
+    assert.ok(/^(no constructor|blocked|refused)/.test(results[route] ?? ""), `${route}: ${results[route]}`);
+  }
   // The link and sound it sent without a click were ignored.
   assert.equal(results.unpromptedLink, "sent");
   assert.equal(await page.getByRole("heading", { level: 1 }).innerText(), "【probe】");
@@ -298,6 +327,12 @@ test("an Entry's scripts run but cannot reach the app, stored data, other Dictio
   // frames tried, nothing reached the network.
   await new Promise((r) => setTimeout(r, 2000));
   assert.deepEqual(sinkRequests, [], "nothing reached the network");
+  assert.deepEqual(stunPackets, [], "no packet reached the STUN server");
+  // Known gap: the frame's blocked attempt to navigate itself still has WebView2 open a
+  // connection to that host (no request is sent on it). Reported, not yet prevented.
+  console.log(`Connections: ${sinkConnections} to the probes' network, ${elsewhereConnections} to where Wandering Probe navigated`);
+  assert.deepEqual(elsewhereRequests, [], "the wandering frame reached nothing");
+  assert.equal(sinkConnections, 0, "no connection was opened to the network, not even a preconnect");
   const wandering = page.getByRole("region", { name: "Wandering Probe", exact: true }).locator("iframe");
   assert.ok(!(await (await wandering.elementHandle())!.contentFrame())!.url().startsWith("http://127.0.0.1"), "the frame did not leave");
 
