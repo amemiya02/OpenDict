@@ -16,12 +16,19 @@ const newRelease = {
   rawJson: {},
 };
 
+const library = {
+  folders: [{ path: "/library", dictionaryCount: 1, problem: null }],
+  dictionaries: [{ id: "sample", title: "Sample Dictionary", path: "/library/sample.mdx", entryCount: 1, size: 2048, enabled: true }],
+  failures: [],
+  problem: null,
+};
+
 /** A fake shell whose update endpoint announces `release` (or nothing). */
 function fakeShell(release: typeof newRelease | null) {
   const calls: string[] = [];
   mockIPC((command) => {
     calls.push(command);
-    if (command === "library_status") return { kind: "ready", folder: "/library", dictionaryCount: 1 };
+    if (command === "library") return library;
     if (command === "plugin:updater|check") return release;
     return null;
   });
@@ -97,7 +104,7 @@ describe("updates", () => {
 
     mockIPC((command) => {
       if (command === "plugin:updater|check") throw "network unreachable";
-      return { kind: "ready", folder: "/library", dictionaryCount: 1 };
+      return library;
     });
     renderApp();
     await screen.findAllByText("1 dictionary");

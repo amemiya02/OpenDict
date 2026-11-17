@@ -1,8 +1,13 @@
-//! Tauri commands. Each one only forwards to [`AppState`]; no Lookup logic lives here.
+//! Tauri commands. Each one only forwards to [`AppState`]; no Library or Lookup logic
+//! lives here. Commands that scan Library Folders are `async` so they run off the main
+//! thread and the window stays responsive.
 
-use tauri::State;
+use std::path::PathBuf;
 
-use crate::state::{AppState, EntryView, LibraryStatus};
+use tauri::{AppHandle, State};
+use tauri_plugin_dialog::DialogExt;
+
+use crate::state::{AppState, Direction, EntryView, LibraryView};
 
 #[tauri::command]
 pub fn look_up(state: State<'_, AppState>, headword: String) -> Result<Vec<EntryView>, String> {
@@ -10,6 +15,52 @@ pub fn look_up(state: State<'_, AppState>, headword: String) -> Result<Vec<Entry
 }
 
 #[tauri::command]
-pub fn library_status(state: State<'_, AppState>) -> LibraryStatus {
-    state.library_status()
+pub fn library(state: State<'_, AppState>) -> LibraryView {
+    state.library()
+}
+
+/// Asks the reader for a folder with the system dialog and adds it as a Library Folder.
+/// Returns `None` when the reader cancels. The dialog runs on the Rust side, so the
+/// interface needs no file-system or dialog permissions of its own.
+#[tauri::command]
+pub async fn add_library_folder(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<Option<LibraryView>, String> {
+    let Some(folder) = app.dialog().file().blocking_pick_folder() else {
+        return Ok(None);
+    };
+    let folder = folder.into_path().map_err(|error| error.to_string())?;
+    state.add_folder(&folder).map(Some)
+}
+
+#[tauri::command]
+pub async fn remove_library_folder(
+    state: State<'_, AppState>,
+    path: PathBuf,
+) -> Result<LibraryView, String> {
+    state.remove_folder(&path)
+}
+
+#[tauri::command]
+pub async fn rescan_library(state: State<'_, AppState>) -> Result<LibraryView, String> {
+    state.rescan()
+}
+
+#[tauri::command]
+pub async fn set_dictionary_enabled(
+    state: State<'_, AppState>,
+    id: String,
+    enabled: bool,
+) -> Result<LibraryView, String> {
+    state.set_enabled(&id, enabled)
+}
+
+#[tauri::command]
+pub async fn move_dictionary(
+    state: State<'_, AppState>,
+    id: String,
+    direction: Direction,
+) -> Result<LibraryView, String> {
+    state.move_dictionary(&id, direction)
 }

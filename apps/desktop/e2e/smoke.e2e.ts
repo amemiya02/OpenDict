@@ -8,7 +8,7 @@
 // a sandboxed frame the app cannot reach into.
 
 import { spawn, execFileSync, type ChildProcess } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { after, before, test } from "node:test";
@@ -23,17 +23,24 @@ const port = 9333;
 let app: ChildProcess | undefined;
 let browser: Browser | undefined;
 let library = "";
+let webviewProfile = "";
 
 before(async () => {
   if (process.platform !== "win32") throw new Error("This smoke test drives WebView2 and runs on Windows only.");
   library = mkdtempSync(join(tmpdir(), "opendict-e2e-"));
   execFileSync("cargo", ["run", "-q", "-p", "opendict-mdict-fixture", "--example", "sample_library", "--", library], { cwd: repo, stdio: "inherit" });
+  writeFileSync(join(library, "notes.mdx"), "these are notes, not a dictionary");
+  // A throwaway WebView2 profile: the test never shares the developer's (or another
+  // test run's) profile, which WebView2 refuses to open with different arguments.
+  webviewProfile = mkdtempSync(join(tmpdir(), "opendict-e2e-webview-"));
 
   app = spawn(appPath, [], {
     env: {
       ...process.env,
       OPENDICT_LIBRARY_FOLDER: library,
-      WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: `--remote-debugging-port=${port}`,
+      WEBVIEW2_USER_DATA_FOLDER: webviewProfile,
+      // English interface, whatever the system language, so the test can find controls by name.
+      WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: `--remote-debugging-port=${port} --lang=en-US`,
     },
     stdio: "inherit",
   });
@@ -53,6 +60,7 @@ after(async () => {
   await browser?.close().catch(() => {});
   app?.kill();
   if (library) rmSync(library, { recursive: true, force: true });
+  if (webviewProfile) rmSync(webviewProfile, { recursive: true, force: true, maxRetries: 5, retryDelay: 500 });
 });
 
 test("typing a headword shows its Entry in a sandboxed frame", async () => {
@@ -106,4 +114,34 @@ test("typing a headword shows its Entry in a sandboxed frame", async () => {
   ]);
   console.log("IPC probe from inside the Entry frame:", JSON.stringify(probe));
   assert.ok(typeof probe === "string", "a call from inside the Entry frame must not reach the app");
+});
+
+test("the Library view lists the Dictionaries, and a disabled one stops answering", async () => {
+  const page = browser!.contexts()[0]!.pages()[0]!;
+  const libraryButton = page.getByRole("button", { name: "Library", exact: true });
+  await libraryButton.click();
+  await page.getByRole("heading", { level: 1, name: "【Library】" }).waitFor({ timeout: 10_000 });
+
+  const names = await page.getByRole("rowheader").allInnerTexts();
+  assert.equal(names.length, 2, `two Dictionaries, got ${JSON.stringify(names)}`);
+  assert.ok(names[0]!.includes("Sample English Dictionary") && names[1]!.includes("サンプル国語辞典"), "in Library order");
+  assert.match(await page.getByRole("listitem").filter({ hasText: "notes.mdx" }).innerText(), /Not a dictionary file/);
+  if (process.env.OPENDICT_E2E_SCREENSHOT) await page.screenshot({ path: process.env.OPENDICT_E2E_SCREENSHOT });
+
+  await page.getByRole("switch", { name: "Enable Sample English Dictionary" }).click();
+  await page.getByRole("switch", { name: "Enable Sample English Dictionary", checked: false }).waitFor({ timeout: 10_000 });
+  await page.getByRole("button", { name: "Move up: サンプル国語辞典" }).click();
+  await page.waitForFunction(() => document.querySelector("tbody th")?.textContent?.includes("サンプル国語辞典"), null, { timeout: 10_000 });
+
+  const search = page.getByRole("searchbox");
+  await search.fill("serendipity");
+  await search.press("Enter");
+  await page.getByText("Nothing found for “serendipity”.").waitFor({ timeout: 10_000 });
+
+  await libraryButton.click();
+  await page.getByRole("switch", { name: "Enable Sample English Dictionary" }).click();
+  await page.getByRole("switch", { name: "Enable Sample English Dictionary", checked: true }).waitFor({ timeout: 10_000 });
+  await search.fill("serendipity");
+  await search.press("Enter");
+  await page.locator("iframe").waitFor({ timeout: 10_000 });
 });

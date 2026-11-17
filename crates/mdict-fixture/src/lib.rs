@@ -1,12 +1,19 @@
 //! Writes small MDict files for OpenDict's tests.
 //!
 //! The tests own this writer: no real dictionary content is ever committed, so every
-//! fixture is generated from entries written in the test itself. It follows the byte
-//! layout of MDX format 2.0 (UTF-8 keys and records, zlib-compressed blocks).
+//! fixture is generated from entries written in the test itself. It writes MDX
+//! ([`MdxBuilder`]) and MDD ([`MddBuilder`]) files in format versions 1.2 and 2.0, with
+//! blocks stored plain, zlib- or LZO-compressed, in UTF-8, UTF-16, GBK or Big5, with or
+//! without an encrypted key index (`Encrypted="2"`), and can damage what it writes.
 //!
 //! ```
-//! let bytes = opendict_mdict_fixture::MdxBuilder::new()
+//! use opendict_mdict_fixture::{Compression, Encoding, MdxBuilder, Version};
+//!
+//! let bytes = MdxBuilder::new()
 //!     .title("Sample")
+//!     .version(Version::V1_2)
+//!     .encoding(Encoding::Gbk)
+//!     .compression(Compression::Lzo)
 //!     .entry("apple", "<p>a fruit</p>")
 //!     .build();
 //! assert!(!bytes.is_empty());
@@ -15,17 +22,224 @@
 use std::io::{self, Write};
 use std::path::Path;
 
-use flate2::Compression;
 use flate2::write::ZlibEncoder;
+use ripemd::{Digest, Ripemd128};
 
-/// Builds an MDX file (format 2.0, UTF-8, zlib) from headwords and their records.
+/// The MDict format version a file is written in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Version {
+    /// `GeneratedByEngineVersion="1.2"`: 32-bit numbers, a raw key index.
+    V1_2,
+    /// `GeneratedByEngineVersion="2.0"`: 64-bit numbers, a compressed, checksummed key index.
+    V2_0,
+}
+
+/// The text encoding of an MDX file's headwords and records.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Encoding {
+    Utf8,
+    /// UTF-16 little-endian, written `Encoding="UTF-16"`.
+    Utf16,
+    Gbk,
+    Big5,
+}
+
+/// How the writer stores each block.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Compression {
+    /// Block type 0: stored as is.
+    None,
+    /// Block type 1: an LZO1X stream.
+    Lzo,
+    /// Block type 2: a zlib stream.
+    Zlib,
+}
+
+/// A way to damage a written file, for testing that readers report it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Damage {
+    /// The header's checksum no longer matches its text.
+    HeaderChecksum,
+    /// A byte of the key index (the key block info table) is changed.
+    KeyIndex,
+    /// A byte in the middle of the first key block's payload is changed.
+    KeyBlock,
+    /// A byte in the middle of the first record block's payload is changed.
+    RecordBlock,
+    /// The last `n` bytes of the file are cut off.
+    Truncate(usize),
+}
+
+impl Version {
+    pub const ALL: [Version; 2] = [Version::V1_2, Version::V2_0];
+
+    fn engine_version(self) -> &'static str {
+        match self {
+            Version::V1_2 => "1.2",
+            Version::V2_0 => "2.0",
+        }
+    }
+
+    /// Appends a size, count or offset in this version's width (u32 or u64, big-endian).
+    fn put(self, out: &mut Vec<u8>, n: usize) {
+        match self {
+            Version::V1_2 => out.extend(u32::try_from(n).expect("fits in u32").to_be_bytes()),
+            Version::V2_0 => out.extend((n as u64).to_be_bytes()),
+        }
+    }
+}
+
+impl Encoding {
+    pub const ALL: [Encoding; 4] = [
+        Encoding::Utf8,
+        Encoding::Utf16,
+        Encoding::Gbk,
+        Encoding::Big5,
+    ];
+
+    /// The `Encoding` header attribute.
+    fn name(self) -> &'static str {
+        match self {
+            Encoding::Utf8 => "UTF-8",
+            Encoding::Utf16 => "UTF-16",
+            Encoding::Gbk => "GBK",
+            Encoding::Big5 => "BIG5",
+        }
+    }
+
+    /// Bytes per code unit, which is also the length of a NUL terminator.
+    fn unit(self) -> usize {
+        match self {
+            Encoding::Utf16 => 2,
+            _ => 1,
+        }
+    }
+
+    /// Encodes `text`; panics if the encoding cannot represent it, so a fixture never
+    /// silently holds replacement characters.
+    fn encode(self, text: &str) -> Vec<u8> {
+        match self {
+            Encoding::Utf8 => text.as_bytes().to_vec(),
+            Encoding::Utf16 => utf16le(text),
+            Encoding::Gbk | Encoding::Big5 => {
+                let encoding = if self == Encoding::Gbk {
+                    encoding_rs::GBK
+                } else {
+                    encoding_rs::BIG5
+                };
+                let (bytes, _, unmappable) = encoding.encode(text);
+                assert!(!unmappable, "{text:?} cannot be written in {self:?}");
+                bytes.into_owned()
+            }
+        }
+    }
+}
+
+impl Compression {
+    pub const ALL: [Compression; 3] = [Compression::None, Compression::Lzo, Compression::Zlib];
+}
+
+/// The layout settings MDX and MDD files share.
+#[derive(Debug, Clone)]
+struct Layout {
+    version: Version,
+    compression: Compression,
+    encrypt_key_index: bool,
+    keys_per_block: usize,
+    records_per_block: usize,
+    /// Header attributes that replace or add to the written ones, in order.
+    attributes: Vec<(String, String)>,
+}
+
+impl Layout {
+    fn new() -> Self {
+        Self {
+            version: Version::V2_0,
+            compression: Compression::Zlib,
+            encrypt_key_index: false,
+            keys_per_block: 64,
+            records_per_block: 64,
+            attributes: Vec::new(),
+        }
+    }
+
+    fn encrypted_attribute(&self) -> &'static str {
+        if self.encrypt_key_index { "2" } else { "0" }
+    }
+}
+
+/// Setters and build methods both builders share.
+macro_rules! layout_methods {
+    () => {
+        /// The format version (default 2.0).
+        pub fn version(mut self, version: Version) -> Self {
+            self.layout.version = version;
+            self
+        }
+
+        /// How blocks are stored (default zlib). Applies to key blocks, record blocks
+        /// and, in version 2.0, the key index.
+        pub fn compression(mut self, compression: Compression) -> Self {
+            self.layout.compression = compression;
+            self
+        }
+
+        /// Encrypts the key index as `Encrypted="2"` files do. Version 2.0 only: a
+        /// version 1.2 key index is stored raw, so asking for both panics at build time.
+        pub fn encrypt_key_index(mut self) -> Self {
+            self.layout.encrypt_key_index = true;
+            self
+        }
+
+        /// Sets a header attribute, replacing the one the writer would write. Use it to
+        /// write headers the writer cannot produce otherwise (`Encrypted="1"`,
+        /// `GeneratedByEngineVersion="3.0"`); the rest of the file is not changed to match.
+        pub fn attribute(mut self, name: &str, value: &str) -> Self {
+            self.layout
+                .attributes
+                .push((name.to_owned(), value.to_owned()));
+            self
+        }
+
+        /// How many keys go into each key block (default 64), to exercise multi-block files.
+        pub fn keys_per_block(mut self, n: usize) -> Self {
+            self.layout.keys_per_block = n.max(1);
+            self
+        }
+
+        /// How many records go into each record block (default 64).
+        pub fn records_per_block(mut self, n: usize) -> Self {
+            self.layout.records_per_block = n.max(1);
+            self
+        }
+
+        /// Writes the file and returns its bytes.
+        pub fn build(&self) -> Vec<u8> {
+            self.build_marked().0
+        }
+
+        /// Writes the file, then damages it.
+        pub fn build_damaged(&self, damage: Damage) -> Vec<u8> {
+            let (mut bytes, marks) = self.build_marked();
+            marks.apply(&mut bytes, damage);
+            bytes
+        }
+
+        /// Writes the file to `path`.
+        pub fn write_to(&self, path: impl AsRef<Path>) -> io::Result<()> {
+            std::fs::write(path, self.build())
+        }
+    };
+}
+
+/// Builds an MDX file from headwords and their records.
 #[derive(Debug, Clone)]
 pub struct MdxBuilder {
     title: String,
     description: String,
+    encoding: Encoding,
     entries: Vec<(String, String)>,
-    keys_per_block: usize,
-    records_per_block: usize,
+    layout: Layout,
 }
 
 impl Default for MdxBuilder {
@@ -35,13 +249,14 @@ impl Default for MdxBuilder {
 }
 
 impl MdxBuilder {
+    /// A version 2.0, UTF-8, zlib MDX with no entries.
     pub fn new() -> Self {
         Self {
             title: "Fixture".to_owned(),
             description: "A fixture written by OpenDict's tests".to_owned(),
+            encoding: Encoding::Utf8,
             entries: Vec::new(),
-            keys_per_block: 64,
-            records_per_block: 64,
+            layout: Layout::new(),
         }
     }
 
@@ -54,6 +269,12 @@ impl MdxBuilder {
     /// The `Description` attribute of the header.
     pub fn description(mut self, description: &str) -> Self {
         description.clone_into(&mut self.description);
+        self
+    }
+
+    /// The encoding of headwords and records (default UTF-8).
+    pub fn encoding(mut self, encoding: Encoding) -> Self {
+        self.encoding = encoding;
         self
     }
 
@@ -70,150 +291,360 @@ impl MdxBuilder {
         self.entry(headword, &record)
     }
 
-    /// How many headwords go into each key block (default 64), to exercise multi-block files.
-    pub fn keys_per_block(mut self, n: usize) -> Self {
-        self.keys_per_block = n.max(1);
-        self
-    }
+    layout_methods!();
 
-    /// How many records go into each record block (default 64).
-    pub fn records_per_block(mut self, n: usize) -> Self {
-        self.records_per_block = n.max(1);
-        self
-    }
-
-    /// Writes the file and returns its bytes.
-    pub fn build(&self) -> Vec<u8> {
-        let mut out = Vec::new();
-        out.extend(self.header_section());
-
-        // Records, each `utf8(record) ++ "\r\n" ++ NUL`, at running offsets.
+    fn build_marked(&self) -> (Vec<u8>, Marks) {
+        let version = self.layout.version.engine_version();
+        let attributes = [
+            ("GeneratedByEngineVersion", version),
+            ("RequiredEngineVersion", version),
+            ("Encrypted", self.layout.encrypted_attribute()),
+            ("Encoding", self.encoding.name()),
+            ("Format", "Html"),
+            ("Title", &self.title),
+            ("Description", &self.description),
+            ("KeyCaseSensitive", "No"),
+            ("StripKey", "Yes"),
+            ("StyleSheet", ""),
+            ("CreationDate", "2026-1-1"),
+            ("Compact", "No"),
+            ("Compat", "No"),
+            ("Left2Right", "Yes"),
+            ("DataSourceFormat", "106"),
+        ];
+        let keys: Vec<Vec<u8>> = self
+            .entries
+            .iter()
+            .map(|(key, _)| self.encoding.encode(key))
+            .collect();
+        // Each record is its text, CR LF, then a NUL in the record's encoding.
         let records: Vec<Vec<u8>> = self
             .entries
             .iter()
-            .map(|(_, record)| {
-                let mut bytes = record.as_bytes().to_vec();
-                bytes.extend_from_slice(b"\r\n\0");
-                bytes
-            })
+            .map(|(_, record)| self.encoding.encode(&format!("{record}\r\n\0")))
             .collect();
-        let mut offsets = Vec::with_capacity(records.len());
-        let mut running = 0u64;
-        for record in &records {
-            offsets.push(running);
-            running += record.len() as u64;
-        }
-
-        out.extend(self.key_section(&offsets));
-        out.extend(self.record_section(&records));
-        out
-    }
-
-    /// Writes the file to `path`.
-    pub fn write_to(&self, path: impl AsRef<Path>) -> io::Result<()> {
-        std::fs::write(path, self.build())
-    }
-
-    fn header_section(&self) -> Vec<u8> {
-        let header = format!(
-            "<Dictionary GeneratedByEngineVersion=\"2.0\" RequiredEngineVersion=\"2.0\" Encrypted=\"0\" \
-             Encoding=\"UTF-8\" Format=\"Html\" Title=\"{}\" Description=\"{}\" KeyCaseSensitive=\"No\" \
-             StripKey=\"Yes\" StyleSheet=\"\" CreationDate=\"2026-1-1\" Compact=\"No\" Compat=\"No\" \
-             Left2Right=\"Yes\" DataSourceFormat=\"106\"/>\r\n\0",
-            escape_xml(&self.title),
-            escape_xml(&self.description),
-        );
-        let header: Vec<u8> = header.encode_utf16().flat_map(u16::to_le_bytes).collect();
-        let mut out = Vec::new();
-        out.extend((header.len() as u32).to_be_bytes());
-        out.extend(&header);
-        out.extend(adler32(&header).to_le_bytes());
-        out
-    }
-
-    fn key_section(&self, offsets: &[u64]) -> Vec<u8> {
-        let mut info = Vec::new();
-        let mut blocks = Vec::new();
-        let indices: Vec<usize> = (0..self.entries.len()).collect();
-        for chunk in indices.chunks(self.keys_per_block) {
-            let mut plain = Vec::new();
-            for &i in chunk {
-                plain.extend(offsets[i].to_be_bytes());
-                plain.extend(self.entries[i].0.as_bytes());
-                plain.push(0);
-            }
-            let block = compressed_block(&plain);
-
-            let first = self.entries[chunk[0]].0.as_bytes();
-            let last = self.entries[chunk[chunk.len() - 1]].0.as_bytes();
-            info.extend((chunk.len() as u64).to_be_bytes());
-            info.extend((first.len() as u16).to_be_bytes());
-            info.extend(first);
-            info.push(0);
-            info.extend((last.len() as u16).to_be_bytes());
-            info.extend(last);
-            info.push(0);
-            info.extend((block.len() as u64).to_be_bytes());
-            info.extend((plain.len() as u64).to_be_bytes());
-            blocks.push(block);
-        }
-        let info_block = compressed_block(&info);
-        let blocks_len: usize = blocks.iter().map(Vec::len).sum();
-
-        let mut head = Vec::new();
-        head.extend((blocks.len() as u64).to_be_bytes());
-        head.extend((self.entries.len() as u64).to_be_bytes());
-        head.extend((info.len() as u64).to_be_bytes());
-        head.extend((info_block.len() as u64).to_be_bytes());
-        head.extend((blocks_len as u64).to_be_bytes());
-
-        let mut out = head.clone();
-        out.extend(adler32(&head).to_be_bytes());
-        out.extend(info_block);
-        for block in blocks {
-            out.extend(block);
-        }
-        out
-    }
-
-    fn record_section(&self, records: &[Vec<u8>]) -> Vec<u8> {
-        let mut sizes = Vec::new();
-        let mut blocks = Vec::new();
-        for chunk in records.chunks(self.records_per_block) {
-            let plain = chunk.concat();
-            let block = compressed_block(&plain);
-            sizes.push((block.len() as u64, plain.len() as u64));
-            blocks.push(block);
-        }
-        let blocks_len: u64 = sizes.iter().map(|(compressed, _)| compressed).sum();
-
-        let mut out = Vec::new();
-        out.extend((blocks.len() as u64).to_be_bytes());
-        out.extend((records.len() as u64).to_be_bytes());
-        out.extend((16 * blocks.len() as u64).to_be_bytes());
-        out.extend(blocks_len.to_be_bytes());
-        for (compressed, plain) in sizes {
-            out.extend(compressed.to_be_bytes());
-            out.extend(plain.to_be_bytes());
-        }
-        for block in blocks {
-            out.extend(block);
-        }
-        out
+        write_file(
+            "Dictionary",
+            &attributes,
+            &self.layout,
+            self.encoding.unit(),
+            &keys,
+            &records,
+        )
     }
 }
 
-/// `[02 00 00 00] [adler32(data) BE] [zlib(data)]`
-fn compressed_block(data: &[u8]) -> Vec<u8> {
-    let mut encoder = ZlibEncoder::new(Vec::new(), Compression::default());
-    encoder
-        .write_all(data)
-        .expect("writing to a Vec cannot fail");
-    let zlib = encoder.finish().expect("writing to a Vec cannot fail");
-    let mut out = vec![2, 0, 0, 0];
-    out.extend(adler32(data).to_be_bytes());
-    out.extend(zlib);
+/// Builds an MDD resource file from resource paths and their bytes.
+#[derive(Debug, Clone)]
+pub struct MddBuilder {
+    resources: Vec<(String, Vec<u8>)>,
+    layout: Layout,
+}
+
+impl Default for MddBuilder {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl MddBuilder {
+    /// A version 2.0, zlib MDD with no resources.
+    pub fn new() -> Self {
+        Self {
+            resources: Vec::new(),
+            layout: Layout::new(),
+        }
+    }
+
+    /// Adds a resource under `path`, written as given (MDD paths look like `\img\a.png`).
+    pub fn resource(mut self, path: &str, bytes: &[u8]) -> Self {
+        self.resources.push((path.to_owned(), bytes.to_vec()));
+        self
+    }
+
+    layout_methods!();
+
+    fn build_marked(&self) -> (Vec<u8>, Marks) {
+        let version = self.layout.version.engine_version();
+        let attributes = [
+            ("GeneratedByEngineVersion", version),
+            ("RequiredEngineVersion", version),
+            ("Encrypted", self.layout.encrypted_attribute()),
+            ("Format", ""),
+            ("Title", ""),
+            ("Description", ""),
+            ("KeyCaseSensitive", "No"),
+            ("StripKey", "No"),
+            ("CreationDate", "2026-1-1"),
+        ];
+        // Keys are always UTF-16LE; records are the raw bytes, with no terminator.
+        let keys: Vec<Vec<u8>> = self
+            .resources
+            .iter()
+            .map(|(path, _)| utf16le(path))
+            .collect();
+        let records: Vec<Vec<u8>> = self
+            .resources
+            .iter()
+            .map(|(_, bytes)| bytes.clone())
+            .collect();
+        write_file(
+            "Library_Data",
+            &attributes,
+            &self.layout,
+            2,
+            &keys,
+            &records,
+        )
+    }
+}
+
+/// Where the bytes a [`Damage`] changes ended up in the written file.
+struct Marks {
+    header_checksum: usize,
+    key_index: usize,
+    first_key_block: usize,
+    first_record_block: usize,
+}
+
+impl Marks {
+    fn apply(&self, bytes: &mut Vec<u8>, damage: Damage) {
+        match damage {
+            Damage::HeaderChecksum => bytes[self.header_checksum] ^= 0xFF,
+            Damage::KeyIndex => bytes[self.key_index] ^= 0x55,
+            Damage::KeyBlock => bytes[self.first_key_block] ^= 0xFF,
+            Damage::RecordBlock => bytes[self.first_record_block] ^= 0xFF,
+            Damage::Truncate(n) => bytes.truncate(bytes.len().saturating_sub(n)),
+        }
+    }
+}
+
+/// Writes a whole file. `keys` are encoded without terminators; `records` are complete.
+fn write_file(
+    root: &str,
+    attributes: &[(&str, &str)],
+    layout: &Layout,
+    unit: usize,
+    keys: &[Vec<u8>],
+    records: &[Vec<u8>],
+) -> (Vec<u8>, Marks) {
+    assert_eq!(keys.len(), records.len());
+    assert!(
+        !(layout.encrypt_key_index && layout.version == Version::V1_2),
+        "a version 1.2 key index is stored raw and cannot be encrypted"
+    );
+    let mut out = header_section(root, attributes, &layout.attributes);
+    let header_checksum = out.len() - 4;
+
+    let mut offsets = Vec::with_capacity(records.len());
+    let mut running = 0usize;
+    for record in records {
+        offsets.push(running);
+        running += record.len();
+    }
+
+    let keys_start = out.len();
+    let (key_section, key_index, first_key_block) = key_section(layout, unit, keys, &offsets);
+    out.extend(key_section);
+    let records_start = out.len();
+    let (record_section, first_record_block) = record_section(layout, records);
+    out.extend(record_section);
+
+    let marks = Marks {
+        header_checksum,
+        key_index: keys_start + key_index,
+        first_key_block: keys_start + first_key_block,
+        first_record_block: records_start + first_record_block,
+    };
+    (out, marks)
+}
+
+fn header_section(
+    root: &str,
+    attributes: &[(&str, &str)],
+    overrides: &[(String, String)],
+) -> Vec<u8> {
+    let mut pairs: Vec<(String, String)> = attributes
+        .iter()
+        .map(|&(name, value)| (name.to_owned(), value.to_owned()))
+        .collect();
+    for (name, value) in overrides {
+        match pairs.iter_mut().find(|(n, _)| n == name) {
+            Some(pair) => pair.1.clone_from(value),
+            None => pairs.push((name.clone(), value.clone())),
+        }
+    }
+    let mut text = format!("<{root}");
+    for (name, value) in &pairs {
+        text.push_str(&format!(" {name}=\"{}\"", escape_xml(value)));
+    }
+    text.push_str("/>\r\n\0");
+
+    let header = utf16le(&text);
+    let mut out = Vec::new();
+    out.extend((header.len() as u32).to_be_bytes());
+    out.extend(&header);
+    out.extend(adler32(&header).to_le_bytes());
     out
+}
+
+/// The middle byte of a block's payload (after its 8-byte header), relative to the block.
+fn payload_middle(block: &[u8]) -> usize {
+    assert!(block.len() > 8, "the block has no payload to damage");
+    8 + (block.len() - 8) / 2
+}
+
+/// Returns the key section, the position in it of the byte [`Damage::KeyIndex`] changes,
+/// and the position of the byte [`Damage::KeyBlock`] changes.
+fn key_section(
+    layout: &Layout,
+    unit: usize,
+    keys: &[Vec<u8>],
+    offsets: &[usize],
+) -> (Vec<u8>, usize, usize) {
+    let version = layout.version;
+    let terminator = vec![0u8; unit];
+    let mut info = Vec::new();
+    let mut blocks = Vec::new();
+    let indices: Vec<usize> = (0..keys.len()).collect();
+    for chunk in indices.chunks(layout.keys_per_block) {
+        let mut plain = Vec::new();
+        for &i in chunk {
+            version.put(&mut plain, offsets[i]);
+            plain.extend(&keys[i]);
+            plain.extend(&terminator);
+        }
+        let block = block(&plain, layout.compression);
+
+        version.put(&mut info, chunk.len());
+        for word in [&keys[chunk[0]], &keys[chunk[chunk.len() - 1]]] {
+            let units = word.len() / unit;
+            match version {
+                Version::V1_2 => {
+                    info.push(u8::try_from(units).expect("a v1.2 index word fits in 255 units"));
+                    info.extend(word);
+                }
+                Version::V2_0 => {
+                    info.extend(u16::try_from(units).expect("fits in u16").to_be_bytes());
+                    info.extend(word);
+                    info.extend(&terminator);
+                }
+            }
+        }
+        version.put(&mut info, block.len());
+        version.put(&mut info, plain.len());
+        blocks.push(block);
+    }
+    let (stored_info, info_damage) = match version {
+        // The table is stored raw; its first byte is the high byte of the first block's
+        // entry count, so changing it cannot go unnoticed.
+        Version::V1_2 => (info.clone(), 0),
+        Version::V2_0 => {
+            let mut stored = block(&info, layout.compression);
+            if layout.encrypt_key_index {
+                encrypt_key_index(&mut stored);
+            }
+            let middle = payload_middle(&stored);
+            (stored, middle)
+        }
+    };
+    let blocks_len: usize = blocks.iter().map(Vec::len).sum();
+
+    let mut head = Vec::new();
+    version.put(&mut head, blocks.len());
+    version.put(&mut head, keys.len());
+    if version == Version::V2_0 {
+        version.put(&mut head, info.len());
+    }
+    version.put(&mut head, stored_info.len());
+    version.put(&mut head, blocks_len);
+
+    let mut out = head.clone();
+    if version == Version::V2_0 {
+        out.extend(adler32(&head).to_be_bytes());
+    }
+    let key_index = out.len() + info_damage;
+    out.extend(stored_info);
+    let first_block = out.len() + blocks.first().map_or(0, |block| payload_middle(block));
+    for block in blocks {
+        out.extend(block);
+    }
+    (out, key_index, first_block)
+}
+
+/// Returns the record section and the position in it of the byte
+/// [`Damage::RecordBlock`] changes.
+fn record_section(layout: &Layout, records: &[Vec<u8>]) -> (Vec<u8>, usize) {
+    let version = layout.version;
+    let mut sizes = Vec::new();
+    let mut blocks = Vec::new();
+    for chunk in records.chunks(layout.records_per_block) {
+        let plain = chunk.concat();
+        let block = block(&plain, layout.compression);
+        sizes.push((block.len(), plain.len()));
+        blocks.push(block);
+    }
+    let blocks_len: usize = sizes.iter().map(|(stored, _)| stored).sum();
+    let number_width = match version {
+        Version::V1_2 => 4,
+        Version::V2_0 => 8,
+    };
+
+    let mut out = Vec::new();
+    version.put(&mut out, blocks.len());
+    version.put(&mut out, records.len());
+    version.put(&mut out, 2 * number_width * blocks.len());
+    version.put(&mut out, blocks_len);
+    for (stored, plain) in sizes {
+        version.put(&mut out, stored);
+        version.put(&mut out, plain);
+    }
+    let first_block = out.len() + blocks.first().map_or(0, |block| payload_middle(block));
+    for block in blocks {
+        out.extend(block);
+    }
+    (out, first_block)
+}
+
+/// `[type, u32 LE] [adler32(data), u32 BE] [payload]`
+fn block(data: &[u8], compression: Compression) -> Vec<u8> {
+    let (kind, payload) = match compression {
+        Compression::None => (0u32, data.to_vec()),
+        Compression::Lzo => (
+            1,
+            lzokay::compress::compress(data).expect("LZO compression of a fixture"),
+        ),
+        Compression::Zlib => {
+            let mut encoder = ZlibEncoder::new(Vec::new(), flate2::Compression::default());
+            encoder
+                .write_all(data)
+                .expect("writing to a Vec cannot fail");
+            (2, encoder.finish().expect("writing to a Vec cannot fail"))
+        }
+    };
+    let mut out = kind.to_le_bytes().to_vec();
+    out.extend(adler32(data).to_be_bytes());
+    out.extend(payload);
+    out
+}
+
+/// Encrypts a stored key index block in place, as `Encrypted="2"` files store it: the
+/// payload after the 8-byte block header goes through a byte-wise cipher keyed by
+/// RIPEMD-128 of the block's checksum followed by `95 36 00 00`.
+fn encrypt_key_index(block: &mut [u8]) {
+    let mut seed = block[4..8].to_vec();
+    seed.extend([0x95, 0x36, 0x00, 0x00]);
+    let key = Ripemd128::digest(&seed);
+    let mut previous = 0x36u8;
+    for (i, byte) in block[8..].iter_mut().enumerate() {
+        let mixed = *byte ^ previous ^ (i as u8) ^ key[i % 16];
+        *byte = mixed.rotate_left(4);
+        previous = *byte;
+    }
+}
+
+fn utf16le(text: &str) -> Vec<u8> {
+    text.encode_utf16().flat_map(u16::to_le_bytes).collect()
 }
 
 /// Adler-32 as defined in RFC 1950.

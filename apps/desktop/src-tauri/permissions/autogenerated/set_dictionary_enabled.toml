@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-set-dictionary-enabled"
+description = "Enables the set_dictionary_enabled command without any pre-configured scope."
+commands.allow = ["set_dictionary_enabled"]
+
+[[permission]]
+identifier = "deny-set-dictionary-enabled"
+description = "Denies the set_dictionary_enabled command without any pre-configured scope."
+commands.deny = ["set_dictionary_enabled"]

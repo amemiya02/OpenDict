@@ -1,8 +1,9 @@
-//! Compressed blocks: `[type: 4 bytes][adler32 of the decompressed data, BE][payload]`.
+//! Compressed blocks: `[type: u32 LE][adler32 of the decompressed data, u32 BE][payload]`.
 
 use std::io::Read;
 
 use flate2::read::ZlibDecoder;
+use ripemd::{Digest, Ripemd128};
 
 use crate::bytes::adler32;
 use crate::error::{Error, Result};
@@ -32,7 +33,14 @@ pub(crate) fn decompress(block: &[u8], expected_len: usize) -> Result<Vec<u8>> {
                 .map_err(|_| Error::Corrupt("a zlib block does not decompress"))?;
             data
         }
-        1 => return Err(Error::Unsupported("LZO compression".to_owned())),
+        1 => {
+            // A raw LZO1X stream; the output buffer is exactly the size the index states.
+            let mut data = vec![0; expected_len];
+            let len = lzokay::decompress::decompress(payload, &mut data)
+                .map_err(|_| Error::Corrupt("an LZO block does not decompress"))?;
+            data.truncate(len);
+            data
+        }
         other => return Err(Error::Unsupported(format!("block type {other:#x}"))),
     };
 
@@ -43,4 +51,25 @@ pub(crate) fn decompress(block: &[u8], expected_len: usize) -> Result<Vec<u8>> {
         return Err(Error::Corrupt("a block checksum does not match"));
     }
     Ok(data)
+}
+
+/// Decrypts the key index block of an `Encrypted="2"` file. The block header stays in the
+/// clear; the payload is a byte-wise cipher keyed by RIPEMD-128 of the stored checksum
+/// followed by `95 36 00 00`. Returns the block with its payload decrypted.
+pub(crate) fn decrypt_key_index(block: &[u8]) -> Result<Vec<u8>> {
+    if block.len() < 8 {
+        return Err(Error::Corrupt("a block is shorter than its header"));
+    }
+    let mut seed = block[4..8].to_vec();
+    seed.extend([0x95, 0x36, 0x00, 0x00]);
+    let key = Ripemd128::digest(&seed);
+
+    let mut out = block.to_vec();
+    let mut previous = 0x36u8;
+    for (i, byte) in out[8..].iter_mut().enumerate() {
+        let cipher = *byte;
+        *byte = cipher.rotate_left(4) ^ previous ^ (i as u8) ^ key[i % 16];
+        previous = cipher;
+    }
+    Ok(out)
 }

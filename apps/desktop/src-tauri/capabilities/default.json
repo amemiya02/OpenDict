@@ -6,7 +6,12 @@
   "permissions": [
     "core:default",
     "allow-look-up",
-    "allow-library-status",
+    "allow-library",
+    "allow-add-library-folder",
+    "allow-remove-library-folder",
+    "allow-rescan-library",
+    "allow-set-dictionary-enabled",
+    "allow-move-dictionary",
     "updater:default",
     "process:allow-restart"
   ]
