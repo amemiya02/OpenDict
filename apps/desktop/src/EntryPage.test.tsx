@@ -21,6 +21,8 @@ const library: Library = {
   failures: [],
   indexing: null,
   problem: null,
+  groups: [],
+  currentGroup: null,
 };
 
 function entry(id: string, title: string, pronunciation: string | null = null): Entry {

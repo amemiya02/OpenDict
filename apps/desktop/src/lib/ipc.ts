@@ -102,6 +102,26 @@ export interface Library {
   indexing: Indexing | null;
   /** Why the Library could not be loaded at all, if it could not. */
   problem: string | null;
+  /** The reader's Groups, in the order they were created. */
+  groups: Group[];
+  /** The key of the Group Lookups run against; null for the whole Library. */
+  currentGroup: string | null;
+}
+
+/** A named, ordered subset of the Library. */
+export interface Group {
+  /** Stays the same when the Group is renamed. */
+  id: string;
+  name: string;
+  /** Keys of its Dictionaries, in Group order. */
+  dictionaries: string[];
+}
+
+/** Another Group (null: the whole Library) that has a word the Current Group lacks. */
+export interface Elsewhere {
+  group: string | null;
+  /** The headword it offers for what the reader typed. */
+  headword: string;
 }
 
 export function lookUp(headword: string): Promise<Entry[]> {
@@ -190,4 +210,36 @@ export function recordLookup(headword: string): Promise<string[]> {
 
 export function clearHistory(): Promise<void> {
   return invoke<void>("clear_history");
+}
+
+export function createGroup(name: string): Promise<Library> {
+  return invoke<Library>("create_group", { name });
+}
+
+export function renameGroup(id: string, name: string): Promise<Library> {
+  return invoke<Library>("rename_group", { id, name });
+}
+
+/** Deletes a Group; its Dictionaries stay in the Library. */
+export function deleteGroup(id: string): Promise<Library> {
+  return invoke<Library>("delete_group", { id });
+}
+
+/** Puts a Dictionary into a Group (at the end of its order) or takes it out. */
+export function setInGroup(group: string, dictionary: string, member: boolean): Promise<Library> {
+  return invoke<Library>("set_in_group", { group, dictionary, member });
+}
+
+export function moveInGroup(group: string, dictionary: string, direction: "up" | "down"): Promise<Library> {
+  return invoke<Library>("move_in_group", { group, dictionary, direction });
+}
+
+/** Makes `group` the Current Group; null makes Lookups run against the whole Library. */
+export function setCurrentGroup(group: string | null): Promise<Library> {
+  return invoke<Library>("set_current_group", { group });
+}
+
+/** Another Group that has `query` when the Current Group does not, or null. */
+export function elsewhere(query: string): Promise<Elsewhere | null> {
+  return invoke<Elsewhere | null>("elsewhere", { query });
 }

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { EntryFrame } from "./components/EntryFrame";
+import { GroupSwitcher } from "./components/GroupSwitcher";
 import { HeadwordColumn, optionId, type ColumnList } from "./components/HeadwordColumn";
 import { NavButtons } from "./components/NavButtons";
 import { RecentLookups } from "./components/RecentLookups";
@@ -14,19 +15,28 @@ import {
   addLibraryFolder,
   cancelIndexing,
   clearHistory,
+  createGroup,
+  deleteGroup,
+  elsewhere,
   getHistory,
   getLibrary,
   indexLibrary,
   lookUp,
   moveDictionary,
+  moveInGroup,
   recordLookup,
   registerDictionary,
   onLibraryChanged,
   removeLibraryFolder,
+  renameGroup,
   rescanLibrary,
   setAllowNetwork,
+  setCurrentGroup,
   setDictionaryEnabled,
+  setInGroup,
+  type Elsewhere,
   type Entry,
+  type Group,
   type Library,
   type RegisterError,
   type Suggestion,
@@ -37,7 +47,8 @@ import { wildcardHint } from "./lib/wildcard";
 
 type PageState =
   | { kind: "idle" }
-  | { kind: "found"; headword: string; entries: Entry[] }
+  /** `group` is the Current Group the Entries came from (null: the whole Library). */
+  | { kind: "found"; headword: string; entries: Entry[]; group: string | null }
   /** Nothing found for `query`; `next` are the headwords after where it would stand. */
   | { kind: "missing"; query: string; next: Suggestion[] }
   | { kind: "failed"; reason: string };
@@ -67,6 +78,12 @@ export function App() {
   const pageRequests = useRef(0);
   /** The text in the search field, for refreshing the column after a Library change. */
   const typed = useRef("");
+  /** The Current Group as the shell last reported it (null: the whole Library). */
+  const currentGroup = library?.currentGroup ?? null;
+  const groupRef = useRef(currentGroup);
+  useEffect(() => {
+    groupRef.current = currentGroup;
+  }, [currentGroup]);
 
   // The column opens on the headword index, to browse.
   useEffect(() => {
@@ -118,7 +135,11 @@ export function App() {
     try {
       const entries = await lookUp(headword);
       if (ticket !== pageRequests.current) return;
-      setPage(entries.length > 0 ? { kind: "found", headword, entries } : { kind: "missing", query: headword, next: [] });
+      setPage(
+        entries.length > 0
+          ? { kind: "found", headword, entries, group: groupRef.current }
+          : { kind: "missing", query: headword, next: [] },
+      );
       if (entries.length > 0) onFound?.();
     } catch (error) {
       if (ticket === pageRequests.current) setPage({ kind: "failed", reason: String(error) });
@@ -199,6 +220,37 @@ export function App() {
     if (headword) void commit(headword);
   }
 
+  /**
+   * Makes `group` the Current Group (null: the whole Library); every Lookup after this runs
+   * against it. The word on the page stays when the new Group has it; when it does not, the
+   * page says so and points to where it is. With `word`, that word is looked up in the new
+   * Group instead (the no-match page's way to another Group). The cover band's switcher
+   * calls this, and so can the command palette.
+   */
+  async function switchGroup(group: string | null, word?: string) {
+    setNotice(null);
+    let updated: Library;
+    try {
+      updated = await setCurrentGroup(group);
+    } catch (error) {
+      setNotice(t.libraryActionFailed(String(error)));
+      return;
+    }
+    groupRef.current = updated.currentGroup;
+    setLibrary(updated);
+    if (word !== undefined) {
+      column.refresh(word).catch(() => {});
+      await commit(word);
+      return;
+    }
+    if (view === "lookup" && page.kind === "missing") {
+      await changeQuery(typed.current);
+      return;
+    }
+    column.refresh(typed.current).catch(() => {});
+    if (view === "lookup" && page.kind === "found") await show(page.headword);
+  }
+
   /** Back (-1) or Forward (1) through the words visited. Retracing is not a new Lookup. */
   function go(by: -1 | 1) {
     const next = step(trail, by);
@@ -275,13 +327,20 @@ export function App() {
       }
     },
     index: () => change(indexLibrary),
+    createGroup: (name) => change(() => createGroup(name)),
+    renameGroup: (id, name) => change(() => renameGroup(id, name)),
+    deleteGroup: (id) => change(() => deleteGroup(id)),
+    setInGroup: (group, dictionary, member) => change(() => setInGroup(group, dictionary, member)),
+    moveInGroup: (group, dictionary, direction) => change(() => moveInGroup(group, dictionary, direction)),
     cancelIndexing: () => {
       cancelIndexing().catch((error: unknown) => setNotice(t.libraryActionFailed(String(error))));
     },
   };
 
-  const enabledCount = library?.dictionaries.filter((d) => d.enabled).length ?? 0;
-  const asked = page.kind === "found" ? Math.max(enabledCount, page.entries.length) : enabledCount;
+  const groups = library?.groups ?? [];
+  const group = groups.find((g) => g.id === currentGroup) ?? null;
+  const answeringCount = library ? answering(library, group).length : 0;
+  const asked = page.kind === "found" ? Math.max(answeringCount, page.entries.length) : answeringCount;
   const { items, selected, miss, near, lemma } = column.state;
   const note = lemma ? (
     <>
@@ -299,6 +358,7 @@ export function App() {
       <header className="col-span-2 flex items-center bg-cover text-on-cover select-none">
         <div className="flex w-[264px] flex-none items-center gap-sm pr-3.5 pl-lg max-[860px]:w-[200px]">
           <span className="font-serif text-[17px] font-bold">{t.appName}</span>
+          <GroupSwitcher groups={groups} current={currentGroup} onSwitch={(id) => void switchGroup(id)} />
         </div>
         <NavButtons canGoBack={canStep(trail, -1)} canGoForward={canStep(trail, 1)} onGo={go} />
         <div className="flex min-w-0 flex-1 pr-lg">
@@ -349,6 +409,9 @@ export function App() {
               onAddFolder={actions.addFolder}
               onLookUp={followLink}
               onSearch={search}
+              groups={groups}
+              currentGroup={currentGroup}
+              onGoTo={(id, headword) => void switchGroup(id, headword)}
               recent={<RecentLookups words={history} onPick={(word) => void commit(word)} />}
             />
           )}
@@ -357,7 +420,7 @@ export function App() {
           <div className="w-[168px] min-h-0 overflow-hidden max-[1100px]:w-[46px]">
             {page.kind === "found" ? (
               <ThumbIndex
-                key={page.headword}
+                key={pageKey(page)}
                 notches={page.entries.map((e) => ({ dictionaryId: e.dictionaryId, title: e.dictionaryTitle }))}
                 unanswered={asked - page.entries.length}
                 page={pageRef}
@@ -368,7 +431,8 @@ export function App() {
       </div>
 
       <footer className="flex items-center gap-[18px] overflow-hidden border-t border-rule px-xl text-label whitespace-nowrap text-text-secondary tabular-nums select-none">
-        <span>{library && !library.problem ? t.libraryCount(enabledCount) : null}</span>
+        {group ? <span>{t.currentGroupIs(group.name)}</span> : null}
+        <span>{library && !library.problem ? t.libraryCount(answeringCount) : null}</span>
         <UpdateNotice />
       </footer>
     </div>
@@ -384,6 +448,9 @@ function PageContent({
   onAddFolder,
   onLookUp,
   onSearch,
+  groups,
+  currentGroup,
+  onGoTo,
   recent,
 }: {
   page: PageState;
@@ -395,6 +462,10 @@ function PageContent({
   onAddFolder: () => void;
   onLookUp: (headword: string) => void;
   onSearch: (text: string) => void;
+  groups: Group[];
+  currentGroup: string | null;
+  /** Makes `group` current (null: the whole Library) and looks `headword` up there. */
+  onGoTo: (group: string | null, headword: string) => void;
   /** Recent lookups, offered on the empty page. */
   recent: ReactNode;
 }) {
@@ -403,7 +474,7 @@ function PageContent({
     case "found":
       return (
         <EntryPage
-          key={page.headword}
+          key={pageKey(page)}
           headword={page.headword}
           entries={page.entries}
           asked={asked}
@@ -411,7 +482,16 @@ function PageContent({
         />
       );
     case "missing":
-      return <NoMatch query={page.query} next={page.next} onSearch={onSearch} />;
+      return (
+        <NoMatch
+          query={page.query}
+          next={page.next}
+          onSearch={onSearch}
+          groups={groups}
+          currentGroup={currentGroup}
+          onGoTo={onGoTo}
+        />
+      );
     case "failed":
       return <Lead>{t.lookupFailed(page.reason)}</Lead>;
     case "idle":
@@ -573,12 +653,43 @@ function PronounceButton({ onClick }: { onClick: () => void }) {
 }
 
 /**
- * The page when nothing was found: it says so, suggests a wildcard pattern, and lists the
- * headwords that follow where the word would stand, so a miss is never a dead end.
+ * The page when nothing was found: it says so, offers another Group that has the word,
+ * suggests a wildcard pattern, and lists the headwords that follow where the word would
+ * stand, so a miss is never a dead end.
  */
-function NoMatch({ query, next, onSearch }: { query: string; next: Suggestion[]; onSearch: (text: string) => void }) {
+function NoMatch({
+  query,
+  next,
+  onSearch,
+  groups,
+  currentGroup,
+  onGoTo,
+}: {
+  query: string;
+  next: Suggestion[];
+  onSearch: (text: string) => void;
+  groups: Group[];
+  currentGroup: string | null;
+  onGoTo: (group: string | null, headword: string) => void;
+}) {
   const { t } = useI18n();
   const pattern = wildcardHint(query);
+  const [found, setFound] = useState<{ query: string; group: string | null; where: Elsewhere | null } | null>(null);
+  useEffect(() => {
+    let stale = false;
+    elsewhere(query).then(
+      (where) => {
+        if (!stale) setFound({ query, group: currentGroup, where });
+      },
+      () => {}, // nowhere to point to
+    );
+    return () => {
+      stale = true;
+    };
+  }, [query, currentGroup]);
+  // Only the answer for this query in this Group counts.
+  const where = found && found.query === query && found.group === currentGroup ? found.where : null;
+  const whereName = where ? (where.group === null ? t.wholeLibrary : groups.find((g) => g.id === where.group)?.name) : undefined;
   return (
     <article>
       <div className="flex flex-wrap items-baseline gap-x-md gap-y-xs border-b-[3px] border-double border-rule pb-2.5">
@@ -587,6 +698,11 @@ function NoMatch({ query, next, onSearch }: { query: string; next: Suggestion[];
       </div>
       <Lead>{t.notFound(query)}</Lead>
       <div className="flex max-w-[860px] flex-wrap items-center gap-x-2.5 gap-y-sm pb-xs text-text-secondary">
+        {where && whereName !== undefined ? (
+          <OutlineButton onClick={() => onGoTo(where.group, where.headword)}>
+            {t.inGroupElsewhere(whereName, where.headword)}
+          </OutlineButton>
+        ) : null}
         <span>{t.wildcardTip}</span>
         <OutlineButton onClick={() => onSearch(pattern)}>
           {t.tryPattern} <b className="font-serif text-[14px]">{pattern}</b>
@@ -662,6 +778,17 @@ function FoldButton({ open, controls, onToggle }: { open: boolean; controls: str
 
 function Lead({ children, muted = false }: { children: ReactNode; muted?: boolean }) {
   return <p className={`max-w-[860px] py-lg text-[14px] ${muted ? "text-text-secondary" : ""}`}>{children}</p>;
+}
+
+/** The enabled Dictionaries Lookups run against: the Group's, or the whole Library's. */
+function answering(library: Library, group: Group | null) {
+  const enabled = library.dictionaries.filter((d) => d.enabled);
+  return group ? enabled.filter((d) => group.dictionaries.includes(d.id)) : enabled;
+}
+
+/** A found page is new when its word or its Group is: its frames and notches start afresh. */
+function pageKey(page: { headword: string; group: string | null }) {
+  return `${page.group ?? ""}\u0000${page.headword}`;
 }
 
 /** History as the shell sent it; anything but a list of words counts as none. */

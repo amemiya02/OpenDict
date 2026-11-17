@@ -39,13 +39,15 @@ const bought: Dictionary = {
 const EMAIL = "reader@example.com";
 const CODE = "0123 4567 89AB CDEF 0123 4567 89AB CDEF";
 
-const empty: Library = { folders: [], dictionaries: [], failures: [], indexing: null, problem: null };
+const empty: Library = { folders: [], dictionaries: [], failures: [], indexing: null, problem: null, groups: [], currentGroup: null };
 const stocked: Library = {
   folders: [{ path: "D:\\Dictionaries", dictionaryCount: 3, problem: null }],
   dictionaries: [english, japanese],
   failures: [{ path: "D:\\Dictionaries\\notes.mdx", reason: { kind: "notADictionary" } }],
   indexing: null,
   problem: null,
+  groups: [],
+  currentGroup: null,
 };
 
 const locked: Library = {

@@ -32,6 +32,8 @@ beforeEach(() => {
         failures: [],
         indexing: null,
         problem: null,
+        groups: [],
+        currentGroup: null,
       };
     if (command === "look_up") {
       const { headword } = args as { headword: string };
