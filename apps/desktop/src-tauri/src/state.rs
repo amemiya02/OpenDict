@@ -66,6 +66,7 @@ pub enum FailureReason {
     NotADictionary,
     UnsupportedVersion(String),
     Damaged,
+    NeedsRegistrationCode,
     Unsupported(String),
 }
 
@@ -211,6 +212,7 @@ fn reason(error: &OpenError) -> FailureReason {
             FailureReason::UnsupportedVersion(version.clone())
         }
         OpenError::Damaged => FailureReason::Damaged,
+        OpenError::NeedsRegistrationCode => FailureReason::NeedsRegistrationCode,
         OpenError::Unsupported(feature) => FailureReason::Unsupported(feature.clone()),
         other => FailureReason::Unsupported(other.to_string()),
     }

@@ -35,6 +35,7 @@ export const zhCN = {
   reasonNotADictionary: "这不是词典文件。",
   reasonUnsupportedVersion: (version: string) => `暂不支持格式版本 ${version}。`,
   reasonDamaged: "文件已损坏。",
+  reasonNeedsRegistrationCode: "词典已加密，需要注册码。",
   reasonUnsupported: (feature: string) => `它用到了 OpenDict 还读不了的功能（${feature}）。`,
   libraryNote: "顺序决定查词结果里词典的先后。文件留在原处，OpenDict 不会改动它们。",
   emptyLibrary: "还没有词典。",

@@ -45,19 +45,21 @@ impl<'a> Reader<'a> {
         Ok(u64::from_be_bytes(self.array()?))
     }
 
-    /// A size, count or offset read from the file (u64 BE), as a `usize`.
-    pub(crate) fn size(&mut self) -> Result<usize> {
-        usize::try_from(self.u64_be()?).map_err(|_| Error::Corrupt("a size does not fit in memory"))
+    pub(crate) fn u8(&mut self) -> Result<u8> {
+        Ok(self.array::<1>()?[0])
     }
 
-    /// Bytes up to (not including) the next NUL byte; consumes the NUL.
-    pub(crate) fn until_nul(&mut self) -> Result<&'a [u8]> {
+    /// Text up to (not including) the next NUL code unit of `unit` bytes (1, or 2 for
+    /// UTF-16), which is consumed. Code units are counted from the current position, so
+    /// a zero byte pair straddling two UTF-16 units is not a terminator.
+    pub(crate) fn until_nul(&mut self, unit: usize) -> Result<&'a [u8]> {
         let rest = &self.bytes[self.pos..];
         let len = rest
-            .iter()
-            .position(|&b| b == 0)
-            .ok_or(Error::Corrupt("text is not NUL-terminated"))?;
-        self.pos += len + 1;
+            .chunks_exact(unit)
+            .position(|chunk| chunk.iter().all(|&b| b == 0))
+            .ok_or(Error::Corrupt("text is not NUL-terminated"))?
+            * unit;
+        self.pos += len + unit;
         Ok(&rest[..len])
     }
 }

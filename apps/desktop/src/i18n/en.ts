@@ -34,6 +34,7 @@ export const en = {
   reasonNotADictionary: "Not a dictionary file.",
   reasonUnsupportedVersion: (version: string) => `Format version ${version} is not supported yet.`,
   reasonDamaged: "The file is damaged.",
+  reasonNeedsRegistrationCode: "It is encrypted and needs its registration code.",
   reasonUnsupported: (feature: string) => `It uses ${feature}, which OpenDict cannot read yet.`,
   libraryNote: "Order sets the sequence of dictionaries in results. Your files stay where they are; OpenDict never changes them.",
   emptyLibrary: "No dictionaries yet.",

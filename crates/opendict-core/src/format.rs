@@ -57,6 +57,10 @@ pub enum OpenError {
     /// Part of the file is damaged.
     #[error("the file is damaged")]
     Damaged,
+    /// The Dictionary is encrypted (`Encrypted=1`) and opens only with its registration
+    /// code or e-mail.
+    #[error("it needs a registration code")]
+    NeedsRegistrationCode,
     /// The file uses a feature OpenDict does not read yet.
     #[error("it uses {0}, which OpenDict cannot read yet")]
     Unsupported(String),
@@ -110,6 +114,7 @@ fn open_error(error: opendict_mdict::Error) -> OpenError {
         Error::NotMdict(_) => OpenError::NotADictionary,
         Error::UnsupportedVersion(version) => OpenError::UnsupportedVersion(version),
         Error::Corrupt(_) => OpenError::Damaged,
+        Error::Encrypted => OpenError::NeedsRegistrationCode,
         Error::Unsupported(feature) => OpenError::Unsupported(feature),
         other => OpenError::Unsupported(other.to_string()),
     }

@@ -209,6 +209,8 @@ export function describeFailure(t: Catalogue, reason: FailureReason): string {
       return t.reasonUnsupportedVersion(reason.detail);
     case "damaged":
       return t.reasonDamaged;
+    case "needsRegistrationCode":
+      return t.reasonNeedsRegistrationCode;
     case "unsupported":
       return t.reasonUnsupported(reason.detail);
   }

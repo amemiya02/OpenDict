@@ -34,6 +34,7 @@ export type FailureReason =
   | { kind: "notADictionary" }
   | { kind: "unsupportedVersion"; detail: string }
   | { kind: "damaged" }
+  | { kind: "needsRegistrationCode" }
   | { kind: "unsupported"; detail: string };
 
 export interface OpenFailure {

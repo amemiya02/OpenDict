@@ -146,6 +146,11 @@ fn a_dictionary_that_fails_to_open_is_listed_with_a_plain_reason() {
     let mut damaged = dictionary("Damaged").build();
     damaged.truncate(damaged.len() - 8);
     touch(folder.path(), "damaged.mdx", &damaged);
+    put(
+        folder.path(),
+        "bought.mdx",
+        &dictionary("Bought").attribute("Encrypted", "1"),
+    );
 
     let library = library_of(folder.path(), data.path());
     let mut failures: Vec<_> = library
@@ -168,10 +173,11 @@ fn a_dictionary_that_fails_to_open_is_listed_with_a_plain_reason() {
     assert_eq!(
         failures,
         [
+            ("bought.mdx".to_owned(), OpenError::NeedsRegistrationCode),
             ("damaged.mdx".to_owned(), OpenError::Damaged),
             ("notes.mdx".to_owned(), OpenError::NotADictionary),
         ]
     );
-    assert_eq!(library.folders()[0].dictionary_count, 3);
+    assert_eq!(library.folders()[0].dictionary_count, 4);
     assert_eq!(library.dictionaries().count(), 1);
 }

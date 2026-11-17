@@ -35,6 +35,7 @@ export const ja = {
   reasonNotADictionary: "辞書ファイルではありません。",
   reasonUnsupportedVersion: (version: string) => `形式バージョン ${version} にはまだ対応していません。`,
   reasonDamaged: "ファイルが壊れています。",
+  reasonNeedsRegistrationCode: "暗号化されていて、登録コードが必要です。",
   reasonUnsupported: (feature: string) => `OpenDict がまだ読めない機能（${feature}）を使っています。`,
   libraryNote: "順序は検索結果での辞書の並びを決めます。ファイルは元の場所に置いたままで、OpenDict が変更することはありません。",
   emptyLibrary: "辞書はまだありません。",
