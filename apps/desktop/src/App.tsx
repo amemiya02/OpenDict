@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { EntryFrame } from "./components/EntryFrame";
-import { HeadwordColumn, optionId } from "./components/HeadwordColumn";
+import { COLUMN_ID, HeadwordColumn, optionId } from "./components/HeadwordColumn";
 import { sectionId, ThumbIndex } from "./components/ThumbIndex";
 import { EmptyLibrary, LibraryPage, OutlineButton, type LibraryActions } from "./components/LibraryPage";
 import { SearchField } from "./components/SearchField";
@@ -16,9 +16,11 @@ import {
   rescanLibrary,
   setAllowNetwork,
   setDictionaryEnabled,
+  windowChrome,
   type Entry,
   type Library,
   type RegisterError,
+  type WindowChrome,
 } from "./lib/ipc";
 import { useHeadwordColumn } from "./lib/useHeadwordColumn";
 
@@ -39,6 +41,11 @@ export function App() {
   const [library, setLibrary] = useState<Library | null>(null);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
+  const [platform, setPlatform] = useState<WindowChrome["platform"] | null>(null);
+  /** Narrow windows: the reader opened the headword column with the toggle in the cover band. */
+  const [columnOpen, setColumnOpen] = useState(false);
+  /** Narrow windows: the reader is typing, so the column shows over the page until a word is chosen. */
+  const [typing, setTyping] = useState(false);
   const pageRef = useRef<HTMLElement>(null);
   const column = useHeadwordColumn();
   const { refresh } = column;
@@ -57,6 +64,21 @@ export function App() {
       (error: unknown) => setPage({ kind: "failed", reason: String(error) }),
     );
   }, [refresh]);
+
+  // The shell says what it built the window with: the styles leave room for the title bar
+  // controls and let the system material show through (see styles.css).
+  useEffect(() => {
+    windowChrome().then(
+      (chrome) => {
+        const root = document.documentElement;
+        root.dataset.platform = chrome.platform;
+        if (chrome.material) root.dataset.material = chrome.material;
+        else delete root.dataset.material;
+        setPlatform(chrome.platform);
+      },
+      () => {}, // no shell (or an old one): plain solid window
+    );
+  }, []);
 
   // Moving between the page and the Library puts the reader at the top of the new view.
   useEffect(() => {
@@ -84,6 +106,7 @@ export function App() {
 
   /** The reader's query changed: new suggestions, and the first match on the page at once. */
   async function changeQuery(text: string) {
+    setTyping(true);
     try {
       const answer = await column.refresh(text);
       if (!answer) return;
@@ -112,8 +135,15 @@ export function App() {
 
   /** The reader chose a word: it goes into the search field and onto the page. */
   function commit(headword: string) {
+    putColumnAway();
     type(headword);
     void show(headword);
+  }
+
+  /** A narrow window's column overlay goes once a word is chosen. */
+  function putColumnAway() {
+    setTyping(false);
+    setColumnOpen(false);
   }
 
   function commitCurrent() {
@@ -175,10 +205,32 @@ export function App() {
   const { items, selected, miss } = column.state;
 
   return (
-    <div className="grid h-full grid-cols-[264px_minmax(0,1fr)] grid-rows-[48px_minmax(0,1fr)_26px] max-[860px]:grid-cols-[200px_minmax(0,1fr)]">
-      <header className="col-span-2 flex items-center bg-cover text-on-cover select-none">
-        <div className="flex w-[264px] flex-none items-center gap-sm pr-3.5 pl-lg max-[860px]:w-[200px]">
-          <span className="font-serif text-[17px] font-bold">{t.appName}</span>
+    <div className="grid h-full grid-cols-[264px_minmax(0,1fr)] grid-rows-[48px_minmax(0,1fr)_26px] max-[860px]:grid-cols-[200px_minmax(0,1fr)] max-[620px]:grid-cols-[minmax(0,1fr)]">
+      <header
+        // On macOS the cover band is the title bar (the system's controls sit at its left).
+        data-tauri-drag-region={platform === "macos" ? "deep" : undefined}
+        className="col-span-full flex items-center bg-cover text-on-cover select-none"
+      >
+        <div className="flex w-[264px] flex-none items-center gap-sm pr-3.5 pl-lg max-[860px]:w-[200px] max-[620px]:w-auto max-[620px]:pr-1.5 macos:pl-20">
+          <span className="font-serif text-[17px] font-bold max-[620px]:hidden">{t.appName}</span>
+          <button
+            type="button"
+            aria-label={t.toggleColumn}
+            aria-controls={COLUMN_ID}
+            aria-expanded={columnOpen || typing}
+            // Keep the caret in the search field: the toggle answers what is shown now.
+            onMouseDown={(event) => event.preventDefault()}
+            onClick={() => {
+              setTyping(false);
+              setColumnOpen(!(columnOpen || typing));
+            }}
+            className="hidden size-6.5 place-items-center rounded-sharp text-on-cover-muted hover:bg-cover-edge hover:text-on-cover max-[620px]:grid"
+          >
+            <svg className="size-4 fill-none stroke-current stroke-[1.2]" viewBox="0 0 16 16" aria-hidden="true">
+              <rect x="2.5" y="3" width="11" height="10" />
+              <path d="M6.5 3v10" />
+            </svg>
+          </button>
         </div>
         <div className="flex min-w-0 flex-1 pr-lg pl-xl max-[860px]:pl-xs">
           <SearchField
@@ -188,6 +240,8 @@ export function App() {
             onQuery={(text) => void changeQuery(text)}
             onMove={(by) => void move(by)}
             onCommit={commitCurrent}
+            onEscape={putColumnAway}
+            onBlur={() => setTyping(false)}
           />
         </div>
       </header>
@@ -200,10 +254,14 @@ export function App() {
         onPick={pick}
         onNeedMore={() => void column.loadMore().catch(() => {})}
         onShowSuggestions={() => setView("lookup")}
-        onToggleLibrary={() => setView(view === "library" ? "lookup" : "library")}
+        onToggleLibrary={() => {
+          setColumnOpen(false);
+          setView(view === "library" ? "lookup" : "library");
+        }}
+        open={columnOpen || typing}
       />
 
-      <div className="grid min-h-0 grid-cols-[minmax(0,1fr)_auto]">
+      <div className="grid min-h-0 grid-cols-[minmax(0,1fr)_auto] bg-paper">
         <main ref={pageRef} aria-label={t.pageLabel} className="min-h-0 overflow-y-auto pt-[18px] pr-[30px] pb-12 pl-xl">
           {view === "library" && library ? (
             <LibraryPage library={library} busy={busy} notice={notice} actions={actions} />
@@ -225,7 +283,7 @@ export function App() {
         ) : null}
       </div>
 
-      <footer className="flex items-center gap-[18px] overflow-hidden border-t border-rule px-xl text-label whitespace-nowrap text-text-secondary tabular-nums select-none">
+      <footer className="flex items-center bg-paper gap-[18px] overflow-hidden border-t border-rule px-xl text-label whitespace-nowrap text-text-secondary tabular-nums select-none">
         <span>{library && !library.problem ? t.libraryCount(enabledCount) : null}</span>
         <UpdateNotice />
       </footer>

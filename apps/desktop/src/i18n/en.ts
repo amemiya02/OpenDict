@@ -55,6 +55,7 @@ export const en = {
   emptyLibraryHow: "Add a Library Folder: a folder that holds your MDict files (.mdx, with their .mdd files). Subfolders are included, and the files stay where they are.",
   libraryActionFailed: (reason: string) => `That did not work: ${reason}`,
   headwordColumn: "Headword column",
+  toggleColumn: "Show or hide the headword column",
   headwords: "Headwords",
   suggestions: "Suggestions",
   noMatchingHeadwords: "No matching headwords",

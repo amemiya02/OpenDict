@@ -56,6 +56,7 @@ export const zhCN = {
   emptyLibraryHow: "请添加词库文件夹：放着 MDict 文件（.mdx 及其 .mdd）的文件夹。子文件夹也会扫描，文件留在原处。",
   libraryActionFailed: (reason: string) => `操作没有成功：${reason}`,
   headwordColumn: "词头栏",
+  toggleColumn: "显示或隐藏词头栏",
   headwords: "词头",
   suggestions: "联想",
   noMatchingHeadwords: "没有匹配的词头",

@@ -11,6 +11,7 @@ const NEAR_END = 20;
 const KANA = /[぀-ヿ]/;
 
 export const LIST_ID = "headwords";
+export const COLUMN_ID = "headword-column";
 export const optionId = (index: number) => `headword-${index}`;
 
 /**
@@ -28,6 +29,7 @@ export function HeadwordColumn({
   onNeedMore,
   onShowSuggestions,
   onToggleLibrary,
+  open = false,
 }: {
   items: Suggestion[];
   /** The current row, or -1. Nothing in the column is current while the Library is open. */
@@ -38,6 +40,8 @@ export function HeadwordColumn({
   onNeedMore: () => void;
   onShowSuggestions: () => void;
   onToggleLibrary: () => void;
+  /** In a narrow window the column is an overlay, shown over the page only while open. */
+  open?: boolean;
 }) {
   const { t } = useI18n();
   const listRef = useRef<HTMLUListElement>(null);
@@ -91,7 +95,12 @@ export function HeadwordColumn({
       : null;
 
   return (
-    <aside className="row-span-2 flex min-h-0 flex-col border-r border-rule select-none" aria-label={t.headwordColumn}>
+    <aside
+      id={COLUMN_ID}
+      data-open={open || undefined}
+      className="headword-column row-span-2 flex min-h-0 flex-col border-r border-rule select-none max-[620px]:hidden max-[620px]:data-open:fixed max-[620px]:data-open:top-12 max-[620px]:data-open:bottom-0 max-[620px]:data-open:left-0 max-[620px]:data-open:z-10 max-[620px]:data-open:flex max-[620px]:data-open:w-[min(280px,84vw)]"
+      aria-label={t.headwordColumn}
+    >
       <div
         data-testid="guide-words"
         aria-hidden="true"
