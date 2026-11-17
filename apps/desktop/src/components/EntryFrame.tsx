@@ -22,8 +22,6 @@ const RECOLOUR = "invert(0.92) hue-rotate(180deg)";
  * scripts but has an opaque origin: no access to the app, Tauri IPC, storage or other
  * Dictionaries. The app sets no type inside it (the Hands-Off Entry Rule).
  *
- * The frame's document can say four things, by message, and nothing else: its height,
- * an `entry://` link the reader clicked (`onLink` gets the headword), a `sound://` link
  * The frame's document can say five things, by message, and nothing else: its height,
  * an `entry://` link the reader clicked (`onLink` gets the headword), a `sound://` link
  * the reader clicked (`onSound` gets a URL beneath this frame's own Dictionary), Esc
