@@ -28,6 +28,7 @@ pub fn run() {
             commands::rescan_library,
             commands::set_dictionary_enabled,
             commands::move_dictionary,
+            commands::register_dictionary,
         ])
         .run(tauri::generate_context!())
         .expect("OpenDict failed to start");

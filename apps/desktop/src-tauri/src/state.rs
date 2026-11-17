@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, MutexGuard};
 
-use opendict_core::{Library, Move, OpenError};
+use opendict_core::{Error as CoreError, Library, Move, OpenError, Registration};
 use serde::{Deserialize, Serialize};
 
 /// What the shell holds between commands: the Library, or why it could not be loaded.
@@ -67,7 +67,21 @@ pub enum FailureReason {
     UnsupportedVersion(String),
     Damaged,
     NeedsRegistrationCode,
+    WrongRegistrationCode,
     Unsupported(String),
+}
+
+/// Why a registration code was not accepted, as a kind the interface words in the
+/// reader's language.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(tag = "kind", content = "detail", rename_all = "camelCase")]
+pub enum RegisterError {
+    /// The code or the e-mail does not unlock the Dictionary.
+    WrongCode,
+    /// Only an e-mail was entered, and the Dictionary does not carry its code.
+    CodeNeeded,
+    /// Anything else (the Library could not be saved, the file went away...).
+    Failed(String),
 }
 
 /// A step in Library order, as the interface sends it.
@@ -150,6 +164,33 @@ impl AppState {
         self.change(|library| library.set_enabled(id, enabled))
     }
 
+    /// Unlocks the Dictionary at `path` with the registration code and e-mail the reader
+    /// entered (the code may be empty when the Dictionary carries its own). They are kept
+    /// only when they work. Neither is ever logged or put into an error message.
+    pub fn register(
+        &self,
+        path: &Path,
+        email: &str,
+        code: &str,
+    ) -> Result<LibraryView, RegisterError> {
+        let registration = Registration {
+            email: email.trim().to_owned(),
+            code: code.trim().to_owned(),
+        };
+        let mut guard = self.lock();
+        let library = guard
+            .as_mut()
+            .map_err(|problem| RegisterError::Failed(problem.clone()))?;
+        library
+            .register(path, registration)
+            .map_err(|error| match error {
+                CoreError::WrongRegistration(_) => RegisterError::WrongCode,
+                CoreError::RegistrationCodeNeeded(_) => RegisterError::CodeNeeded,
+                other => RegisterError::Failed(other.to_string()),
+            })?;
+        Ok(view(&guard))
+    }
+
     pub fn move_dictionary(&self, id: &str, direction: Direction) -> Result<LibraryView, String> {
         let step = match direction {
             Direction::Up => Move::Up,
@@ -213,6 +254,7 @@ fn reason(error: &OpenError) -> FailureReason {
         }
         OpenError::Damaged => FailureReason::Damaged,
         OpenError::NeedsRegistrationCode => FailureReason::NeedsRegistrationCode,
+        OpenError::WrongRegistrationCode => FailureReason::WrongRegistrationCode,
         OpenError::Unsupported(feature) => FailureReason::Unsupported(feature.clone()),
         other => FailureReason::Unsupported(other.to_string()),
     }
@@ -220,7 +262,7 @@ fn reason(error: &OpenError) -> FailureReason {
 
 #[cfg(test)]
 mod tests {
-    use opendict_mdict_fixture::MdxBuilder;
+    use opendict_mdict_fixture::{Identity, MdxBuilder};
     use serde_json::json;
 
     use super::*;
@@ -234,6 +276,55 @@ mod tests {
             .unwrap();
         std::fs::write(folder.path().join("broken.mdx"), b"not a dictionary").unwrap();
         folder
+    }
+
+    const EMAIL: &str = "reader@example.com";
+    const CODE: &str = "0123456789ABCDEF0123456789ABCDEF";
+
+    #[test]
+    fn a_dictionary_that_needs_a_code_opens_once_the_reader_enters_it() {
+        let data = tempfile::tempdir().unwrap();
+        let folder = tempfile::tempdir().unwrap();
+        let bought = folder.path().join("bought.mdx");
+        MdxBuilder::new()
+            .title("Bought")
+            .entry("serendipity", "<p>a happy accident (sample)</p>")
+            .registered_to(EMAIL, CODE, Identity::Utf16)
+            .write_to(&bought)
+            .unwrap();
+        let state = AppState::load(&data.path().join("library.json"), None);
+        let view = serde_json::to_value(state.add_folder(folder.path()).unwrap()).unwrap();
+        assert_eq!(
+            view["failures"],
+            json!([{ "path": bought, "reason": { "kind": "needsRegistrationCode" } }])
+        );
+
+        let wrong = state.register(&bought, EMAIL, "FEDCBA9876543210FEDCBA9876543210");
+        assert_eq!(
+            serde_json::to_value(wrong.unwrap_err()).unwrap(),
+            json!({ "kind": "wrongCode" })
+        );
+        let no_code = state.register(&bought, EMAIL, "");
+        assert_eq!(
+            serde_json::to_value(no_code.unwrap_err()).unwrap(),
+            json!({ "kind": "codeNeeded" })
+        );
+
+        let view = state.register(&bought, EMAIL, CODE).unwrap();
+
+        assert_eq!(view.dictionaries[0].title, "Bought");
+        assert!(view.failures.is_empty());
+        assert_eq!(state.look_up("serendipity").unwrap().len(), 1);
+        let kept = AppState::load(&data.path().join("library.json"), None);
+        assert_eq!(kept.library().dictionaries.len(), 1, "kept for next time");
+    }
+
+    #[test]
+    fn a_kept_code_that_no_longer_works_is_its_own_reason() {
+        assert_eq!(
+            serde_json::to_value(reason(&OpenError::WrongRegistrationCode)).unwrap(),
+            json!({ "kind": "wrongRegistrationCode" })
+        );
     }
 
     #[test]

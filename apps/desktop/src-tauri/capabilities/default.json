@@ -11,6 +11,7 @@
     "allow-remove-library-folder",
     "allow-rescan-library",
     "allow-set-dictionary-enabled",
-    "allow-move-dictionary"
+    "allow-move-dictionary",
+    "allow-register-dictionary"
   ]
 }
