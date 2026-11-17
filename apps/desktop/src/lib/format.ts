@@ -1,6 +1,7 @@
 import type { Locale } from "../i18n";
 
-const UNITS = ["byte", "kilobyte", "megabyte", "gigabyte", "terabyte"] as const;
+// The same symbols in every interface language, as file managers use them.
+const UNITS = ["B", "KB", "MB", "GB", "TB"] as const;
 
 /** A file size for people: 38 MB, 1.2 GB (binary multiples, as file managers show them). */
 export function formatSize(bytes: number, locale: Locale): string {
@@ -10,12 +11,8 @@ export function formatSize(bytes: number, locale: Locale): string {
     value /= 1024;
     unit += 1;
   }
-  return new Intl.NumberFormat(locale, {
-    style: "unit",
-    unit: UNITS[unit],
-    unitDisplay: "short",
-    maximumFractionDigits: value < 10 && unit > 0 ? 1 : 0,
-  }).format(value);
+  const number = new Intl.NumberFormat(locale, { maximumFractionDigits: value < 10 && unit > 0 ? 1 : 0 }).format(value);
+  return `${number} ${UNITS[unit]}`;
 }
 
 export function formatCount(n: number, locale: Locale): string {

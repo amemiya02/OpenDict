@@ -169,7 +169,7 @@ function DictionaryTable({
                 className="m-0 size-[15px] align-middle accent-[var(--ink)]"
               />
             </td>
-            <th scope="row" title={dictionary.path} className={`${cell} w-full font-semibold whitespace-normal`}>
+            <th scope="row" title={dictionary.path} className={`${cell} w-full text-left font-semibold whitespace-normal`}>
               <b
                 aria-hidden="true"
                 className="mr-2.5 inline-grid size-[22px] place-items-center rounded-l-[11px] bg-notch align-middle font-serif text-[12px] font-bold text-notch-text"
