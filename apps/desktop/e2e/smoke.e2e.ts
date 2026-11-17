@@ -287,3 +287,26 @@ test("the headword column suggests as the reader types and the keyboard browses 
   assert.equal(await heading.count(), 1);
   if (process.env.OPENDICT_E2E_COLUMN_SCREENSHOT) await page.screenshot({ path: process.env.OPENDICT_E2E_COLUMN_SCREENSHOT });
 });
+
+test("History lists committed Lookups, and Back and Forward retrace them", async () => {
+  const search = page.getByRole("combobox", { name: "Type a word" });
+  const column = page.getByRole("listbox", { name: "Headwords" });
+  const onPage = (headword: string) =>
+    page.waitForFunction((word) => document.querySelector("h1")?.textContent === `【${word}】`, headword, { timeout: 10_000 });
+
+  await lookUp("apple");
+  await lookUp("cat");
+
+  await search.press("Alt+ArrowLeft");
+  await onPage("apple");
+  assert.equal(await search.inputValue(), "apple");
+  await page.getByRole("button", { name: "Forward" }).click();
+  await onPage("cat");
+
+  await page.getByRole("button", { name: "History" }).click();
+  await column.getByRole("option", { name: "cat", exact: true }).waitFor({ timeout: 10_000 });
+  const history = await column.getByRole("option").evaluateAll((options) => options.map((o) => (o as HTMLElement).dataset.headword));
+  assert.deepEqual(history.slice(0, 2), ["cat", "apple"]);
+  if (process.env.OPENDICT_E2E_HISTORY_SCREENSHOT) await page.screenshot({ path: process.env.OPENDICT_E2E_HISTORY_SCREENSHOT });
+  await page.getByRole("button", { name: "Suggestions" }).click();
+});

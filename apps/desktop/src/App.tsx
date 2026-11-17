@@ -83,18 +83,20 @@ export function App() {
     setPage(next);
   }
 
-  /** Puts `headword`'s Entries on the page; resolves to whether any Dictionary had it. */
-  async function show(headword: string): Promise<boolean> {
+  /**
+   * Puts `headword`'s Entries on the page. `onFound` runs in the same update as the page
+   * when a Dictionary had the word, so nothing sees the page without it.
+   */
+  async function show(headword: string, onFound?: () => void) {
     const ticket = ++pageRequests.current;
     setView("lookup");
     try {
       const entries = await lookUp(headword);
-      if (ticket !== pageRequests.current) return false;
+      if (ticket !== pageRequests.current) return;
       setPage(entries.length > 0 ? { kind: "found", headword, entries } : { kind: "missing", query: headword });
-      return entries.length > 0;
+      if (entries.length > 0) onFound?.();
     } catch (error) {
       if (ticket === pageRequests.current) setPage({ kind: "failed", reason: String(error) });
-      return false;
     }
   }
 
@@ -142,9 +144,10 @@ export function App() {
    */
   async function commit(headword: string) {
     type(headword);
-    if (!(await show(headword))) return;
-    setTrail((now) => visit(now, headword));
-    recordLookup(headword).then((words) => setHistory(asWords(words)), () => {});
+    await show(headword, () => {
+      setTrail((now) => visit(now, headword));
+      recordLookup(headword).then((words) => setHistory(asWords(words)), () => {});
+    });
   }
 
   function commitCurrent() {
