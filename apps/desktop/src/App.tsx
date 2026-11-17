@@ -1,6 +1,7 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { EntryFrame } from "./components/EntryFrame";
 import { SearchField } from "./components/SearchField";
+import { UpdateNotice } from "./components/UpdateNotice";
 import { useI18n } from "./i18n";
 import { libraryStatus, lookUp, type Entry, type LibraryStatus } from "./lib/ipc";
 
@@ -46,6 +47,7 @@ export function App() {
 
       <footer className="flex items-center gap-[18px] overflow-hidden border-t border-rule px-xl text-label whitespace-nowrap text-text-secondary tabular-nums select-none">
         <span>{status?.kind === "ready" ? t.libraryCount(status.dictionaryCount) : null}</span>
+        <UpdateNotice />
       </footer>
     </div>
   );

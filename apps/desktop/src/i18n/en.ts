@@ -15,6 +15,12 @@ export const en = {
   libraryCount: (n: number) => (n === 1 ? "1 dictionary" : `${n} dictionaries`),
   startHint: "Type a headword and press Enter.",
   lookupFailed: (reason: string) => `The lookup failed: ${reason}`,
+  updateAvailable: (version: string) => `OpenDict ${version} is available.`,
+  updateInstall: "Install and restart",
+  updateDownloading: (version: string, percent: number | null) =>
+    percent === null ? `Downloading OpenDict ${version}…` : `Downloading OpenDict ${version}… ${percent}%`,
+  updateInstalling: (version: string) => `Installing OpenDict ${version}…`,
+  updateFailed: (version: string, reason: string) => `OpenDict ${version} could not be installed: ${reason}`,
 };
 
 export type Catalogue = typeof en;

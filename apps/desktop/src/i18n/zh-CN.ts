@@ -16,4 +16,10 @@ export const zhCN = {
   libraryCount: (n: number) => `${n} 本词典`,
   startHint: "输入词头，按 Enter 查词。",
   lookupFailed: (reason: string) => `查词失败：${reason}`,
+  updateAvailable: (version: string) => `OpenDict ${version} 已发布。`,
+  updateInstall: "安装并重新启动",
+  updateDownloading: (version: string, percent: number | null) =>
+    percent === null ? `正在下载 OpenDict ${version}…` : `正在下载 OpenDict ${version}… ${percent}%`,
+  updateInstalling: (version: string) => `正在安装 OpenDict ${version}…`,
+  updateFailed: (version: string, reason: string) => `无法安装 OpenDict ${version}：${reason}`,
 } satisfies Catalogue;
