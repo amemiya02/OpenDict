@@ -46,6 +46,7 @@ export const ja = {
   suggestions: "候補",
   noMatchingHeadwords: "一致する見出し語がありません",
   missNote: "一致なし。見出し語一覧の続き：",
+  lemmatized: "原形に変換",
   startHint: "語を入力してください。↑ ↓ で見出し語を選び、Enter で引きます。",
   lookupFailed: (reason: string) => `検索に失敗しました：${reason}`,
   allowNetwork: "ネットワークへのアクセスを許可",

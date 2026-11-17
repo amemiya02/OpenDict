@@ -10,9 +10,10 @@ import type { Suggestion } from "./lib/ipc";
 /**
  * A fake shell with a headword index in index order (each headword with how many
  * Dictionaries file it). It answers suggest and headwords_after the way the core does
- * and records every command it receives.
+ * and records every command it receives. `lemmas` maps inflected forms to base forms,
+ * standing in for the core's Lemmatization.
  */
-function fakeShell(index: Suggestion[]) {
+function fakeShell(index: Suggestion[], lemmas: Record<string, string> = {}) {
   const calls: { command: string; args: Record<string, unknown> }[] = [];
   const position = (key: string) => {
     const at = index.findIndex((item) => item.headword.toLowerCase() >= key);
@@ -33,6 +34,11 @@ function fakeShell(index: Suggestion[]) {
         return library;
       case "suggest": {
         const key = (args.query as string).trim().toLowerCase();
+        const base = lemmas[key];
+        if (base) {
+          const items = index.slice(position(base)).slice(0, args.limit as number);
+          return { items, lemma: { from: (args.query as string).trim(), to: base }, near: false, miss: false, browse: false };
+        }
         const items = index.slice(position(key)).slice(0, args.limit as number);
         const browse = key === "";
         return { items, lemma: null, near: false, miss: !browse && !items[0]?.headword.toLowerCase().startsWith(key), browse };
@@ -84,6 +90,18 @@ describe("headword column", () => {
 
     await waitFor(() => expect(shownHeadwords()).toEqual(["serendipity", "serene", "shadow"]));
     // The first match is current and already on the page.
+    expect(within(column()).getByRole("option", { selected: true }).dataset.headword).toBe("serendipity");
+    await waitFor(() => expect(pageHeadword()).toBe("【serendipity】"));
+  });
+
+  it("notes the base form an inflected form was taken to, and shows its Entry", async () => {
+    fakeShell(words, { serendipities: "serendipity" });
+    const search = renderApp();
+
+    await userEvent.type(search, "serendipities");
+
+    const note = await screen.findByText((_, element) => element?.tagName === "P" && element.textContent === "Lemmatized serendipities → serendipity");
+    expect(within(note).getByText("serendipities").tagName).toBe("B");
     expect(within(column()).getByRole("option", { selected: true }).dataset.headword).toBe("serendipity");
     await waitFor(() => expect(pageHeadword()).toBe("【serendipity】"));
   });

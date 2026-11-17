@@ -45,6 +45,7 @@ export const en = {
   suggestions: "Suggestions",
   noMatchingHeadwords: "No matching headwords",
   missNote: "No match. Next in the headword index:",
+  lemmatized: "Lemmatized",
   startHint: "Type a word. ↑ and ↓ move through the headwords; Enter looks one up.",
   lookupFailed: (reason: string) => `The lookup failed: ${reason}`,
   allowNetwork: "Allow network access",
