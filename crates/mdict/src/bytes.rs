@@ -18,6 +18,11 @@ impl<'a> Reader<'a> {
         self.pos
     }
 
+    /// How many bytes are left to read.
+    pub(crate) fn remaining(&self) -> usize {
+        self.bytes.len() - self.pos
+    }
+
     pub(crate) fn take(&mut self, len: usize) -> Result<&'a [u8]> {
         let end = self
             .pos

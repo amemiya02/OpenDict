@@ -9,6 +9,8 @@ use crate::block;
 use crate::bytes::{Reader, adler32};
 use crate::error::{Error, Result};
 use crate::header::Header;
+use crate::registration::Registration;
+use crate::salsa;
 
 /// The format version, which sets the width of numbers and the shape of the key index.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -132,7 +134,11 @@ struct RecordBlock {
 }
 
 impl MdictFile {
-    pub(crate) fn open(path: &Path, kind: Kind) -> Result<MdictFile> {
+    pub(crate) fn open(
+        path: &Path,
+        kind: Kind,
+        registration: Option<&Registration>,
+    ) -> Result<MdictFile> {
         let file = File::open(path)?;
         // SAFETY: the map is read-only and owned by this value. OpenDict never writes
         // dictionary files; another process truncating one while it is open is outside
@@ -142,9 +148,14 @@ impl MdictFile {
         let header = Header::read(&mut reader)?;
         let version = Version::of(&header)?;
         let encrypted = header.encrypted();
-        if encrypted & 1 != 0 {
-            return Err(Error::Encrypted);
-        }
+        let header_keys = if encrypted & 1 != 0 {
+            let keys = registration
+                .and_then(|registration| registration.candidate_keys(&header))
+                .ok_or(Error::Encrypted)?;
+            Some(keys)
+        } else {
+            None
+        };
         let encrypted_index = encrypted & 2 != 0;
         if encrypted_index && version == Version::V1 {
             return Err(Error::Unsupported(
@@ -156,7 +167,13 @@ impl MdictFile {
             Kind::Mdd => TextEncoding::UTF_16LE,
         };
 
-        let keys = read_key_section(&mut reader, version, encoding, encrypted_index)?;
+        let keys = read_key_section(
+            &mut reader,
+            version,
+            encoding,
+            encrypted_index,
+            header_keys.as_deref(),
+        )?;
         let records = read_record_section(&mut reader, version, keys.len())?;
 
         let mut record_starts: Vec<u64> = keys.iter().map(|key| key.record_offset).collect();
@@ -227,18 +244,45 @@ fn read_key_section(
     version: Version,
     encoding: TextEncoding,
     encrypted_index: bool,
+    header_keys: Option<&[[u8; 16]]>,
 ) -> Result<Vec<Key>> {
     let head_len = match version {
         Version::V1 => 16,
         Version::V2 => 40,
     };
-    let head = reader.take(head_len)?;
-    if version == Version::V2 && adler32(head) != reader.u32_be()? {
-        return Err(Error::Corrupt(
-            "the key section header checksum does not match",
-        ));
-    }
-    let mut head = Reader::new(head);
+    let stored = reader.take(head_len)?;
+    let checksum = match version {
+        Version::V1 => None,
+        Version::V2 => Some(reader.u32_be()?),
+    };
+    let head = match header_keys {
+        None => {
+            if checksum.is_some_and(|checksum| adler32(stored) != checksum) {
+                return Err(Error::Corrupt(
+                    "the key section header checksum does not match",
+                ));
+            }
+            stored.to_vec()
+        }
+        // `Encrypted="1"`: the dictionary key is the one that decrypts the header into
+        // one that checks out. Version 2 headers carry a checksum of the clear text;
+        // version 1 headers have none, so their sizes must at least fit in the file.
+        Some(keys) => {
+            let room = reader.remaining();
+            keys.iter()
+                .map(|key| {
+                    let mut head = stored.to_vec();
+                    salsa::apply_keystream(key, salsa::MDICT_ROUNDS, &mut head);
+                    head
+                })
+                .find(|head| match checksum {
+                    Some(checksum) => adler32(head) == checksum,
+                    None => plausible_v1_head(head, room),
+                })
+                .ok_or(Error::WrongRegistration)?
+        }
+    };
+    let mut head = Reader::new(&head);
     let block_count = version.number(&mut head)?;
     let entry_count = version.number(&mut head)?;
     let info_plain_len = match version {
@@ -291,6 +335,17 @@ fn read_key_section(
         return Err(Error::Corrupt("the key index does not add up"));
     }
     Ok(keys)
+}
+
+/// Whether a decrypted version 1 key section header could be right: there are blocks
+/// exactly when there are entries, no more blocks than entries, and the key index and key
+/// blocks fit in the `room` left in the file. A wrong key gives random numbers, which
+/// practically never pass.
+fn plausible_v1_head(head: &[u8], room: usize) -> bool {
+    let (words, _) = head.as_chunks::<4>();
+    let [blocks, entries, info_len, blocks_len] =
+        [0, 1, 2, 3].map(|i| u64::from(u32::from_be_bytes(words[i])));
+    (blocks == 0) == (entries == 0) && blocks <= entries && info_len + blocks_len <= room as u64
 }
 
 /// Reads the record section: counts, the size table, then the blocks.
