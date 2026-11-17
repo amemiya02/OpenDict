@@ -7,6 +7,9 @@ const ROW = 26;
 /** Load more headwords when the reader scrolls within this many rows of the end. */
 const NEAR_END = 20;
 
+/** Kana mark a headword as Japanese, so it is set in the Japanese serif. */
+const KANA = /[぀-ヿ]/;
+
 export const LIST_ID = "headwords";
 export const optionId = (index: number) => `headword-${index}`;
 
@@ -41,6 +44,11 @@ export function HeadwordColumn({
   const [inView, setInView] = useState<[number, number] | null>(null);
   const current = view === "lookup" ? selected : -1;
 
+  const needMore = useRef(onNeedMore);
+  useEffect(() => {
+    needMore.current = onNeedMore;
+  }, [onNeedMore]);
+
   // Which rows are in view. Without a layout (nothing measured yet) the guide words are
   // the first and last headwords loaded.
   const measure = useCallback(() => {
@@ -51,11 +59,20 @@ export function HeadwordColumn({
     }
     const first = Math.floor(list.scrollTop / ROW);
     const last = Math.floor((list.scrollTop + list.clientHeight - 1) / ROW);
-    setInView([first, last]);
-    if (list.scrollTop + list.clientHeight >= list.scrollHeight - NEAR_END * ROW) onNeedMore();
-  }, [onNeedMore]);
+    setInView((now) => (now?.[0] === first && now[1] === last ? now : [first, last]));
+    if (list.scrollTop + list.clientHeight >= list.scrollHeight - NEAR_END * ROW) needMore.current();
+  }, []);
 
   useLayoutEffect(measure, [measure, items]);
+
+  // A taller or shorter window shows more or fewer rows.
+  useEffect(() => {
+    const list = listRef.current;
+    if (!list || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(measure);
+    observer.observe(list);
+    return () => observer.disconnect();
+  }, [measure]);
 
   useEffect(() => {
     listRef.current?.querySelector('[aria-selected="true"]')?.scrollIntoView?.({ block: "nearest" });
@@ -82,8 +99,8 @@ export function HeadwordColumn({
       >
         {guide ? (
           <>
-            <span className="truncate">{guide[0].headword}</span>
-            <span className="truncate">{guide[1].headword}</span>
+            <span className="truncate" lang={KANA.test(guide[0].headword) ? "ja" : undefined}>{guide[0].headword}</span>
+            <span className="truncate" lang={KANA.test(guide[1].headword) ? "ja" : undefined}>{guide[1].headword}</span>
           </>
         ) : (
           <span>{t.suggestions}</span>
@@ -108,6 +125,7 @@ export function HeadwordColumn({
             aria-selected={index === current}
             aria-label={`${item.headword}, ${t.answered(item.count)}`}
             data-headword={item.headword}
+            lang={KANA.test(item.headword) ? "ja" : undefined}
             onClick={() => onPick(index)}
             className="flex h-[26px] cursor-default items-center gap-sm pr-lg pl-[30px] font-serif text-index hover:bg-[color-mix(in_srgb,var(--paper-shade)_55%,transparent)] aria-selected:bg-shade aria-selected:pl-lg aria-selected:font-bold"
           >
