@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-headwords-after"
+description = "Enables the headwords_after command without any pre-configured scope."
+commands.allow = ["headwords_after"]
+
+[[permission]]
+identifier = "deny-headwords-after"
+description = "Denies the headwords_after command without any pre-configured scope."
+commands.deny = ["headwords_after"]

@@ -1,0 +1,27 @@
+[package]
+name = "opendict-core"
+version = "0.1.0"
+description = "OpenDict's Library and Lookup, independent of any user interface"
+license = "GPL-3.0-or-later"
+publish = false
+edition.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+
+[lib]
+name = "opendict_core"
+
+[dependencies]
+opendict-mdict.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+memmap2.workspace = true
+thiserror.workspace = true
+unicode-normalization.workspace = true
+
+[dev-dependencies]
+opendict-mdict-fixture.workspace = true
+tempfile.workspace = true
+
+[lints]
+workspace = true

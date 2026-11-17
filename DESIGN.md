@@ -201,7 +201,8 @@ A fixed desktop frame: a 48px cover band across the top, a 264px headword column
 - **Page:** 18px top, 34px left and 30px right padding. The page head (headword, pronunciation, answer count, actions) sits over a double rule; Dictionary sections follow, separated by single rules. Both rules run the full width of the page to the thumb index.
 - **Headword column:** guide words (first and last headword shown) over a double rule, an optional note line (lemmatization, near matches), then the list, then four tabs: Suggestions, History, Word Book, Library.
 - **Density:** 26px index rows, 36px Dictionary headers, 28px buttons. Groups sit tight; separation comes from rules, not from padding.
-- **Responsive:** at 1100px and below the thumb index drops its captions and keeps only the notches. At 860px and below the column narrows to 200px. At 620px and below the column becomes an overlay, opened by a toggle in the cover band or by typing; window controls and back/forward stay.
+- **Responsive:** at 1100px and below the thumb index drops its captions and keeps only the notches. At 860px and below the column narrows to 200px. At 620px and below the column becomes an overlay over the page, opened by a toggle in the cover band or by typing, and put away by choosing a word, the toggle or Esc; the wordmark gives way, while window controls and back/forward stay.
+- **Native chrome:** the window controls are always the system's own. On macOS the cover band is the title bar: the traffic lights sit at its left (the wordmark moves right to clear them) and the band drags the window. On Windows and Linux the system title bar sits above the cover band. Where the system has a window material (Mica on Windows 11, sidebar vibrancy on macOS) it shows faintly through the headword column's paper (65%), as through a native sidebar; the page, the cover band and the narrow-window overlay stay solid. Without one (Windows 10, Linux) the window is solid throughout.
 - **Empty and no-match pages** are never blank: they offer the headword index, recent lookups, the Word Book, another Group that has the word, or a wildcard pattern.
 
 ## Elevation & Depth
@@ -252,7 +253,8 @@ Square-cut, like print. Controls take a 2px corner at most (`sharp`). The one cu
 
 ### Mini Window
 - **Style:** a 408 × 468px window with an 8px corner and the Window float shadow: its own cover band with the search field, the page in miniature (24px headword), a 30px thumb index, and a footer with Add to Word Book, Open in main window and the Esc hint.
-- **Placement:** below the selected text, or above it, or beside it, whichever keeps it fully on screen.
+- **Placement:** below the selected text, or above it, or beside it, whichever keeps it fully on screen. The pointer stands for the selection (the system does not say where a selection in another application is): the window opens below the pointer's line, above it, or beside the pointer.
+- **Settings:** its two global shortcuts (look up the selection, bring the main window forward) and clipboard watching sit in a "Mini Window" section at the foot of the Library view, as rows over hairlines; a shortcut changes by pressing the new one.
 
 ## Do's and Don'ts
 

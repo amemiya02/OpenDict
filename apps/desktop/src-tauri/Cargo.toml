@@ -1,0 +1,75 @@
+[package]
+name = "opendict-desktop"
+version = "0.1.0"
+description = "OpenDict desktop application"
+license = "GPL-3.0-or-later"
+publish = false
+edition.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+
+[lib]
+name = "opendict_desktop_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+opendict-core.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+percent-encoding = "2"
+# `macos-private-api`: vibrancy shows through a transparent window, which macOS only
+# allows with private API. tauri-build checks the feature against `app.macOSPrivateApi`
+# in tauri.conf.json, so both are set on every platform (a no-op off macOS).
+tauri = { version = "2", features = ["macos-private-api"] }
+tauri-plugin-dialog = "2"
+tauri-plugin-process = "2"
+# Mica and vibrancy, applied directly so the app knows whether they took (Tauri uses it too).
+window-vibrancy = "0.8"
+
+# Desktop only: in-app updates from GitHub Releases.
+[target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
+tauri-plugin-updater = "2"
+# The Mini Window's shortcuts work from any application.
+tauri-plugin-global-shortcut = "2"
+
+# Mica needs Windows 11: the build number decides.
+[target.'cfg(target_os = "windows")'.dependencies]
+windows-version = "0.1"
+# Where the selection is on screen (UI Automation), for placing the Mini Window. The
+# same version Tauri and WebView2 already build.
+windows = { version = "0.62", features = [
+    "Win32_Foundation",
+    "Win32_Graphics_Gdi",
+    "Win32_System_Com",
+    "Win32_System_Ole",
+    "Win32_System_Variant",
+    "Win32_UI_Accessibility",
+    "Win32_UI_WindowsAndMessaging",
+] }
+# Selection capture: simulated copy, the whole clipboard saved and put back, focus returned.
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_System_DataExchange",
+    "Win32_System_Memory",
+    "Win32_System_Ole",
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_UI_WindowsAndMessaging",
+] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+# Selection capture on macOS: a simulated ⌘C (needs the Accessibility permission).
+enigo = "0.6"
+
+# Selection capture on macOS and Linux: the text on the pasteboard, or X11's PRIMARY selection.
+[target.'cfg(any(target_os = "macos", target_os = "linux"))'.dependencies]
+arboard = { version = "3", default-features = false }
+
+[dev-dependencies]
+opendict-mdict-fixture.workspace = true
+tempfile.workspace = true
+
+[lints]
+workspace = true

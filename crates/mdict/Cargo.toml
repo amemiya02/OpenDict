@@ -1,0 +1,30 @@
+[package]
+name = "opendict-mdict"
+version = "0.1.0"
+description = "A reader for MDict dictionary files (MDX and MDD)"
+license = "MIT OR Apache-2.0"
+readme = "README.md"
+keywords = ["mdict", "mdx", "dictionary", "parser"]
+categories = ["parser-implementations", "text-processing"]
+edition.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+
+[lib]
+name = "opendict_mdict"
+
+[dependencies]
+adler2 = "2"
+encoding_rs = "0.8"
+flate2.workspace = true
+lzokay = { version = "2", default-features = false, features = ["decompress"] }
+memmap2.workspace = true
+ripemd = "0.2"
+thiserror.workspace = true
+
+[dev-dependencies]
+opendict-mdict-fixture.workspace = true
+tempfile.workspace = true
+
+[lints]
+workspace = true
