@@ -34,6 +34,6 @@ pub use library::{
     DictionaryInfo, Elsewhere, Entry, Group, Lemma, Library, LibraryFolder, Move, OpenFailure,
     Suggestion, Suggestions,
 };
-pub use preferences::{DEFAULT_TEXT_SIZE, DEFAULT_ZOOM, Preferences, Theme};
+pub use preferences::{DEFAULT_TEXT_SIZE, DEFAULT_ZOOM, Language, Preferences, Theme};
 pub use pronunciation::pronunciation;
 pub use word_books::{ExportFormat, SavedFrom, SavedWord, WordBook, WordBookId, WordBooks};

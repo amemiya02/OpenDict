@@ -74,6 +74,7 @@ pub fn run() {
             commands::set_allow_network,
             commands::appearance,
             commands::set_theme,
+            commands::set_language,
             commands::set_as_authored,
             commands::set_all_as_authored,
             commands::set_text_size,

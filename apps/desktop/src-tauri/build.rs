@@ -18,6 +18,7 @@ fn main() {
         "register_dictionary",
         "appearance",
         "set_theme",
+        "set_language",
         "set_as_authored",
         "set_all_as_authored",
         "set_text_size",

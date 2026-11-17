@@ -5,11 +5,11 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-pub use opendict_core::Theme;
 use opendict_core::{
     Error as CoreError, ExportFormat, History, IndexState, Library, Move, OpenError, Preferences,
     Registration, SavedFrom, Suggestion, WordBookId, WordBooks,
 };
+pub use opendict_core::{Language, Theme};
 use serde::{Deserialize, Serialize};
 
 use crate::entry_protocol;
@@ -69,6 +69,8 @@ pub struct AppearanceView {
     pub text_size: u32,
     /// Page zoom, in percent.
     pub zoom: u32,
+    /// The interface language the reader chose; `None` follows the system language.
+    pub language: Option<Language>,
 }
 
 /// What the headword column offers for a query: the Lookup result shape settled by the
@@ -451,12 +453,14 @@ impl AppState {
                 all_as_authored: p.all_as_authored(),
                 text_size: p.text_size(),
                 zoom: p.zoom(),
+                language: p.language(),
             },
             Err(_) => AppearanceView {
                 theme: Theme::System,
                 all_as_authored: false,
                 text_size: opendict_core::DEFAULT_TEXT_SIZE,
                 zoom: opendict_core::DEFAULT_ZOOM,
+                language: None,
             },
         }
     }
@@ -484,6 +488,11 @@ impl AppState {
 
     pub fn set_theme(&self, theme: Theme) -> Result<(), String> {
         self.change_preferences(|p| p.set_theme(theme))
+    }
+
+    /// Sets the interface language; `None` follows the system language again.
+    pub fn set_language(&self, language: Option<Language>) -> Result<(), String> {
+        self.change_preferences(|p| p.set_language(language))
     }
 
     /// Returns the size as set, within readable limits.
@@ -1556,11 +1565,13 @@ mod tests {
                 theme: Theme::System,
                 all_as_authored: false,
                 text_size: 16,
-                zoom: 100
+                zoom: 100,
+                language: None
             }
         );
 
         state.set_theme(Theme::Dark).unwrap();
+        state.set_language(Some(Language::Ja)).unwrap();
         state.set_all_as_authored(true).unwrap();
         assert_eq!(state.set_text_size(99).unwrap(), 32);
         assert_eq!(state.set_zoom(150).unwrap(), 150);
@@ -1572,7 +1583,8 @@ mod tests {
                 theme: Theme::Dark,
                 all_as_authored: true,
                 text_size: 32,
-                zoom: 150
+                zoom: 150,
+                language: Some(Language::Ja)
             }
         );
     }
@@ -1591,7 +1603,16 @@ mod tests {
         let state = AppState::load(&data.path().join("library.json"), None, data.path());
         assert_eq!(
             serde_json::to_value(state.appearance()).unwrap(),
-            json!({"theme": "system", "allAsAuthored": false, "textSize": 16, "zoom": 100})
+            json!({"theme": "system", "allAsAuthored": false, "textSize": 16, "zoom": 100, "language": null})
+        );
+        state.set_language(Some(Language::ZhCn)).unwrap();
+        assert_eq!(
+            serde_json::to_value(state.appearance()).unwrap()["language"],
+            json!("zh-CN")
+        );
+        assert_eq!(
+            serde_json::from_value::<Option<Language>>(json!("ja")).unwrap(),
+            Some(Language::Ja)
         );
     }
 }

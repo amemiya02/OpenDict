@@ -1,6 +1,6 @@
 //! Per-Dictionary preferences, kept in a file the core owns.
 
-use opendict_core::{Preferences, Theme};
+use opendict_core::{Language, Preferences, Theme};
 
 #[test]
 fn dictionaries_have_no_network_access_by_default() {
@@ -147,4 +147,47 @@ fn reading_preferences_and_network_access_live_side_by_side() {
     let reloaded = Preferences::load(&file).unwrap();
     assert!(reloaded.as_authored("maps.mdx"));
     assert!(!reloaded.allows_network("maps.mdx"));
+}
+
+#[test]
+fn the_interface_language_follows_the_system_until_the_reader_picks_one_and_is_remembered() {
+    let folder = tempfile::tempdir().unwrap();
+    let file = folder.path().join("preferences.json");
+
+    let mut preferences = Preferences::load(&file).unwrap();
+    assert_eq!(preferences.language(), None);
+    preferences.set_language(Some(Language::Ja)).unwrap();
+    assert_eq!(
+        Preferences::load(&file).unwrap().language(),
+        Some(Language::Ja)
+    );
+
+    preferences.set_language(None).unwrap();
+    assert_eq!(Preferences::load(&file).unwrap().language(), None);
+}
+
+#[test]
+fn the_interface_language_is_stored_as_its_language_tag() {
+    let folder = tempfile::tempdir().unwrap();
+    let file = folder.path().join("preferences.json");
+
+    let mut preferences = Preferences::load(&file).unwrap();
+    preferences.set_language(Some(Language::ZhCn)).unwrap();
+
+    let text = std::fs::read_to_string(&file).unwrap();
+    let stored: serde_json::Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(stored["language"], "zh-CN");
+    assert_eq!(serde_json::to_value(Language::En).unwrap(), "en");
+}
+
+#[test]
+fn a_language_the_app_does_not_have_falls_back_to_the_system() {
+    let folder = tempfile::tempdir().unwrap();
+    let file = folder.path().join("preferences.json");
+    std::fs::write(&file, r#"{ "theme": "dark", "language": "fr" }"#).unwrap();
+
+    let preferences = Preferences::load(&file).unwrap();
+
+    assert_eq!(preferences.language(), None);
+    assert_eq!(preferences.theme(), Theme::Dark);
 }

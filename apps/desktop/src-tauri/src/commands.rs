@@ -11,8 +11,8 @@ use opendict_core::ExportFormat;
 
 use crate::EXPORT_DIR_ENV;
 use crate::state::{
-    AppState, AppearanceView, Direction, ElsewhereView, EntryView, LibraryView, RegisterError,
-    SuggestionView, SuggestionsView, Theme, WordBooksView,
+    AppState, AppearanceView, Direction, ElsewhereView, EntryView, Language, LibraryView,
+    RegisterError, SuggestionView, SuggestionsView, Theme, WordBooksView,
 };
 
 /// Unlocks a Dictionary that needs a registration code with the code and e-mail the
@@ -233,6 +233,23 @@ pub fn appearance(state: State<'_, AppState>) -> AppearanceView {
 pub fn set_theme(app: AppHandle, state: State<'_, AppState>, theme: Theme) -> Result<(), String> {
     state.set_theme(theme)?;
     apply_theme(&app, theme);
+    Ok(())
+}
+
+/// The event every window hears when the interface language changes, so a window that is
+/// open (the Mini Window, say) switches with the one the reader switched it in.
+pub const LANGUAGE_EVENT: &str = "language";
+
+/// Remembers the interface language (`None`: follow the system language) and tells every
+/// window.
+#[tauri::command]
+pub fn set_language(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    language: Option<Language>,
+) -> Result<(), String> {
+    state.set_language(language)?;
+    let _ = app.emit(LANGUAGE_EVENT, language);
     Ok(())
 }
 

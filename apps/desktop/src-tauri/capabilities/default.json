@@ -20,6 +20,7 @@
     "allow-set-allow-network",
     "allow-appearance",
     "allow-set-theme",
+    "allow-set-language",
     "allow-set-as-authored",
     "allow-set-all-as-authored",
     "allow-set-text-size",

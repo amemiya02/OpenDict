@@ -24,6 +24,18 @@ pub enum Theme {
     Dark,
 }
 
+/// The interface language: one of the three the app has catalogues for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Language {
+    /// Simplified Chinese.
+    #[serde(rename = "zh-CN")]
+    ZhCn,
+    #[serde(rename = "en")]
+    En,
+    #[serde(rename = "ja")]
+    Ja,
+}
+
 /// The base text size of Entries, in CSS pixels: the size of text a Dictionary does not
 /// size itself.
 pub const DEFAULT_TEXT_SIZE: u32 = 16;
@@ -48,6 +60,22 @@ struct Stored {
     text_size: u32,
     #[serde(default = "default_zoom")]
     zoom: u32,
+    /// The interface language the reader chose; unset follows the system language.
+    #[serde(
+        default,
+        deserialize_with = "known_language",
+        skip_serializing_if = "Option::is_none"
+    )]
+    language: Option<Language>,
+}
+
+/// A language the app has no catalogue for (say, written by a later version) counts as
+/// no choice, so the interface follows the system language again.
+fn known_language<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> std::result::Result<Option<Language>, D::Error> {
+    let value = Option::<serde_json::Value>::deserialize(deserializer)?;
+    Ok(value.and_then(|value| serde_json::from_value(value).ok()))
 }
 
 impl Default for Stored {
@@ -58,6 +86,7 @@ impl Default for Stored {
             all_as_authored: false,
             text_size: DEFAULT_TEXT_SIZE,
             zoom: DEFAULT_ZOOM,
+            language: None,
         }
     }
 }
@@ -178,6 +207,17 @@ impl Preferences {
         self.stored.zoom = percent.clamp(*ZOOMS.start(), *ZOOMS.end());
         self.save()?;
         Ok(self.stored.zoom)
+    }
+
+    /// The interface language the reader chose, or `None` to follow the system language.
+    pub fn language(&self) -> Option<Language> {
+        self.stored.language
+    }
+
+    /// Sets the interface language (`None`: follow the system language), and saves.
+    pub fn set_language(&mut self, language: Option<Language>) -> Result<()> {
+        self.stored.language = language;
+        self.save()
     }
 
     /// Changes one Dictionary's preferences, forgets them when they are all defaults
