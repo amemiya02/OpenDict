@@ -1,10 +1,14 @@
+use std::ops::ControlFlow;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 
 use crate::error::{Error, Result};
 use crate::format::{DictionaryFormat, DictionaryReader, MdictFormat, OpenError, RawRecord};
-use crate::scan::{self, Unit};
+use crate::index::{HeadwordIndex, StoredIndex};
+use crate::indexing::{Built, IndexJob, IndexOutcome, IndexResult, IndexState, index_file};
+use crate::scan::{self, Stamp, Unit};
 
 /// Every Dictionary the reader has made available: the Dictionaries found in their
 /// Library Folders, in Library order, each enabled or not.
@@ -13,6 +17,9 @@ use crate::scan::{self, Unit};
 /// and enabled states there after every change. Dictionary files are only ever read.
 pub struct Library {
     file: Option<PathBuf>,
+    /// Where indexes are stored: `indexes` beside the Library file. `None` for a Library
+    /// kept only in memory, whose indexes are built in memory as it opens.
+    index_folder: Option<PathBuf>,
     formats: Vec<&'static dyn DictionaryFormat>,
     record: Record,
     folders: Vec<LibraryFolder>,
@@ -33,7 +40,10 @@ struct Record {
 
 struct Dictionary {
     info: DictionaryInfo,
-    reader: Box<dyn DictionaryReader>,
+    reader: Arc<dyn DictionaryReader>,
+    stamp: Stamp,
+    /// Present when `info.index` is [`IndexState::Ready`].
+    index: Option<StoredIndex>,
 }
 
 /// A Library Folder and what was found in it.
@@ -65,6 +75,8 @@ pub struct DictionaryInfo {
     pub size: u64,
     /// Whether it answers Lookups.
     pub enabled: bool,
+    /// Whether its index is built. Only a Dictionary whose index is ready answers.
+    pub index: IndexState,
 }
 
 /// A Dictionary file that was found but could not be opened.
@@ -98,6 +110,10 @@ const MAX_REDIRECTS: usize = 8;
 impl Library {
     /// The Library recorded in `file`, with its Library Folders scanned. A missing file is
     /// an empty Library; the file is written on the first change.
+    ///
+    /// Indexes are stored in the folder `indexes` beside `file`. A Dictionary whose
+    /// stored index is missing or out of date is [`IndexState::Pending`] until its index
+    /// is built: see [`Library::index_jobs`].
     pub fn load(file: &Path) -> Result<Library> {
         Self::load_with(file, &[&MdictFormat])
     }
@@ -122,7 +138,8 @@ impl Library {
         Ok(library)
     }
 
-    /// A Library of the one Library Folder `folder`, kept only in memory.
+    /// A Library of the one Library Folder `folder`, kept only in memory. Every
+    /// Dictionary is indexed (in memory) before it is returned, and again on a rescan.
     pub fn open(folder: &Path) -> Result<Library> {
         Self::open_with(folder, &[&MdictFormat])
     }
@@ -145,6 +162,7 @@ impl Library {
         record: Record,
     ) -> Library {
         Library {
+            index_folder: file.as_deref().map(|file| file.with_file_name("indexes")),
             file,
             formats: formats.to_vec(),
             record,
@@ -184,6 +202,7 @@ impl Library {
     /// place and enabled state.
     pub fn rescan(&mut self) -> Result<()> {
         let mut folders = Vec::new();
+        let mut known = std::mem::take(&mut self.dictionaries);
         let mut dictionaries: Vec<Dictionary> = Vec::new();
         let mut failures: Vec<OpenFailure> = Vec::new();
 
@@ -223,10 +242,29 @@ impl Library {
                 {
                     continue;
                 }
+                let stamp = match scan::stamp(path) {
+                    Ok(stamp) => stamp,
+                    Err(error) => {
+                        failures.push(OpenFailure {
+                            path: path.clone(),
+                            reason: OpenError::Unreadable(error.to_string()),
+                        });
+                        continue;
+                    }
+                };
                 match format.open(path) {
                     Ok(reader) => {
-                        let info = describe(id, &unit, reader.as_ref(), &self.record);
-                        dictionaries.push(Dictionary { info, reader });
+                        let mut info = describe(id, &unit, reader.as_ref(), &self.record);
+                        let index = self.known_index(&mut known, &info.id, &stamp);
+                        if index.is_some() {
+                            info.index = IndexState::Ready;
+                        }
+                        dictionaries.push(Dictionary {
+                            info,
+                            reader: Arc::from(reader),
+                            stamp,
+                            index,
+                        });
                     }
                     Err(reason) => failures.push(OpenFailure {
                         path: path.clone(),
@@ -253,7 +291,110 @@ impl Library {
         if self.record_order() {
             self.save()?;
         }
+        if self.index_folder.is_none() {
+            self.build_indexes();
+        }
         Ok(())
+    }
+
+    /// The index a Dictionary already has: the one in memory from before a rescan, or the
+    /// stored one, if it was built from the file as it is now.
+    fn known_index(
+        &self,
+        known: &mut Vec<Dictionary>,
+        id: &str,
+        stamp: &Stamp,
+    ) -> Option<StoredIndex> {
+        if let Some(at) = known
+            .iter()
+            .position(|d| d.info.id == id && d.stamp == *stamp && d.index.is_some())
+        {
+            return known.swap_remove(at).index;
+        }
+        let folder = self.index_folder.as_ref()?;
+        StoredIndex::open(&index_file(folder, id), stamp)
+    }
+
+    /// One job for each Dictionary whose index is [`IndexState::Pending`], in Library
+    /// order. Run them anywhere (each holds what it needs) and hand each outcome back
+    /// with [`Library::finish_index`].
+    pub fn index_jobs(&self) -> Vec<IndexJob> {
+        self.dictionaries
+            .iter()
+            .filter(|d| d.info.index == IndexState::Pending)
+            .map(|d| IndexJob {
+                dictionary_id: d.info.id.clone(),
+                title: d.info.title.clone(),
+                reader: Arc::clone(&d.reader),
+                stamp: d.stamp,
+                folder: self.index_folder.clone(),
+            })
+            .collect()
+    }
+
+    /// Puts a built index in place, or records why it could not be built. An outcome
+    /// for a Dictionary that has left the Library, or whose file changed meanwhile, is
+    /// dropped.
+    pub fn finish_index(&mut self, outcome: IndexOutcome) {
+        let dictionary = self
+            .dictionaries
+            .iter_mut()
+            .find(|d| d.info.id == outcome.dictionary_id);
+        let built = match outcome.result {
+            IndexResult::Built(built) => built,
+            IndexResult::Cancelled => return,
+            IndexResult::Failed(reason) => {
+                if let Some(dictionary) = dictionary {
+                    dictionary.info.index = IndexState::Failed(reason);
+                }
+                return;
+            }
+        };
+        let Some(dictionary) = dictionary.filter(|d| d.stamp == built.stamp) else {
+            if let Built::File { partial, .. } = &built.place {
+                let _ = std::fs::remove_file(partial);
+            }
+            return;
+        };
+        let index = match built.place {
+            Built::Memory(bytes) => StoredIndex::from_bytes(bytes, &built.stamp)
+                .ok_or_else(|| "the index could not be read back".to_owned()),
+            Built::File { partial, path } => {
+                // Unmap the old index first: a mapped file cannot be replaced on Windows.
+                dictionary.index = None;
+                std::fs::rename(&partial, &path)
+                    .map_err(|error| error.to_string())
+                    .and_then(|()| {
+                        StoredIndex::open(&path, &built.stamp)
+                            .ok_or_else(|| "the stored index could not be read back".to_owned())
+                    })
+            }
+        };
+        match index {
+            Ok(index) => {
+                dictionary.index = Some(index);
+                dictionary.info.index = IndexState::Ready;
+            }
+            Err(reason) => dictionary.info.index = IndexState::Failed(reason),
+        }
+    }
+
+    /// Builds every pending index here and now, without progress reports. The desktop
+    /// shell runs [`Library::index_jobs`] on a thread instead.
+    pub fn build_indexes(&mut self) {
+        for job in self.index_jobs() {
+            let outcome = job.run(&mut |_| ControlFlow::Continue(()));
+            self.finish_index(outcome);
+        }
+    }
+
+    /// The headword index of the Dictionary with key `id`, if it is built.
+    pub fn index_of(&self, id: &str) -> Option<&dyn HeadwordIndex> {
+        self.dictionaries
+            .iter()
+            .find(|d| d.info.id == id)
+            .and_then(|d| d.index.as_ref())
+            .map(|index| index as &dyn HeadwordIndex)
     }
 
     /// Every Dictionary in the Library, enabled or not, in Library order.
@@ -304,12 +445,17 @@ impl Library {
     pub fn look_up(&self, headword: &str) -> Result<Vec<Entry>> {
         let mut entries = Vec::new();
         for dictionary in self.dictionaries.iter().filter(|d| d.info.enabled) {
-            let records = resolve(dictionary.reader.as_ref(), headword).map_err(|error| {
-                Error::Dictionary {
-                    dictionary: dictionary.info.title.clone(),
-                    reason: error.to_string(),
-                }
-            })?;
+            // A Dictionary answers once its index is built.
+            let Some(index) = &dictionary.index else {
+                continue;
+            };
+            let records =
+                resolve(dictionary.reader.as_ref(), index, headword).map_err(|error| {
+                    Error::Dictionary {
+                        dictionary: dictionary.info.title.clone(),
+                        reason: error.to_string(),
+                    }
+                })?;
             if !records.is_empty() {
                 entries.push(Entry {
                     dictionary_id: dictionary.info.id.clone(),
@@ -388,10 +534,19 @@ fn same_file(a: &Path, b: &Path) -> bool {
 /// The text records for `headword`, following redirects with cycle protection.
 fn resolve(
     reader: &dyn DictionaryReader,
+    index: &StoredIndex,
     headword: &str,
-) -> std::result::Result<Vec<String>, crate::FormatError> {
+) -> std::result::Result<Vec<String>, String> {
+    let records = |headword: &str| -> std::result::Result<Vec<RawRecord>, String> {
+        index
+            .locations(headword)
+            .map_err(|error| error.to_string())?
+            .into_iter()
+            .map(|location| reader.record(location).map_err(|error| error.to_string()))
+            .collect()
+    };
     let mut texts = Vec::new();
-    for record in reader.records(headword)? {
+    for record in records(headword)? {
         let mut record = record;
         let mut visited = vec![headword.to_owned()];
         loop {
@@ -404,7 +559,7 @@ fn resolve(
                     if visited.contains(&target) || visited.len() > MAX_REDIRECTS {
                         break;
                     }
-                    let Some(next) = reader.records(&target)?.into_iter().next() else {
+                    let Some(next) = records(&target)?.into_iter().next() else {
                         break;
                     };
                     visited.push(target);
@@ -444,5 +599,6 @@ fn describe(
         companions: unit.companions.clone(),
         entry_count: reader.entry_count(),
         size,
+        index: IndexState::Pending,
     }
 }

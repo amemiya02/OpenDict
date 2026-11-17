@@ -34,10 +34,7 @@ fn read_all(mdx: &LazyMdx) -> Vec<(String, Record)> {
     keys.into_iter()
         .map(|(headword, start)| {
             let next = starts.partition_point(|&s| s <= start);
-            let end = starts
-                .get(next)
-                .copied()
-                .unwrap_or(mdx.record_stream_len());
+            let end = starts.get(next).copied().unwrap_or(mdx.record_stream_len());
             (headword, mdx.record(start..end).unwrap())
         })
         .collect()
@@ -52,7 +49,10 @@ fn reads_every_key_in_file_order_and_each_record_by_where_it_lies() {
     assert_eq!(
         read_all(&mdx),
         [
-            ("apple".to_owned(), Record::Text("<p>a fruit</p>".to_owned())),
+            (
+                "apple".to_owned(),
+                Record::Text("<p>a fruit</p>".to_owned())
+            ),
             (
                 "bank".to_owned(),
                 Record::Text("<p>the side of a river</p>".to_owned())
@@ -62,7 +62,10 @@ fn reads_every_key_in_file_order_and_each_record_by_where_it_lies() {
                 Record::Text("<p>a place for money</p>".to_owned())
             ),
             ("colour".to_owned(), Record::Link("字典".to_owned())),
-            ("字典".to_owned(), Record::Text("<p>中文字典</p>".to_owned())),
+            (
+                "字典".to_owned(),
+                Record::Text("<p>中文字典</p>".to_owned())
+            ),
         ]
     );
 }
@@ -83,7 +86,10 @@ fn reads_every_version_encoding_and_compression() {
                 assert_eq!(all.len(), 5, "{case}");
                 assert_eq!(
                     all[4],
-                    ("字典".to_owned(), Record::Text("<p>中文字典</p>".to_owned())),
+                    (
+                        "字典".to_owned(),
+                        Record::Text("<p>中文字典</p>".to_owned())
+                    ),
                     "{case}"
                 );
             }
@@ -109,7 +115,11 @@ fn opening_reads_no_key_block_so_a_damaged_one_is_reported_when_keys_are_read() 
 
 #[test]
 fn a_damaged_key_index_or_header_is_still_reported_at_open() {
-    for damage in [Damage::HeaderChecksum, Damage::KeyIndex, Damage::Truncate(10)] {
+    for damage in [
+        Damage::HeaderChecksum,
+        Damage::KeyIndex,
+        Damage::Truncate(10),
+    ] {
         assert!(
             open(&sample().build_damaged(damage)).is_err(),
             "{damage:?} opened"
@@ -133,7 +143,9 @@ fn a_record_span_outside_the_record_stream_is_an_error_not_a_panic() {
     let end = mdx.record_stream_len();
 
     assert!(mdx.record(end..end + 10).is_err());
-    assert!(mdx.record(5..2).is_err());
+    #[allow(clippy::reversed_empty_ranges)]
+    let backwards = 5..2;
+    assert!(mdx.record(backwards).is_err());
 }
 
 #[test]
