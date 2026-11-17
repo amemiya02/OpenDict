@@ -349,7 +349,7 @@ test("the headword column suggests as the reader types and the keyboard browses 
   await search.fill("");
   await column.getByRole("option", { name: "apple, in 1 dictionary" }).waitFor({ timeout: 10_000 });
   const index = await column.getByRole("option").evaluateAll((options) => options.map((o) => (o as HTMLElement).dataset.headword));
-  assert.deepEqual(index, ["apple", "apples", "cat", "probe", "serendipity", "食べる"]);
+  assert.deepEqual(index, ["apple", "apples", "cat", "happy accident", "probe", "serendipities", "serendipitous", "serendipity", "食べる"]);
   assert.equal((await page.getByTestId("guide-words").innerText()).replace(/\s+/g, " "), "apple 食べる");
 
   // Typing suggests by prefix, shows the first match at once, and the column carries on.
