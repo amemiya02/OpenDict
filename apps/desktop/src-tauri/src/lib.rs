@@ -13,8 +13,8 @@ pub use state::{AppState, EntryView, LibraryView};
 /// kept in memory only (used by tests and development).
 pub const LIBRARY_FOLDER_ENV: &str = "OPENDICT_LIBRARY_FOLDER";
 
-/// Environment variable that overrides the data directory, where the Library file,
-/// preferences, History and Word Books are kept (used by tests and development).
+/// Environment variable that overrides the app's home folder: where the reader's data
+/// starts, and where a moved data directory is recorded (used by tests and development).
 pub const DATA_DIR_ENV: &str = "OPENDICT_DATA_DIR";
 
 /// Environment variable naming a folder that Word Books are exported into without asking
@@ -41,12 +41,11 @@ pub fn run() {
             app.handle()
                 .plugin(tauri_plugin_updater::Builder::new().build())?;
             let override_folder = std::env::var_os(LIBRARY_FOLDER_ENV).map(Into::into);
-            let data_dir = match std::env::var_os(DATA_DIR_ENV) {
+            let home = match std::env::var_os(DATA_DIR_ENV) {
                 Some(dir) => dir.into(),
                 None => app.path().app_data_dir()?,
             };
-            let library_file = data_dir.join("library.json");
-            let state = AppState::load(&library_file, override_folder, &data_dir);
+            let state = AppState::load(&home, override_folder);
             let appearance = state.appearance();
             commands::start_indexing(app.handle(), &state);
             app.manage(state);
