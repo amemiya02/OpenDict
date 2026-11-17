@@ -5,6 +5,7 @@
 
 mod error;
 mod format;
+mod index;
 mod library;
 mod preferences;
 mod registrations;
@@ -15,5 +16,9 @@ pub use format::{
     DictionaryFormat, DictionaryReader, FormatError, MdictFormat, OpenError, RawRecord,
     Registration,
 };
-pub use library::{DictionaryInfo, Entry, Library, LibraryFolder, Move, OpenFailure};
+pub use index::{HeadwordIndex, IndexError, IndexedHeadword, MemoryIndex, Start, index_key};
+pub use library::{
+    DictionaryInfo, Entry, Lemma, Library, LibraryFolder, Move, OpenFailure, Suggestion,
+    Suggestions,
+};
 pub use preferences::Preferences;

@@ -7,7 +7,9 @@ use std::path::PathBuf;
 use tauri::{AppHandle, State};
 use tauri_plugin_dialog::DialogExt;
 
-use crate::state::{AppState, Direction, EntryView, LibraryView, RegisterError};
+use crate::state::{
+    AppState, Direction, EntryView, LibraryView, RegisterError, SuggestionView, SuggestionsView,
+};
 
 /// Unlocks a Dictionary that needs a registration code with the code and e-mail the
 /// reader entered; they are kept locally when they work.
@@ -24,6 +26,24 @@ pub async fn register_dictionary(
 #[tauri::command]
 pub fn look_up(state: State<'_, AppState>, headword: String) -> Result<Vec<EntryView>, String> {
     state.look_up(&headword)
+}
+
+#[tauri::command]
+pub fn suggest(
+    state: State<'_, AppState>,
+    query: String,
+    limit: usize,
+) -> Result<SuggestionsView, String> {
+    state.suggest(&query, limit)
+}
+
+#[tauri::command]
+pub fn headwords_after(
+    state: State<'_, AppState>,
+    headword: String,
+    limit: usize,
+) -> Result<Vec<SuggestionView>, String> {
+    state.headwords_after(&headword, limit)
 }
 
 #[tauri::command]
