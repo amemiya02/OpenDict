@@ -10,6 +10,8 @@ const sample = {
   dictionaryTitle: "Sample Dictionary",
   src: "http://odentry.localhost/73616d706c652e6d6478/?headword=serendipity",
   allowNetwork: false,
+  sound: null,
+  pronunciation: null,
 };
 
 function fakeShell(calls: { command: string; args: unknown }[] = []) {
@@ -18,7 +20,8 @@ function fakeShell(calls: { command: string; args: unknown }[] = []) {
     if (command === "library")
       return {
         folders: [{ path: "/library", dictionaryCount: 1, problem: null }],
-        dictionaries: [{ id: "sample", title: "Sample Dictionary", path: "/library/sample.mdx", entryCount: 1, size: 2048, enabled: true }],
+        dictionaries: [{ id: "sample", title: "Sample Dictionary", path: "/library/sample.mdx", entryCount: 1, size: 2048, enabled: true, index: { state: "ready" } }],
+        indexing: null,
         failures: [],
         problem: null,
       };
@@ -31,7 +34,7 @@ function fakeShell(calls: { command: string; args: unknown }[] = []) {
     if (command === "headwords_after") return [];
     if (command === "set_allow_network") return null;
     throw new Error(`unexpected command ${command}`);
-  });
+  }, { shouldMockEvents: true });
 }
 
 async function lookUpSerendipity() {

@@ -1,19 +1,38 @@
+use std::ops::ControlFlow;
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, MutexGuard};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex, MutexGuard};
+use std::thread::JoinHandle;
+use std::time::{Duration, Instant};
 
 pub use opendict_core::Theme;
 use opendict_core::{
-    Error as CoreError, Library, Move, OpenError, Preferences, Registration, Suggestion,
+    Error as CoreError, History, IndexState, Library, Move, OpenError, Preferences, Registration,
+    Suggestion,
 };
 use serde::{Deserialize, Serialize};
 
 use crate::entry_protocol;
 
-/// What the shell holds between commands: the Library, or why it could not be loaded, and
-/// the reader's preferences, or why they could not be read.
+/// What the shell holds between commands: the Library (or why it could not be loaded),
+/// the reader's preferences and History (or why they could not be read), and the
+/// indexing that runs beside them. Cloning shares the same state.
+#[derive(Clone)]
 pub struct AppState {
+    inner: Arc<Inner>,
+}
+
+struct Inner {
     library: Mutex<Result<Library, String>>,
+    /// What is being indexed right now, for the Library view.
+    indexing: Mutex<Option<IndexingView>>,
+    /// Whether an indexing thread is running. Changed only while `library` is locked, so
+    /// a thread that finds no work cannot miss a Dictionary added meanwhile.
+    indexing_running: AtomicBool,
+    cancel: AtomicBool,
+    worker: Mutex<Option<JoinHandle<()>>>,
     preferences: Mutex<Result<Preferences, String>>,
+    history: Mutex<Result<History, String>>,
 }
 
 /// An Entry as the interface receives it. Its HTML never passes through the interface:
@@ -27,6 +46,9 @@ pub struct EntryView {
     pub src: String,
     /// Whether the reader allowed this Dictionary network access.
     pub allow_network: bool,
+    /// The first audio the Entry offers, as the path of its `sound://` link, for the
+    /// Pronounce action. The interface plays it from the Dictionary's prefix at `src`.
+    pub sound: Option<String>,
     /// How the headword is said, where the Entry shows that plainly. Plain text.
     pub pronunciation: Option<String>,
     /// In the dark theme, whether the Entry keeps its Dictionary's own white page rather
@@ -83,6 +105,8 @@ pub struct LibraryView {
     /// Every Dictionary, enabled or not, in Library order.
     pub dictionaries: Vec<DictionaryView>,
     pub failures: Vec<FailureView>,
+    /// The Dictionary being indexed right now, if any.
+    pub indexing: Option<IndexingView>,
     /// Why the Library could not be loaded at all, if it could not.
     pub problem: Option<String>,
 }
@@ -105,6 +129,29 @@ pub struct DictionaryView {
     /// Bytes, all of the Dictionary's files together.
     pub size: u64,
     pub enabled: bool,
+    pub index: IndexView,
+}
+
+/// Whether a Dictionary's index is built.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(tag = "state", content = "detail", rename_all = "camelCase")]
+pub enum IndexView {
+    Ready,
+    Pending,
+    Failed(String),
+}
+
+/// Indexing in progress: one Dictionary at a time.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct IndexingView {
+    pub dictionary_id: String,
+    pub title: String,
+    /// Headwords read so far, out of `total`.
+    pub done: usize,
+    pub total: usize,
+    /// Dictionaries waiting after this one.
+    pub waiting: usize,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -148,11 +195,14 @@ pub enum Direction {
     Down,
 }
 
+/// How often indexing progress is passed on while a Dictionary is being indexed.
+const PROGRESS_INTERVAL: Duration = Duration::from_millis(100);
+
 impl AppState {
     /// Loads the Library recorded in `library_file`. With `override_folder` (from the
     /// environment, for tests and development) the Library is that one folder instead,
     /// kept only in memory, so the reader's own Library is never touched. Preferences
-    /// live in `data_dir`.
+    /// and History live in `data_dir`.
     pub fn load(
         library_file: &Path,
         override_folder: Option<PathBuf>,
@@ -163,17 +213,42 @@ impl AppState {
             None => Library::load(library_file),
         };
         let preferences = Preferences::load(&data_dir.join("preferences.json"));
+        let history = History::load(&data_dir.join("history.json"));
         AppState {
-            library: Mutex::new(library.map_err(|error| error.to_string())),
-            preferences: Mutex::new(preferences.map_err(|error| error.to_string())),
+            inner: Arc::new(Inner {
+                library: Mutex::new(library.map_err(|error| error.to_string())),
+                preferences: Mutex::new(preferences.map_err(|error| error.to_string())),
+                history: Mutex::new(history.map_err(|error| error.to_string())),
+                indexing: Mutex::new(None),
+                indexing_running: AtomicBool::new(false),
+                cancel: AtomicBool::new(false),
+                worker: Mutex::new(None),
+            }),
         }
     }
 
     fn lock(&self) -> MutexGuard<'_, Result<Library, String>> {
         // A panic while holding the lock leaves the Library as it was; keep serving it.
-        self.library
+        self.inner
+            .library
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    fn progress(&self) -> Option<IndexingView> {
+        self.inner
+            .indexing
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone()
+    }
+
+    fn set_progress(&self, progress: Option<IndexingView>) {
+        *self
+            .inner
+            .indexing
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = progress;
     }
 
     /// Applies `change` to the Library and returns the Library as it is afterwards.
@@ -184,11 +259,11 @@ impl AppState {
         let mut guard = self.lock();
         let library = guard.as_mut().map_err(|problem| problem.clone())?;
         change(library).map_err(|error| error.to_string())?;
-        Ok(view(&guard))
+        Ok(view(&guard, self.progress()))
     }
 
-    /// The Entries for exactly `headword`, from enabled Dictionaries in Library order.
-    /// Without a Library there are none.
+    /// The Entries for exactly `headword`, from enabled, indexed Dictionaries in Library
+    /// order. Without a Library there are none.
     pub fn look_up(&self, headword: &str) -> Result<Vec<EntryView>, String> {
         let guard = self.lock();
         let Ok(library) = &*guard else {
@@ -203,6 +278,7 @@ impl AppState {
                 src: entry_protocol::entry_url(&entry.dictionary_id, headword),
                 allow_network: self.allows_network(&entry.dictionary_id),
                 as_authored: self.as_authored(&entry.dictionary_id),
+                sound: entry.sounds().into_iter().next(),
                 pronunciation: opendict_core::pronunciation(&entry.html),
                 dictionary_id: entry.dictionary_id,
                 dictionary_title: entry.dictionary_title,
@@ -237,9 +313,11 @@ impl AppState {
         })
     }
 
-    /// Up to `limit` headwords after `headword`: the headword column, continued.
+    /// Up to `limit` more suggestions for `query` after `headword`: the headword column,
+    /// continued.
     pub fn headwords_after(
         &self,
+        query: &str,
         headword: &str,
         limit: usize,
     ) -> Result<Vec<SuggestionView>, String> {
@@ -248,7 +326,7 @@ impl AppState {
             return Ok(Vec::new());
         };
         let items = library
-            .headwords_after(headword, limit)
+            .suggest_after(query, headword, limit)
             .map_err(|error| error.to_string())?;
         Ok(items.into_iter().map(suggestion).collect())
     }
@@ -283,7 +361,11 @@ impl AppState {
     /// Whether the reader allowed the Dictionary network access. If the preferences
     /// cannot be read, no Dictionary has it.
     pub fn allows_network(&self, dictionary_id: &str) -> bool {
-        let preferences = self.preferences.lock().unwrap_or_else(|e| e.into_inner());
+        let preferences = self
+            .inner
+            .preferences
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         preferences
             .as_ref()
             .is_ok_and(|p| p.allows_network(dictionary_id))
@@ -295,7 +377,11 @@ impl AppState {
 
     /// The reading preferences. If the preferences cannot be read, the defaults.
     pub fn appearance(&self) -> AppearanceView {
-        let preferences = self.preferences.lock().unwrap_or_else(|e| e.into_inner());
+        let preferences = self
+            .inner
+            .preferences
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         match preferences.as_ref() {
             Ok(p) => AppearanceView {
                 theme: p.theme(),
@@ -315,7 +401,11 @@ impl AppState {
     /// Whether, in the dark theme, the Dictionary shows as authored. If the preferences
     /// cannot be read, every Dictionary is recoloured.
     pub fn as_authored(&self, dictionary_id: &str) -> bool {
-        let preferences = self.preferences.lock().unwrap_or_else(|e| e.into_inner());
+        let preferences = self
+            .inner
+            .preferences
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         preferences
             .as_ref()
             .is_ok_and(|p| p.as_authored(dictionary_id))
@@ -347,15 +437,42 @@ impl AppState {
         &self,
         change: impl FnOnce(&mut Preferences) -> opendict_core::Result<T>,
     ) -> Result<T, String> {
-        let mut preferences = self.preferences.lock().unwrap_or_else(|e| e.into_inner());
+        let mut preferences = self
+            .inner
+            .preferences
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         match preferences.as_mut() {
             Ok(p) => change(p).map_err(|e| e.to_string()),
             Err(reason) => Err(reason.clone()),
         }
     }
 
+    /// The headwords of committed Lookups, newest first.
+    pub fn history(&self) -> Result<Vec<String>, String> {
+        let history = self.inner.history.lock().unwrap_or_else(|e| e.into_inner());
+        match history.as_ref() {
+            Ok(h) => Ok(h.headwords().to_vec()),
+            Err(reason) => Err(reason.clone()),
+        }
+    }
+
+    /// Records a committed Lookup of `headword`; returns History as it is afterwards.
+    pub fn record_lookup(&self, headword: &str) -> Result<Vec<String>, String> {
+        let mut history = self.inner.history.lock().unwrap_or_else(|e| e.into_inner());
+        let history = history.as_mut().map_err(|reason| reason.clone())?;
+        history.record(headword).map_err(|e| e.to_string())?;
+        Ok(history.headwords().to_vec())
+    }
+
+    pub fn clear_history(&self) -> Result<(), String> {
+        let mut history = self.inner.history.lock().unwrap_or_else(|e| e.into_inner());
+        let history = history.as_mut().map_err(|reason| reason.clone())?;
+        history.clear().map_err(|e| e.to_string())
+    }
+
     pub fn library(&self) -> LibraryView {
-        view(&self.lock())
+        view(&self.lock(), self.progress())
     }
 
     pub fn add_folder(&self, folder: &Path) -> Result<LibraryView, String> {
@@ -398,7 +515,7 @@ impl AppState {
                 CoreError::RegistrationCodeNeeded(_) => RegisterError::CodeNeeded,
                 other => RegisterError::Failed(other.to_string()),
             })?;
-        Ok(view(&guard))
+        Ok(view(&guard, self.progress()))
     }
 
     pub fn move_dictionary(&self, id: &str, direction: Direction) -> Result<LibraryView, String> {
@@ -408,9 +525,109 @@ impl AppState {
         };
         self.change(|library| library.move_dictionary(id, step))
     }
+
+    /// Indexes every Dictionary that needs it, one at a time on a background thread, so
+    /// Lookups go on meanwhile. `notify` receives the Library view whenever indexing
+    /// progresses or a Dictionary's index is done. Does nothing new if indexing is
+    /// already running: that run picks up Dictionaries added since.
+    pub fn start_indexing(&self, notify: impl Fn(LibraryView) + Send + 'static) {
+        {
+            let _library = self.lock();
+            if self.inner.indexing_running.swap(true, Ordering::SeqCst) {
+                return;
+            }
+            self.inner.cancel.store(false, Ordering::SeqCst);
+        }
+        let state = self.clone();
+        let worker = std::thread::spawn(move || state.index(&notify));
+        let previous = self
+            .inner
+            .worker
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .replace(worker);
+        // A previous run has already ended (it cleared `indexing_running`); reap it.
+        if let Some(previous) = previous {
+            let _ = previous.join();
+        }
+    }
+
+    /// Stops indexing after the Dictionary being read. Its index and those still
+    /// waiting stay pending until indexing is started again.
+    pub fn cancel_indexing(&self) {
+        self.inner.cancel.store(true, Ordering::SeqCst);
+    }
+
+    /// Waits until the indexing run started last has ended.
+    pub fn wait_for_indexing(&self) {
+        let worker = self
+            .inner
+            .worker
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .take();
+        if let Some(worker) = worker {
+            let _ = worker.join();
+        }
+    }
+
+    /// The indexing thread: takes the first pending Dictionary, indexes it without
+    /// holding the Library, puts the index in place, and repeats until none is left or
+    /// the reader cancels.
+    fn index(&self, notify: &dyn Fn(LibraryView)) {
+        loop {
+            let (job, waiting) = {
+                let mut guard = self.lock();
+                let jobs = match guard.as_mut() {
+                    Ok(library) if !self.inner.cancel.load(Ordering::SeqCst) => {
+                        library.index_jobs()
+                    }
+                    _ => Vec::new(),
+                };
+                let waiting = jobs.len().saturating_sub(1);
+                match jobs.into_iter().next() {
+                    Some(job) => (job, waiting),
+                    None => {
+                        self.inner.indexing_running.store(false, Ordering::SeqCst);
+                        drop(guard);
+                        self.set_progress(None);
+                        notify(self.library());
+                        return;
+                    }
+                }
+            };
+
+            let mut progress = IndexingView {
+                dictionary_id: job.dictionary_id().to_owned(),
+                title: job.title().to_owned(),
+                done: 0,
+                total: job.entry_count(),
+                waiting,
+            };
+            self.set_progress(Some(progress.clone()));
+            notify(self.library());
+            let mut reported = Instant::now();
+            let outcome = job.run(&mut |done| {
+                if self.inner.cancel.load(Ordering::SeqCst) {
+                    return ControlFlow::Break(());
+                }
+                progress.done = done;
+                if reported.elapsed() >= PROGRESS_INTERVAL {
+                    reported = Instant::now();
+                    self.set_progress(Some(progress.clone()));
+                    notify(self.library());
+                }
+                ControlFlow::Continue(())
+            });
+
+            if let Ok(library) = self.lock().as_mut() {
+                library.finish_index(outcome);
+            }
+        }
+    }
 }
 
-fn view(library: &Result<Library, String>) -> LibraryView {
+fn view(library: &Result<Library, String>, indexing: Option<IndexingView>) -> LibraryView {
     let library = match library {
         Ok(library) => library,
         Err(problem) => {
@@ -418,6 +635,7 @@ fn view(library: &Result<Library, String>) -> LibraryView {
                 folders: Vec::new(),
                 dictionaries: Vec::new(),
                 failures: Vec::new(),
+                indexing: None,
                 problem: Some(problem.clone()),
             };
         }
@@ -441,6 +659,11 @@ fn view(library: &Result<Library, String>) -> LibraryView {
                 entry_count: dictionary.entry_count,
                 size: dictionary.size,
                 enabled: dictionary.enabled,
+                index: match &dictionary.index {
+                    IndexState::Ready => IndexView::Ready,
+                    IndexState::Pending => IndexView::Pending,
+                    IndexState::Failed(reason) => IndexView::Failed(reason.clone()),
+                },
             })
             .collect(),
         failures: library
@@ -451,6 +674,7 @@ fn view(library: &Result<Library, String>) -> LibraryView {
                 reason: reason(&failure.reason),
             })
             .collect(),
+        indexing,
         problem: None,
     }
 }
@@ -479,7 +703,7 @@ fn reason(error: &OpenError) -> FailureReason {
 
 #[cfg(test)]
 mod tests {
-    use opendict_mdict_fixture::{Identity, MdxBuilder};
+    use opendict_mdict_fixture::{Damage, Identity, MdxBuilder};
     use serde_json::json;
 
     use super::*;
@@ -528,6 +752,7 @@ mod tests {
         );
 
         let view = state.register(&bought, EMAIL, CODE).unwrap();
+        index(&state);
 
         assert_eq!(view.dictionaries[0].title, "Bought");
         assert!(view.failures.is_empty());
@@ -544,6 +769,12 @@ mod tests {
         );
     }
 
+    /// Indexes everything pending and waits until it is done.
+    fn index(state: &AppState) {
+        state.start_indexing(|_| {});
+        state.wait_for_indexing();
+    }
+
     #[test]
     fn a_new_library_is_empty() {
         let data = tempfile::tempdir().unwrap();
@@ -552,13 +783,15 @@ mod tests {
 
         assert_eq!(
             serde_json::to_value(state.library()).unwrap(),
-            json!({ "folders": [], "dictionaries": [], "failures": [], "problem": null })
+            json!({
+                "folders": [], "dictionaries": [], "failures": [], "indexing": null, "problem": null
+            })
         );
         assert_eq!(state.look_up("serendipity").unwrap(), []);
     }
 
     #[test]
-    fn an_added_folder_is_shown_and_answers_lookups() {
+    fn an_added_folder_is_shown_and_answers_lookups_once_indexed() {
         let data = tempfile::tempdir().unwrap();
         let folder = library_folder();
         let state = AppState::load(&data.path().join("library.json"), None, data.path());
@@ -573,12 +806,22 @@ mod tests {
         assert_eq!(dictionary["title"], "Sample Dictionary");
         assert_eq!(dictionary["entryCount"], 1);
         assert_eq!(dictionary["enabled"], true);
+        assert_eq!(dictionary["index"], json!({ "state": "pending" }));
         assert!(dictionary["size"].as_u64().unwrap() > 0);
         assert_eq!(
             view["failures"],
             json!([{ "path": folder.path().join("broken.mdx"), "reason": { "kind": "notADictionary" } }])
         );
-        let id = dictionary["id"].as_str().unwrap();
+
+        index(&state);
+
+        let view = serde_json::to_value(state.library()).unwrap();
+        assert_eq!(
+            view["dictionaries"][0]["index"],
+            json!({ "state": "ready" })
+        );
+        assert_eq!(view["indexing"], json!(null));
+        let id = view["dictionaries"][0]["id"].as_str().unwrap();
         assert_eq!(
             serde_json::to_value(state.look_up("serendipity").unwrap()).unwrap(),
             json!([{
@@ -586,6 +829,7 @@ mod tests {
                 "dictionaryTitle": "Sample Dictionary",
                 "src": entry_protocol::entry_url(id, "serendipity"),
                 "allowNetwork": false,
+                "sound": null,
                 "pronunciation": null,
                 "asAuthored": false
             }])
@@ -593,37 +837,99 @@ mod tests {
     }
 
     #[test]
-    fn suggestions_reach_the_interface_in_the_lookup_result_shape() {
+    fn indexing_reports_each_dictionary_and_ends_with_nothing_in_progress() {
+        let data = tempfile::tempdir().unwrap();
+        let folder = library_folder();
+        let state = AppState::load(&data.path().join("library.json"), None, data.path());
+        state.add_folder(folder.path()).unwrap();
+        let seen = Arc::new(Mutex::new(Vec::new()));
+
+        let record = Arc::clone(&seen);
+        state.start_indexing(move |view| record.lock().unwrap().push(view.indexing));
+        state.wait_for_indexing();
+
+        let seen = seen.lock().unwrap();
+        let first = seen[0]
+            .as_ref()
+            .expect("the first report names the Dictionary");
+        assert_eq!(first.title, "Sample Dictionary");
+        assert_eq!((first.done, first.total, first.waiting), (0, 1, 0));
+        assert_eq!(seen.last(), Some(&None));
+    }
+
+    #[test]
+    fn cancelled_indexing_leaves_dictionaries_pending_until_started_again() {
         let data = tempfile::tempdir().unwrap();
         let folder = library_folder();
         let state = AppState::load(&data.path().join("library.json"), None, data.path());
         state.add_folder(folder.path()).unwrap();
 
+        // The reader cancels as soon as the first progress report arrives.
+        let canceller = state.clone();
+        state.start_indexing(move |view| {
+            if view.indexing.is_some() {
+                canceller.cancel_indexing();
+            }
+        });
+        state.wait_for_indexing();
+
+        assert_eq!(state.library().dictionaries[0].index, IndexView::Pending);
+        assert_eq!(state.library().indexing, None);
+        assert_eq!(state.look_up("serendipity").unwrap(), []);
+
+        index(&state);
+
+        assert_eq!(state.library().dictionaries[0].index, IndexView::Ready);
+        assert_eq!(state.look_up("serendipity").unwrap().len(), 1);
+    }
+
+    #[test]
+    fn a_patterns_column_continues_with_its_matches_only() {
+        let data = tempfile::tempdir().unwrap();
+        let folder = library_folder();
+        let state = AppState::load(&data.path().join("library.json"), None, data.path());
+        state.add_folder(folder.path()).unwrap();
+        index(&state);
+
+        assert_eq!(state.headwords_after("a*", "apple", 50).unwrap(), []);
         assert_eq!(
-            serde_json::to_value(state.suggest("ser", 50).unwrap()).unwrap(),
-            json!({
-                "items": [{ "headword": "serendipity", "count": 1 }],
-                "lemma": null,
-                "near": false,
-                "miss": false,
-                "browse": false
-            })
-        );
-        assert_eq!(
-            serde_json::to_value(state.headwords_after("apple", 50).unwrap()).unwrap(),
+            serde_json::to_value(state.headwords_after("s*", "s", 50).unwrap()).unwrap(),
             json!([{ "headword": "serendipity", "count": 1 }])
         );
     }
 
     #[test]
-    fn without_a_library_there_is_nothing_to_suggest() {
+    fn a_dictionary_that_fails_to_index_is_shown_with_its_reason() {
         let data = tempfile::tempdir().unwrap();
-
+        let folder = library_folder();
+        std::fs::write(
+            folder.path().join("damaged.mdx"),
+            MdxBuilder::new()
+                .title("Damaged")
+                .entry("apple", "<p>a fruit (sample)</p>")
+                .build_damaged(Damage::KeyBlock),
+        )
+        .unwrap();
         let state = AppState::load(&data.path().join("library.json"), None, data.path());
+        state.add_folder(folder.path()).unwrap();
 
-        let suggestions = state.suggest("", 50).unwrap();
-        assert!(suggestions.browse && suggestions.items.is_empty());
-        assert_eq!(state.headwords_after("a", 50).unwrap(), []);
+        index(&state);
+
+        let view = serde_json::to_value(state.library()).unwrap();
+        let states: Vec<_> = view["dictionaries"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|d| (d["title"].clone(), d["index"]["state"].clone()))
+            .collect();
+        assert_eq!(
+            states,
+            [
+                (json!("Damaged"), json!("failed")),
+                (json!("Sample Dictionary"), json!("ready")),
+            ]
+        );
+        assert_eq!(state.look_up("serendipity").unwrap().len(), 1);
     }
 
     #[test]
@@ -634,6 +940,7 @@ mod tests {
         let id = state.add_folder(folder.path()).unwrap().dictionaries[0]
             .id
             .clone();
+        index(&state);
 
         let view = state.set_enabled(&id, false).unwrap();
 
@@ -664,6 +971,52 @@ mod tests {
 
         assert_eq!(state.look_up("serendipity").unwrap().len(), 1);
         assert!(!file.exists(), "the reader's Library file is not touched");
+        assert!(
+            !data.path().join("indexes").exists(),
+            "nor is anything stored beside it"
+        );
+    }
+
+    #[test]
+    fn committed_lookups_are_kept_in_history_in_the_data_directory() {
+        let data = tempfile::tempdir().unwrap();
+        let state = AppState::load(&data.path().join("library.json"), None, data.path());
+
+        state.record_lookup("apple").unwrap();
+        let history = state.record_lookup("serendipity").unwrap();
+
+        assert_eq!(history, ["serendipity", "apple"]);
+        let restarted = AppState::load(&data.path().join("library.json"), None, data.path());
+        assert_eq!(restarted.history().unwrap(), ["serendipity", "apple"]);
+        assert!(data.path().join("history.json").exists());
+    }
+
+    #[test]
+    fn history_can_be_cleared() {
+        let data = tempfile::tempdir().unwrap();
+        let state = AppState::load(&data.path().join("library.json"), None, data.path());
+        state.record_lookup("apple").unwrap();
+
+        state.clear_history().unwrap();
+
+        assert!(state.history().unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_damaged_history_is_reported_without_stopping_lookups() {
+        let data = tempfile::tempdir().unwrap();
+        std::fs::write(data.path().join("history.json"), "[ broken").unwrap();
+        let folder = library_folder();
+
+        let state = AppState::load(
+            &data.path().join("library.json"),
+            Some(folder.path().to_owned()),
+            data.path(),
+        );
+
+        assert!(state.history().is_err());
+        assert!(state.record_lookup("serendipity").is_err());
+        assert_eq!(state.look_up("serendipity").unwrap().len(), 1);
     }
 
     #[test]
@@ -673,10 +1026,50 @@ mod tests {
         std::fs::write(&file, "{ folders: ").unwrap();
 
         let state = AppState::load(&file, None, data.path());
+        index(&state);
 
         assert!(state.library().problem.is_some());
         assert!(state.rescan().is_err());
         assert_eq!(state.look_up("serendipity").unwrap(), []);
+    }
+
+    #[test]
+    fn suggestions_reach_the_interface_in_the_lookup_result_shape() {
+        let data = tempfile::tempdir().unwrap();
+        let folder = library_folder();
+        let state = AppState::load(&data.path().join("library.json"), None, data.path());
+        state.add_folder(folder.path()).unwrap();
+        index(&state);
+
+        assert_eq!(
+            serde_json::to_value(state.suggest("ser", 50).unwrap()).unwrap(),
+            json!({
+                "items": [{ "headword": "serendipity", "count": 1 }],
+                "lemma": null,
+                "near": false,
+                "miss": false,
+                "browse": false
+            })
+        );
+        assert_eq!(
+            serde_json::to_value(state.suggest("serendipities", 50).unwrap()).unwrap()["lemma"],
+            json!({ "from": "serendipities", "to": "serendipity" })
+        );
+        assert_eq!(
+            serde_json::to_value(state.headwords_after("", "apple", 50).unwrap()).unwrap(),
+            json!([{ "headword": "serendipity", "count": 1 }])
+        );
+    }
+
+    #[test]
+    fn without_a_library_there_is_nothing_to_suggest() {
+        let data = tempfile::tempdir().unwrap();
+
+        let state = AppState::load(&data.path().join("library.json"), None, data.path());
+
+        let suggestions = state.suggest("", 50).unwrap();
+        assert!(suggestions.browse && suggestions.items.is_empty());
+        assert_eq!(state.headwords_after("", "a", 50).unwrap(), []);
     }
 
     #[test]

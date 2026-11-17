@@ -12,8 +12,8 @@ pub use state::{AppState, EntryView, LibraryView};
 /// kept in memory only (used by tests and development).
 pub const LIBRARY_FOLDER_ENV: &str = "OPENDICT_LIBRARY_FOLDER";
 
-/// Environment variable that overrides the data directory, where the Library file and
-/// preferences are kept (used by tests and development).
+/// Environment variable that overrides the data directory, where the Library file,
+/// preferences and History are kept (used by tests and development).
 pub const DATA_DIR_ENV: &str = "OPENDICT_DATA_DIR";
 
 pub fn run() {
@@ -46,6 +46,7 @@ pub fn run() {
             let appearance = state.appearance();
             commands::apply_theme(app.handle(), appearance.theme);
             commands::apply_zoom(app.handle(), appearance.zoom);
+            commands::start_indexing(app.handle(), &state);
             app.manage(state);
             Ok(())
         })
@@ -60,6 +61,8 @@ pub fn run() {
             commands::set_dictionary_enabled,
             commands::move_dictionary,
             commands::register_dictionary,
+            commands::index_library,
+            commands::cancel_indexing,
             commands::set_allow_network,
             commands::appearance,
             commands::set_theme,
@@ -67,6 +70,9 @@ pub fn run() {
             commands::set_all_as_authored,
             commands::set_text_size,
             commands::set_zoom,
+            commands::history,
+            commands::record_lookup,
+            commands::clear_history,
         ])
         .run(tauri::generate_context!())
         .expect("OpenDict failed to start");

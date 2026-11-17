@@ -15,6 +15,8 @@
     "allow-set-dictionary-enabled",
     "allow-move-dictionary",
     "allow-register-dictionary",
+    "allow-index-library",
+    "allow-cancel-indexing",
     "allow-set-allow-network",
     "allow-appearance",
     "allow-set-theme",
@@ -22,6 +24,9 @@
     "allow-set-all-as-authored",
     "allow-set-text-size",
     "allow-set-zoom",
+    "allow-history",
+    "allow-record-lookup",
+    "allow-clear-history",
     "updater:default",
     "process:allow-restart"
   ]

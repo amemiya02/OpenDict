@@ -87,6 +87,45 @@ pub(crate) fn identity(main: &Path) -> std::io::Result<String> {
     Ok(format!("{:016x}", hash.finish()))
 }
 
+/// What a Dictionary's index records about the file it was built from. When any of it
+/// changes, the index is built again.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct Stamp {
+    pub size: u64,
+    /// Modification time since the Unix epoch.
+    pub modified_seconds: i64,
+    pub modified_nanos: u32,
+    /// A hash of the file's first bytes, which hold its header.
+    pub signature: u64,
+}
+
+/// The stamp of `main` as it is on disk now.
+pub(crate) fn stamp(main: &Path) -> std::io::Result<Stamp> {
+    let metadata = std::fs::metadata(main)?;
+    let (modified_seconds, modified_nanos) = match metadata.modified() {
+        Ok(time) => match time.duration_since(std::time::UNIX_EPOCH) {
+            Ok(after) => (after.as_secs() as i64, after.subsec_nanos()),
+            Err(before) => (
+                -(before.duration().as_secs() as i64),
+                before.duration().subsec_nanos(),
+            ),
+        },
+        Err(_) => (0, 0),
+    };
+    let mut head = Vec::new();
+    std::fs::File::open(main)?
+        .take(SIGNATURE_BYTES)
+        .read_to_end(&mut head)?;
+    let mut hash = Fnv1a::new();
+    hash.write(&head);
+    Ok(Stamp {
+        size: metadata.len(),
+        modified_seconds,
+        modified_nanos,
+        signature: hash.finish(),
+    })
+}
+
 /// 64-bit FNV-1a: tiny, and stable across Rust releases (unlike `DefaultHasher`), which
 /// matters because keys are stored.
 struct Fnv1a(u64);

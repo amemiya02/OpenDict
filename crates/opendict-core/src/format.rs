@@ -5,6 +5,7 @@
 //! answers through [`DictionaryReader`].
 
 use std::fmt;
+use std::ops::ControlFlow;
 use std::path::{Component, Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
@@ -48,6 +49,9 @@ impl fmt::Debug for Registration {
 }
 
 /// An open Dictionary, as a format presents it to the core.
+///
+/// Opening should be cheap: the core keeps its own index of every Dictionary's headwords
+/// (built once with [`DictionaryReader::headwords`]) and reads records by where they lie.
 pub trait DictionaryReader: Send + Sync {
     /// The Dictionary's title as its file states it; may be empty.
     fn title(&self) -> &str;
@@ -55,12 +59,19 @@ pub trait DictionaryReader: Send + Sync {
     /// How many Entries (headwords, redirects included) the Dictionary files.
     fn entry_count(&self) -> usize;
 
-    /// Every headword the Dictionary files, in the file's order. A headword filed more
-    /// than once may appear more than once.
-    fn headwords(&self) -> Box<dyn Iterator<Item = &str> + '_>;
+    /// Reads every headword the Dictionary files, in the file's order, with where its
+    /// record lies; a headword filed more than once appears more than once.
+    ///
+    /// Reports how many headwords have been read so far to `progress` as it goes (at
+    /// least once before the end, and with the total at the end). Stops and returns
+    /// `Ok(None)` as soon as `progress` returns [`ControlFlow::Break`].
+    fn headwords(
+        &self,
+        progress: &mut dyn FnMut(usize) -> ControlFlow<()>,
+    ) -> Result<Option<Vec<(String, Location)>>, FormatError>;
 
-    /// The records filed under exactly `headword`, in the file's order.
-    fn records(&self, headword: &str) -> Result<Vec<RawRecord>, FormatError>;
+    /// The record at `location`, as [`DictionaryReader::headwords`] reported it.
+    fn record(&self, location: Location) -> Result<RawRecord, FormatError>;
 
     /// The bytes of a file the Dictionary's Entries refer to (an image, a stylesheet, a
     /// sound), by the relative path an Entry uses, or `None` if the Dictionary has no such
@@ -69,6 +80,14 @@ pub trait DictionaryReader: Send + Sync {
         let _ = path;
         Ok(None)
     }
+}
+
+/// Where a record lies in a Dictionary's file: two numbers whose meaning is the format's
+/// own. The core stores them in its index and hands them back unchanged.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct Location {
+    pub start: u64,
+    pub end: u64,
 }
 
 /// One record as a format returns it, before the core resolves redirects.
@@ -124,7 +143,7 @@ impl DictionaryFormat for MdictFormat {
     }
 
     fn open(&self, path: &Path) -> Result<Box<dyn DictionaryReader>, OpenError> {
-        let mdx = opendict_mdict::Mdx::open(path).map_err(open_error)?;
+        let mdx = opendict_mdict::LazyMdx::open(path).map_err(open_error)?;
         Ok(Box::new(MdictReader::new(mdx, path, None)))
     }
 
@@ -148,13 +167,13 @@ impl DictionaryFormat for MdictFormat {
                 .ok_or(OpenError::WrongRegistrationCode)?,
             None => opendict_mdict::Registration::without_code(&registration.email),
         };
-        let mdx = opendict_mdict::Mdx::open_registered(path, &unlock).map_err(open_error)?;
+        let mdx = opendict_mdict::LazyMdx::open_registered(path, &unlock).map_err(open_error)?;
         Ok(Box::new(MdictReader::new(mdx, path, Some(&unlock))))
     }
 }
 
 struct MdictReader {
-    mdx: opendict_mdict::Mdx,
+    mdx: opendict_mdict::LazyMdx,
     /// `name.mdd`, `name.1.mdd`, `name.2.mdd`, … in that order.
     resource_files: Vec<opendict_mdict::Mdd>,
     /// The folder the MDX is in; stylesheets and scripts beside it belong to the Dictionary.
@@ -165,7 +184,7 @@ impl MdictReader {
     /// The reader for the MDX at `path`, with its MDD files; those of a Dictionary that
     /// needs a registration code open with the same registration.
     fn new(
-        mdx: opendict_mdict::Mdx,
+        mdx: opendict_mdict::LazyMdx,
         path: &Path,
         registration: Option<&opendict_mdict::Registration>,
     ) -> MdictReader {
@@ -177,28 +196,60 @@ impl MdictReader {
     }
 }
 
+/// How many headwords are read between two progress reports.
+const PROGRESS_STEP: usize = 4096;
+
 impl DictionaryReader for MdictReader {
     fn title(&self) -> &str {
         self.mdx.header().title()
     }
 
     fn entry_count(&self) -> usize {
-        self.mdx.headwords().count()
+        self.mdx.key_count()
     }
 
-    fn headwords(&self) -> Box<dyn Iterator<Item = &str> + '_> {
-        Box::new(self.mdx.headwords())
-    }
-
-    fn records(&self, headword: &str) -> Result<Vec<RawRecord>, FormatError> {
-        let records = self.mdx.lookup(headword).map_err(mdict_error)?;
-        Ok(records
+    fn headwords(
+        &self,
+        progress: &mut dyn FnMut(usize) -> ControlFlow<()>,
+    ) -> Result<Option<Vec<(String, Location)>>, FormatError> {
+        let mut keys = Vec::with_capacity(self.mdx.key_count().min(1 << 22));
+        if progress(0).is_break() {
+            return Ok(None);
+        }
+        for key in self.mdx.keys() {
+            keys.push(key.map_err(mdict_error)?);
+            if keys.len() % PROGRESS_STEP == 0 && progress(keys.len()).is_break() {
+                return Ok(None);
+            }
+        }
+        // A record ends where the next larger start begins, or at the end of the stream.
+        let mut starts: Vec<u64> = keys.iter().map(|(_, start)| *start).collect();
+        starts.sort_unstable();
+        starts.dedup();
+        let stream_end = self.mdx.record_stream_len();
+        let headwords = keys
             .into_iter()
-            .map(|record| match record {
-                opendict_mdict::Record::Text(text) => RawRecord::Text(text),
-                opendict_mdict::Record::Link(target) => RawRecord::Link(target),
+            .map(|(headword, start)| {
+                let next = starts.partition_point(|&s| s <= start);
+                let end = starts.get(next).copied().unwrap_or(stream_end);
+                (headword, Location { start, end })
             })
-            .collect())
+            .collect::<Vec<_>>();
+        if progress(headwords.len()).is_break() {
+            return Ok(None);
+        }
+        Ok(Some(headwords))
+    }
+
+    fn record(&self, location: Location) -> Result<RawRecord, FormatError> {
+        let record = self
+            .mdx
+            .record(location.start..location.end)
+            .map_err(mdict_error)?;
+        Ok(match record {
+            opendict_mdict::Record::Text(text) => RawRecord::Text(text),
+            opendict_mdict::Record::Link(target) => RawRecord::Link(target),
+        })
     }
 
     /// A file beside the MDX first (so a loose stylesheet can stand in for the one in the

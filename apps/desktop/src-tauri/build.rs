@@ -12,6 +12,9 @@ fn main() {
         "rescan_library",
         "set_dictionary_enabled",
         "move_dictionary",
+        "history",
+        "record_lookup",
+        "clear_history",
         "register_dictionary",
         "appearance",
         "set_theme",
@@ -19,6 +22,8 @@ fn main() {
         "set_all_as_authored",
         "set_text_size",
         "set_zoom",
+        "index_library",
+        "cancel_indexing",
     ]);
     tauri_build::try_build(tauri_build::Attributes::new().app_manifest(manifest))
         .expect("failed to run tauri-build");

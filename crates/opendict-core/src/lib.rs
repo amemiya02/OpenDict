@@ -1,12 +1,20 @@
 //! OpenDict's core: the Library and Lookup, with no user interface and no network access.
 //!
 //! The core reads Dictionaries through the [`DictionaryFormat`] interface, so Lookup
-//! never depends on a particular file format.
+//! never depends on a particular file format. Each Dictionary is indexed once (see
+//! [`Library::index_jobs`]); Lookup and the headword column read the index.
 
 mod error;
 mod format;
+mod history;
 mod index;
+mod indexing;
+mod lemma;
 mod library;
+mod links;
+mod near;
+mod normalization;
+mod pattern;
 mod preferences;
 mod pronunciation;
 mod registrations;
@@ -14,10 +22,13 @@ mod scan;
 
 pub use error::{Error, Result};
 pub use format::{
-    DictionaryFormat, DictionaryReader, FormatError, MdictFormat, OpenError, RawRecord,
+    DictionaryFormat, DictionaryReader, FormatError, Location, MdictFormat, OpenError, RawRecord,
     Registration,
 };
-pub use index::{HeadwordIndex, IndexError, IndexedHeadword, MemoryIndex, Start, index_key};
+pub use history::History;
+pub use index::{HeadwordIndex, IndexError, IndexedHeadword, Start, index_key};
+pub use indexing::{BuiltIndex, IndexJob, IndexOutcome, IndexResult, IndexState};
+pub use lemma::{BaseForm, base_forms};
 pub use library::{
     DictionaryInfo, Entry, Lemma, Library, LibraryFolder, Move, OpenFailure, Suggestion,
     Suggestions,

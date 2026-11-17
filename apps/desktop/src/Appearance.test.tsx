@@ -10,15 +10,16 @@ import type { Appearance, Entry, Library } from "./lib/ipc";
 const library: Library = {
   folders: [{ path: "D:\\Dictionaries", dictionaryCount: 2, problem: null }],
   dictionaries: [
-    { id: "learner", title: "Sample Learner's Dictionary", path: "D:\\Dictionaries\\learner.mdx", entryCount: 100, size: 1024, enabled: true },
-    { id: "atlas", title: "Sample Atlas", path: "D:\\Dictionaries\\atlas.mdx", entryCount: 100, size: 1024, enabled: true },
+    { id: "learner", title: "Sample Learner's Dictionary", path: "D:\\Dictionaries\\learner.mdx", entryCount: 100, size: 1024, enabled: true, index: { state: "ready" } },
+    { id: "atlas", title: "Sample Atlas", path: "D:\\Dictionaries\\atlas.mdx", entryCount: 100, size: 1024, enabled: true, index: { state: "ready" } },
   ],
   failures: [],
+  indexing: null,
   problem: null,
 };
 
 function entry(id: string, title: string, asAuthored = false): Entry {
-  return { dictionaryId: id, dictionaryTitle: title, src: `http://odentry.localhost/${id}/?headword=thumb`, allowNetwork: false, pronunciation: null, asAuthored };
+  return { dictionaryId: id, dictionaryTitle: title, src: `http://odentry.localhost/${id}/?headword=thumb`, allowNetwork: false, sound: null, pronunciation: null, asAuthored };
 }
 
 const defaults: Appearance = { theme: "system", allAsAuthored: false, textSize: 16, zoom: 100 };
@@ -43,6 +44,9 @@ function fakeShell(stored: Partial<Appearance> = {}, authored: string[] = []) {
         return [entry("learner", "Sample Learner's Dictionary", asAuthored.has("learner")), entry("atlas", "Sample Atlas", asAuthored.has("atlas"))];
       case "appearance":
         return appearance;
+      case "history":
+      case "record_lookup":
+        return [];
     }
     if (command.startsWith("plugin:")) return null; // the updater, which has nothing to offer
     changes.push({ command, args });

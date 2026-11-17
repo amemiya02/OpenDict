@@ -1,5 +1,7 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useEffectEvent, useRef, useState } from "react";
 import { useI18n } from "../i18n";
+import { linkedHeadword, soundUrl } from "../lib/entryLinks";
+import { readerJustActed } from "../lib/sound";
 
 /** Height before the Entry document has reported its own. */
 const INITIAL_HEIGHT = 120;
@@ -17,19 +19,29 @@ const RECOLOUR = "invert(0.92) hue-rotate(180deg)";
  * scheme, which sends it with a content security policy that sandboxes it again and keeps
  * it off the network unless the reader allowed it. The frame may run the Dictionary's
  * scripts but has an opaque origin: no access to the app, Tauri IPC, storage or other
- * Dictionaries. The app sets no type inside it (the Hands-Off Entry Rule); it sizes the
- * frame to the height its document reports, tells the document the reader's base text
- * size when it changes, and in the dark theme recolours the frame from outside with a
- * filter, never touching the document.
+ * Dictionaries. The app sets no type inside it (the Hands-Off Entry Rule).
+ *
+ * The frame's document can say three things, by message, and nothing else: its height,
+ * an `entry://` link the reader clicked (`onLink` gets the headword) and a `sound://` link
+ * the reader clicked (`onSound` gets a URL beneath this frame's own Dictionary). Messages
+ * from any other window, of any other shape, or (for links) with no reader action in this
+ * frame behind them are dropped.
+ *
+ * It also tells the document the reader's base text size when it changes, and in the
+ * dark theme recolours the frame from outside with a filter, never touching the document.
  */
 export function EntryFrame({
   dictionaryTitle,
   src,
+  onLink,
+  onSound,
   textSize,
   recolour = false,
 }: {
   dictionaryTitle: string;
   src: string;
+  onLink?: (headword: string) => void;
+  onSound?: (url: string) => void;
   /** The reader's base text size; the Entry scheme serves documents with it already. */
   textSize: number;
   recolour?: boolean;
@@ -38,17 +50,44 @@ export function EntryFrame({
   const frame = useRef<HTMLIFrameElement>(null);
   const [height, setHeight] = useState(INITIAL_HEIGHT);
 
-  useEffect(() => {
-    function onMessage(event: MessageEvent) {
-      if (!frame.current || event.source !== frame.current.contentWindow) return;
-      const data: unknown = event.data;
-      if (typeof data !== "object" || data === null) return;
-      const { opendict, height } = data as { opendict?: unknown; height?: unknown };
-      if (opendict !== "size" || typeof height !== "number" || !Number.isFinite(height)) return;
-      setHeight(Math.min(Math.max(Math.ceil(height), 0), MAX_HEIGHT));
+  /**
+   * Whether the reader has just clicked (or pressed a key) inside this frame: focus is in
+   * it and the reader acted a moment ago. A script cannot fake either, so a Dictionary
+   * cannot start Lookups or sounds on its own, say as soon as its Entry loads.
+   */
+  function readerActedHere(): boolean {
+    return frame.current !== null && document.activeElement === frame.current && readerJustActed();
+  }
+
+  const onMessage = useEffectEvent((event: MessageEvent) => {
+    if (!frame.current || event.source !== frame.current.contentWindow) return;
+    const data: unknown = event.data;
+    if (typeof data !== "object" || data === null) return;
+    const message = data as { opendict?: unknown; height?: unknown; href?: unknown };
+    switch (message.opendict) {
+      case "size":
+        if (typeof message.height !== "number" || !Number.isFinite(message.height)) return;
+        setHeight(Math.min(Math.max(Math.ceil(message.height), 0), MAX_HEIGHT));
+        return;
+      case "link": {
+        if (typeof message.href !== "string" || !readerActedHere()) return;
+        const headword = linkedHeadword(message.href);
+        if (headword !== null) onLink?.(headword);
+        return;
+      }
+      case "sound": {
+        if (typeof message.href !== "string" || !/^sound:\/\//i.test(message.href) || !readerActedHere()) return;
+        const url = soundUrl(src, message.href);
+        if (url !== null) onSound?.(url);
+        return;
+      }
     }
-    window.addEventListener("message", onMessage);
-    return () => window.removeEventListener("message", onMessage);
+  });
+
+  useEffect(() => {
+    const listener = (event: MessageEvent) => onMessage(event);
+    window.addEventListener("message", listener);
+    return () => window.removeEventListener("message", listener);
   }, []);
 
   // The document was served with the size of the moment; later changes reach it as a

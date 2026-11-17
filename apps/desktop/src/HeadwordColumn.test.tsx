@@ -10,9 +10,10 @@ import type { Suggestion } from "./lib/ipc";
 /**
  * A fake shell with a headword index in index order (each headword with how many
  * Dictionaries file it). It answers suggest and headwords_after the way the core does
- * and records every command it receives.
+ * and records every command it receives. `lemmas` maps inflected forms to base forms,
+ * standing in for the core's Lemmatization.
  */
-function fakeShell(index: Suggestion[]) {
+function fakeShell(index: Suggestion[], lemmas: Record<string, string> = {}) {
   const calls: { command: string; args: Record<string, unknown> }[] = [];
   const position = (key: string) => {
     const at = index.findIndex((item) => item.headword.toLowerCase() >= key);
@@ -20,8 +21,9 @@ function fakeShell(index: Suggestion[]) {
   };
   const library = {
     folders: [{ path: "/library", dictionaryCount: 1, problem: null }],
-    dictionaries: [{ id: "a", title: "A", path: "/library/a.mdx", entryCount: index.length, size: 1, enabled: true }],
+    dictionaries: [{ id: "a", title: "A", path: "/library/a.mdx", entryCount: index.length, size: 1, enabled: true, index: { state: "ready" } }],
     failures: [],
+    indexing: null,
     problem: null,
   };
   mockIPC((command, payload) => {
@@ -33,6 +35,11 @@ function fakeShell(index: Suggestion[]) {
         return library;
       case "suggest": {
         const key = (args.query as string).trim().toLowerCase();
+        const base = lemmas[key];
+        if (base) {
+          const items = index.slice(position(base)).slice(0, args.limit as number);
+          return { items, lemma: { from: (args.query as string).trim(), to: base }, near: false, miss: false, browse: false };
+        }
         const items = index.slice(position(key)).slice(0, args.limit as number);
         const browse = key === "";
         return { items, lemma: null, near: false, miss: !browse && !items[0]?.headword.toLowerCase().startsWith(key), browse };
@@ -50,7 +57,7 @@ function fakeShell(index: Suggestion[]) {
       default:
         throw new Error(`unexpected command ${command}`);
     }
-  });
+  }, { shouldMockEvents: true });
   return calls;
 }
 
@@ -84,6 +91,18 @@ describe("headword column", () => {
 
     await waitFor(() => expect(shownHeadwords()).toEqual(["serendipity", "serene", "shadow"]));
     // The first match is current and already on the page.
+    expect(within(column()).getByRole("option", { selected: true }).dataset.headword).toBe("serendipity");
+    await waitFor(() => expect(pageHeadword()).toBe("【serendipity】"));
+  });
+
+  it("notes the base form an inflected form was taken to, and shows its Entry", async () => {
+    fakeShell(words, { serendipities: "serendipity" });
+    const search = renderApp();
+
+    await userEvent.type(search, "serendipities");
+
+    const note = await screen.findByText((_, element) => element?.tagName === "P" && element.textContent === "Lemmatized serendipities → serendipity");
+    expect(within(note).getByText("serendipities").tagName).toBe("B");
     expect(within(column()).getByRole("option", { selected: true }).dataset.headword).toBe("serendipity");
     await waitFor(() => expect(pageHeadword()).toBe("【serendipity】"));
   });
@@ -153,7 +172,7 @@ describe("headword column", () => {
     await userEvent.keyboard("{ArrowDown}");
 
     await waitFor(() => expect(pageHeadword()).toBe(`【${word(PAGE_SIZE)}】`));
-    expect(calls).toContainEqual({ command: "headwords_after", args: { headword: word(PAGE_SIZE - 1), limit: PAGE_SIZE } });
+    expect(calls).toContainEqual({ command: "headwords_after", args: { query: "", headword: word(PAGE_SIZE - 1), limit: PAGE_SIZE } });
     expect(shownHeadwords()).toHaveLength(PAGE_SIZE + 1);
   });
 
