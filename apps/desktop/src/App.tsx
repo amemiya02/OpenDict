@@ -5,7 +5,7 @@ import { GroupSwitcher } from "./components/GroupSwitcher";
 import { COLUMN_ID, HeadwordColumn, optionId, type ColumnItem, type ColumnList } from "./components/HeadwordColumn";
 import { MiniWindowSettings } from "./components/MiniWindowSettings";
 import { NavButtons } from "./components/NavButtons";
-import { RecentLookups } from "./components/RecentLookups";
+import { RecentLookups, WordList } from "./components/RecentLookups";
 import { sectionId, ThumbIndex } from "./components/ThumbIndex";
 import { EmptyLibrary, LibraryPage, OutlineButton, type LibraryActions } from "./components/LibraryPage";
 import { ReadingSettings } from "./components/ReadingSettings";
@@ -821,7 +821,14 @@ export function App() {
               groups={groups}
               currentGroup={currentGroup}
               onGoTo={(id, headword) => void switchGroup(id, headword)}
-              recent={<RecentLookups words={history} onPick={(word) => void commit(word)} />}
+              recent={
+                <>
+                  <RecentLookups words={history} onPick={(word) => void commit(word)} />
+                  {currentBook && (
+                    <WordList heading={currentBook.name} words={currentBook.words.map((word) => word.headword)} onPick={(word) => void commit(word)} />
+                  )}
+                </>
+              }
               saved={page.kind === "found" && savedHere(page.headword)}
               onToggleSave={() => void toggleSave()}
               folded={foldedHere}

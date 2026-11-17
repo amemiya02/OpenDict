@@ -137,6 +137,29 @@ async function lookUp(word: string) {
 }
 
 describe("Word Books", () => {
+  it("the empty page lists the current Word Book, and a word picked there is looked up", async () => {
+    fakeShell([
+      { id: 2, name: "Other", words: [saved("banter")] },
+      { id: 4, name: "Reading", words: [saved("serendipity"), saved("apple")] },
+    ], 4);
+    renderApp();
+
+    const book = await screen.findByRole("list", { name: "Reading" });
+    expect(within(book).getAllByRole("button").map((button) => button.textContent)).toEqual(["serendipity", "apple"]);
+    await userEvent.click(within(book).getByRole("button", { name: "apple" }));
+
+    await screen.findByRole("heading", { level: 1, name: "【apple】" });
+  });
+
+  it("an empty Word Book is not listed on the empty page", async () => {
+    const { calls } = fakeShell([{ id: 4, name: "Reading", words: [] }]);
+    renderApp();
+
+    await waitFor(() => expect(calls.some((call) => call.command === "word_books")).toBe(true));
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(screen.queryByRole("list", { name: "Reading" })).toBeNull();
+  });
+
   it("Ctrl+D saves the word on the page with the Dictionary it came from, and again takes it out", async () => {
     const { calls, state } = fakeShell();
     await lookUp("serendipity");
