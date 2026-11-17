@@ -174,18 +174,18 @@ fn reports_damaged_mdd_files_in_every_layout() {
     for (version, compression, encrypt) in layouts() {
         let case = format!("{version:?} {compression:?} encrypted={encrypt}");
         let builder = mdd(version, compression, encrypt);
-        for damage in OPEN_DAMAGES {
+        for damage in OPEN_DAMAGES.into_iter().filter(|d| *d != Damage::KeyBlock) {
             let opened = open_mdd(&builder.build_damaged(damage)).map(drop);
             assert_damage_reported(&case, damage, opened);
         }
 
-        let mdd = open_mdd(&builder.build_damaged(Damage::RecordBlock))
-            .unwrap_or_else(|e| panic!("{case}: {e}"));
-        assert_damage_reported(
-            &case,
-            Damage::RecordBlock,
-            mdd.resource("img/a.png").map(drop),
-        );
+        // Opening reads no key block and no record block: their damage shows when a
+        // resource is read.
+        for damage in [Damage::KeyBlock, Damage::RecordBlock] {
+            let mdd =
+                open_mdd(&builder.build_damaged(damage)).unwrap_or_else(|e| panic!("{case}: {e}"));
+            assert_damage_reported(&case, damage, mdd.resource("img/a.png").map(drop));
+        }
     }
 }
 

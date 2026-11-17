@@ -120,9 +120,14 @@ pub(crate) struct Sections {
     last_record_block: Mutex<Option<(usize, Arc<Vec<u8>>)>>,
 }
 
-/// Where a key block is stored and how many keys it holds.
+/// Where a key block is stored, how many keys it holds, and the first and last keys the
+/// key index names for it.
 struct KeyBlock {
     entries: usize,
+    /// The first and last keys of the block as the key index states them: hints only,
+    /// not always the literal keys.
+    first: String,
+    last: String,
     file_start: usize,
     stored_len: usize,
     plain_len: usize,
@@ -223,6 +228,38 @@ impl Sections {
         self.key_blocks.len()
     }
 
+    /// The first and last keys of key block `index`, as the key index states them. Hints
+    /// only: check them against the block before relying on them.
+    pub(crate) fn key_block_hints(&self, index: usize) -> (&str, &str) {
+        let block = &self.key_blocks[index];
+        (&block.first, &block.last)
+    }
+
+    /// Every key in file order, with every distinct record start in ascending order (a
+    /// record ends where the next begins). Decompresses every key block.
+    pub(crate) fn all_keys(&self) -> Result<(Vec<Key>, Vec<u64>)> {
+        let mut keys = Vec::with_capacity(self.key_count.min(1 << 20));
+        for index in 0..self.key_block_count() {
+            keys.extend(self.key_block(index)?);
+        }
+        if keys.len() != self.key_count {
+            return Err(Error::Corrupt("the key index does not add up"));
+        }
+
+        let mut record_starts: Vec<u64> = keys.iter().map(|key| key.record_offset).collect();
+        record_starts.sort_unstable();
+        record_starts.dedup();
+        if record_starts
+            .last()
+            .is_some_and(|&last| last >= self.records.total)
+        {
+            return Err(Error::Corrupt(
+                "a record offset lies past the record section",
+            ));
+        }
+        Ok((keys, record_starts))
+    }
+
     /// Decompresses key block `index` and reads its keys.
     pub(crate) fn key_block(&self, index: usize) -> Result<Vec<Key>> {
         read_key_block(
@@ -298,26 +335,7 @@ impl MdictFile {
         registration: Option<&Registration>,
     ) -> Result<MdictFile> {
         let sections = Sections::open(path, kind, registration)?;
-        let mut keys = Vec::with_capacity(sections.key_count.min(1 << 20));
-        for index in 0..sections.key_block_count() {
-            keys.extend(sections.key_block(index)?);
-        }
-        if keys.len() != sections.key_count {
-            return Err(Error::Corrupt("the key index does not add up"));
-        }
-
-        let mut record_starts: Vec<u64> = keys.iter().map(|key| key.record_offset).collect();
-        record_starts.sort_unstable();
-        record_starts.dedup();
-        if record_starts
-            .last()
-            .is_some_and(|&last| last >= sections.records.total)
-        {
-            return Err(Error::Corrupt(
-                "a record offset lies past the record section",
-            ));
-        }
-
+        let (keys, record_starts) = sections.all_keys()?;
         Ok(MdictFile {
             sections,
             keys,
@@ -478,17 +496,23 @@ fn read_key_index(
     for _ in 0..block_count {
         let entries = version.number(&mut info)?;
         // The first and last keys of the block: hints only, not always the literal keys.
-        for _ in 0..2 {
+        let mut hint = || -> Result<String> {
             let (len, terminator) = match version {
                 Version::V1 => (usize::from(info.u8()?), 0),
                 Version::V2 => (usize::from(info.u16_be()?), unit),
             };
-            info.take(len * unit + terminator)?;
-        }
+            let text = encoding.decode(info.take(len * unit)?);
+            info.take(terminator)?;
+            Ok(text)
+        };
+        let first = hint()?;
+        let last = hint()?;
         let stored_len = version.number(&mut info)?;
         let plain_len = version.number(&mut info)?;
         blocks.push(KeyBlock {
             entries,
+            first,
+            last,
             file_start,
             stored_len,
             plain_len,

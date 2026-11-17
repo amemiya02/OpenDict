@@ -115,13 +115,31 @@ fn check_mdd(path: &Path) -> Result<String, String> {
     let mdd = Mdd::open(path).map_err(|e| format!("open: {e}"))?;
     let paths: Vec<&str> = mdd.resource_paths().collect();
     let step = (paths.len() / SAMPLES).max(1);
+    // Looked up in a file opened afresh, which finds them without reading every key,
+    // and compared with the file that has read them all.
+    let fresh = Mdd::open(path).map_err(|e| format!("open: {e}"))?;
     let mut bytes = 0;
     for resource in paths.iter().step_by(step) {
-        let data = mdd
+        let data = fresh
             .resource(resource)
             .map_err(|e| format!("extract: {e}"))?
             .ok_or("a listed resource does not resolve")?;
+        let whole = mdd
+            .resource(resource)
+            .map_err(|e| format!("extract: {e}"))?;
+        if whole.as_deref() != Some(&data[..]) {
+            return Err("a resource reads differently found by its key block".into());
+        }
         bytes += data.len();
+    }
+    for missing in ["no-such-resource.png", "\\zzzz\\none.css"] {
+        if fresh
+            .resource(missing)
+            .map_err(|e| format!("extract: {e}"))?
+            .is_some()
+        {
+            return Err(format!("{missing:?} resolves"));
+        }
     }
     Ok(format!(
         "version {}, encrypted {}, {} resources; extracted {bytes} bytes from a sample",
