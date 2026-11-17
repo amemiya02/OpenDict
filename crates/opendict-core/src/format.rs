@@ -23,6 +23,10 @@ pub trait DictionaryReader: Send + Sync {
     /// How many Entries (headwords, redirects included) the Dictionary files.
     fn entry_count(&self) -> usize;
 
+    /// Every headword the Dictionary files, in the file's order. A headword filed more
+    /// than once may appear more than once.
+    fn headwords(&self) -> Box<dyn Iterator<Item = &str> + '_>;
+
     /// The records filed under exactly `headword`, in the file's order.
     fn records(&self, headword: &str) -> Result<Vec<RawRecord>, FormatError>;
 }
@@ -93,6 +97,10 @@ impl DictionaryReader for MdictReader {
 
     fn entry_count(&self) -> usize {
         self.mdx.headwords().count()
+    }
+
+    fn headwords(&self) -> Box<dyn Iterator<Item = &str> + '_> {
+        Box::new(self.mdx.headwords())
     }
 
     fn records(&self, headword: &str) -> Result<Vec<RawRecord>, FormatError> {
