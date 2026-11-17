@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import { EntryFrame } from "./components/EntryFrame";
 import { EmptyLibrary, LibraryPage, OutlineButton, type LibraryActions } from "./components/LibraryPage";
 import { SearchField } from "./components/SearchField";
+import { UpdateNotice } from "./components/UpdateNotice";
 import { useI18n } from "./i18n";
 import {
   addLibraryFolder,
@@ -110,6 +111,7 @@ export function App() {
 
       <footer className="flex items-center gap-[18px] overflow-hidden border-t border-rule px-xl text-label whitespace-nowrap text-text-secondary tabular-nums select-none">
         <span>{library && !library.problem ? t.libraryCount(enabledCount) : null}</span>
+        <UpdateNotice />
       </footer>
     </div>
   );

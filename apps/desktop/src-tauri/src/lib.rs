@@ -19,6 +19,7 @@ pub const DATA_DIR_ENV: &str = "OPENDICT_DATA_DIR";
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_process::init())
         .register_asynchronous_uri_scheme_protocol(
             entry_protocol::SCHEME,
             |context, request, responder| {
@@ -30,6 +31,10 @@ pub fn run() {
             },
         )
         .setup(|app| {
+            // Updates come from GitHub Releases, checked by the interface (see UpdateNotice.tsx).
+            #[cfg(desktop)]
+            app.handle()
+                .plugin(tauri_plugin_updater::Builder::new().build())?;
             let override_folder = std::env::var_os(LIBRARY_FOLDER_ENV).map(Into::into);
             let data_dir = match std::env::var_os(DATA_DIR_ENV) {
                 Some(dir) => dir.into(),

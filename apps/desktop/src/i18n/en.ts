@@ -45,6 +45,12 @@ export const en = {
   allowNetwork: "Allow network access",
   networkAllowed: "This dictionary may use the network. Click to block it.",
   networkBlocked: "This dictionary is kept off the network. Click to allow it.",
+  updateAvailable: (version: string) => `OpenDict ${version} is available.`,
+  updateInstall: "Install and restart",
+  updateDownloading: (version: string, percent: number | null) =>
+    percent === null ? `Downloading OpenDict ${version}…` : `Downloading OpenDict ${version}… ${percent}%`,
+  updateInstalling: (version: string) => `Installing OpenDict ${version}…`,
+  updateFailed: (version: string, reason: string) => `OpenDict ${version} could not be installed: ${reason}`,
 };
 
 export type Catalogue = typeof en;

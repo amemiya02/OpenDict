@@ -103,13 +103,13 @@ async function freePort(): Promise<number> {
 
 async function lookUp(headword: string) {
   const search = page.getByRole("searchbox");
+  // Key presses sent over DevTools are sometimes dropped when the field was focused by autoFocus
+  // before DevTools attached; a real click first makes WebView2 deliver them.
+  await search.click();
   await search.fill(headword);
   await search.press("Enter");
-  const heading = page.getByRole("heading", { level: 1, name: `【${headword}】` });
-  // About one run in six, the first Lookup after start-up never lands (cause not found;
-  // the page simply stays as it was). Press Enter once more if so.
-  if (!(await heading.waitFor({ timeout: 4_000 }).then(() => true, () => false))) await search.press("Enter");
-  await heading
+  await page
+    .getByRole("heading", { level: 1, name: `【${headword}】` })
     .waitFor({ timeout: 10_000 })
     .catch(async (error: unknown) => {
       throw new Error(`No page for ${headword}. The window says: ${await page.locator("body").innerText()}`, { cause: error });
@@ -118,7 +118,7 @@ async function lookUp(headword: string) {
 
 /** The frame holding one Dictionary's Entry, once its document has loaded. */
 async function entryFrame(dictionaryTitle: string): Promise<Frame> {
-  // By section, not by the frame's title: the interface language follows the system's.
+  // By section, named with the Dictionary's own title, not by the frame's translated title.
   const element = page.getByRole("region", { name: dictionaryTitle, exact: true }).locator("iframe");
   await element.waitFor({ timeout: 10_000 }).catch(async (error: unknown) => {
     throw new Error(`No frame for ${dictionaryTitle}. The page says: ${await page.locator("body").innerText()}`, { cause: error });

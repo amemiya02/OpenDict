@@ -46,4 +46,10 @@ export const zhCN = {
   allowNetwork: "允许访问网络",
   networkAllowed: "此词典可以访问网络。点击以禁止。",
   networkBlocked: "此词典无法访问网络。点击以允许。",
+  updateAvailable: (version: string) => `OpenDict ${version} 已发布。`,
+  updateInstall: "安装并重新启动",
+  updateDownloading: (version: string, percent: number | null) =>
+    percent === null ? `正在下载 OpenDict ${version}…` : `正在下载 OpenDict ${version}… ${percent}%`,
+  updateInstalling: (version: string) => `正在安装 OpenDict ${version}…`,
+  updateFailed: (version: string, reason: string) => `无法安装 OpenDict ${version}：${reason}`,
 } satisfies Catalogue;

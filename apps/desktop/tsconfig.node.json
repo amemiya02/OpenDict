@@ -23,6 +23,7 @@
   "include": [
     "vite.config.ts",
     "eslint.config.js",
-    "e2e"
+    "e2e",
+    "scripts"
   ]
 }

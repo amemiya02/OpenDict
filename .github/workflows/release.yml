@@ -1,0 +1,157 @@
+name: Release
+
+# Pushing a tag such as v0.2.0 or v0.2.0-rc.1 builds installers for Windows, macOS and Linux,
+# signs the update packages and publishes a GitHub Release with the updater's latest.json.
+# One-time setup and the release steps: docs/releasing.md.
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  preflight:
+    name: Check the tag and the signing key
+    runs-on: ubuntu-24.04
+    outputs:
+      release-id: ${{ steps.draft.outputs.id }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: The tag names the app version and the updater key is set up
+        working-directory: apps/desktop
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+        run: |
+          status=0
+          node scripts/release-check.ts preflight "$GITHUB_REF_NAME" || status=1
+          if [ -z "$TAURI_SIGNING_PRIVATE_KEY" ]; then
+            echo "::error::The repository secret TAURI_SIGNING_PRIVATE_KEY is not set (docs/releasing.md)."
+            status=1
+          fi
+          exit $status
+
+      # The release stays a draft until every platform has uploaded, so a half-built release is never "latest".
+      - name: Create the draft release
+        id: draft
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          find_release() {
+            gh api "repos/$GITHUB_REPOSITORY/releases" --paginate \
+              --jq ".[] | select(.tag_name == \"$GITHUB_REF_NAME\") | .id" | head -n 1
+          }
+          id=$(find_release)
+          if [ -z "$id" ]; then
+            gh release create "$GITHUB_REF_NAME" --draft --verify-tag \
+              --title "OpenDict ${GITHUB_REF_NAME#v}" \
+              --notes "Installers for Windows, macOS and Linux are attached below. OpenDict is not code-signed yet, so Windows and macOS warn on first launch: see \"Installing\" in the README. Installed copies update themselves."
+            id=$(find_release)
+          fi
+          echo "id=$id" >> "$GITHUB_OUTPUT"
+
+  build:
+    name: Build (${{ matrix.name }})
+    needs: preflight
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Windows x64
+            os: windows-latest
+            args: --bundles nsis
+          - name: macOS Apple silicon
+            os: macos-latest
+            target: aarch64-apple-darwin
+            args: --target aarch64-apple-darwin --bundles app,dmg
+          - name: macOS Intel
+            os: macos-latest
+            target: x86_64-apple-darwin
+            args: --target x86_64-apple-darwin --bundles app,dmg
+          - name: Linux x64
+            # The oldest supported Ubuntu: an AppImage built here runs on newer distributions too.
+            os: ubuntu-22.04
+            args: --bundles appimage,deb
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install WebKitGTK and friends
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libxdo-dev
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: apps/desktop/package-lock.json
+
+      - name: Install the interface's dependencies
+        working-directory: apps/desktop
+        run: npm ci
+
+      - uses: tauri-apps/tauri-action@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          projectPath: apps/desktop
+          tauriScript: npx tauri
+          releaseId: ${{ needs.preflight.outputs.release-id }}
+          args: ${{ matrix.args }}
+          retryAttempts: 2
+
+  publish:
+    name: Publish the release
+    needs: [preflight, build]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      # Each build merges its platform into latest.json; make sure none was lost before going live.
+      - name: latest.json offers a signed update for every platform
+        working-directory: apps/desktop
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_ID: ${{ needs.preflight.outputs.release-id }}
+        run: |
+          asset=$(gh api "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID/assets" --paginate \
+            --jq '.[] | select(.name == "latest.json") | .url' | head -n 1)
+          if [ -n "$asset" ]; then
+            gh api -H "Accept: application/octet-stream" "$asset" > "$RUNNER_TEMP/latest.json"
+          fi
+          node scripts/release-check.ts manifest "$RUNNER_TEMP/latest.json" "${GITHUB_REF_NAME#v}"
+
+      # Pre-release tags (v0.2.0-rc.1) are published as ordinary releases on purpose: the updater reads
+      # releases/latest, which skips releases marked as pre-releases.
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_ID: ${{ needs.preflight.outputs.release-id }}
+        run: gh api -X PATCH "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID" -F draft=false -f make_latest=true
