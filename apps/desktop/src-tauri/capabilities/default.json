@@ -21,6 +21,9 @@
     "allow-history",
     "allow-record-lookup",
     "allow-clear-history",
+    "allow-window-chrome",
+    "core:window:allow-start-dragging",
+    "core:window:allow-internal-toggle-maximize",
     "updater:default",
     "process:allow-restart"
   ]

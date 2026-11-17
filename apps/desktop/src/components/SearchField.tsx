@@ -20,6 +20,8 @@ export function SearchField({
   onQuery,
   onMove,
   onCommit,
+  onEscape,
+  onBlur,
 }: {
   value: string;
   /** The id of the current suggestion, if any. */
@@ -30,6 +32,9 @@ export function SearchField({
   onQuery: (query: string) => void;
   onMove: (by: number) => void;
   onCommit: () => void;
+  /** Esc, outside an IME composition. */
+  onEscape?: () => void;
+  onBlur?: () => void;
 }) {
   const { t } = useI18n();
 
@@ -47,12 +52,16 @@ export function SearchField({
     if (event.key === "ArrowDown" || event.key === "ArrowUp") {
       event.preventDefault();
       onMove(event.key === "ArrowDown" ? 1 : -1);
+    } else if (event.key === "Escape") {
+      onEscape?.();
     }
   }
 
   return (
     <form
       role="search"
+      // On macOS the cover band drags the window; the slip of paper set into it does not.
+      data-tauri-drag-region="false"
       onSubmit={submit}
       className="flex h-8 w-[620px] min-w-0 shrink items-center gap-xs rounded-sharp bg-field pr-1.5 pl-0.75 text-field-text focus-within:outline focus-within:outline-offset-1 focus-within:outline-on-cover"
     >
@@ -82,6 +91,7 @@ export function SearchField({
         }}
         onCompositionEnd={(event) => onQuery(event.currentTarget.value)}
         onKeyDown={keyDown}
+        onBlur={onBlur}
         autoComplete="off"
         autoCapitalize="off"
         spellCheck={false}

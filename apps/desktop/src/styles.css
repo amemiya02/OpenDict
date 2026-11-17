@@ -1,5 +1,8 @@
 @import "tailwindcss";
 
+/* The shell marks the root with the platform and the window material (src/lib/ipc.ts WindowChrome). */
+@custom-variant macos (:root[data-platform="macos"] &);
+
 /*
  * Design tokens from DESIGN.md ("The Lexicographer's Page").
  * Raw palette first, then the semantic names the interface uses, which switch with the theme.
@@ -140,5 +143,26 @@
   }
   :lang(ja) {
     --font-serif: var(--font-serif-ja);
+  }
+}
+
+/*
+ * Native chrome. With a system material behind the window (Mica on Windows 11, vibrancy on
+ * macOS) the window itself is clear, every part of the frame paints its own ground, and the
+ * headword column lets the material through its paper, as a native sidebar does. The page
+ * and the cover band stay solid. A narrow window's column overlay, lying over the page, is
+ * solid paper. Without a material everything is solid, as before.
+ */
+@layer components {
+  .headword-column {
+    background: var(--paper);
+  }
+  :root[data-material] body {
+    background: transparent;
+  }
+  @media (width > 620px) {
+    :root[data-material] .headword-column {
+      background: color-mix(in srgb, var(--paper) 65%, transparent);
+    }
   }
 }

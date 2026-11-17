@@ -104,6 +104,17 @@ export interface Library {
   problem: string | null;
 }
 
+/** The window's native chrome, as the shell built it (apps/desktop/src-tauri/src/window.rs). */
+export interface WindowChrome {
+  platform: "windows" | "macos" | "linux";
+  /** The system material behind the window (Mica, macOS vibrancy), if one took. */
+  material: "mica" | "vibrancy" | null;
+}
+
+export function windowChrome(): Promise<WindowChrome> {
+  return invoke("window_chrome");
+}
+
 export function lookUp(headword: string): Promise<Entry[]> {
   return invoke<Entry[]>("look_up", { headword });
 }

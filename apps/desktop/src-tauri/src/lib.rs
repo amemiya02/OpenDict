@@ -3,6 +3,7 @@
 mod commands;
 mod entry_protocol;
 mod state;
+mod window;
 
 use tauri::Manager;
 
@@ -44,6 +45,8 @@ pub fn run() {
             let state = AppState::load(&library_file, override_folder, &data_dir);
             commands::start_indexing(app.handle(), &state);
             app.manage(state);
+            let chrome = window::build_main(app)?;
+            app.manage(chrome);
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -63,6 +66,7 @@ pub fn run() {
             commands::history,
             commands::record_lookup,
             commands::clear_history,
+            window::window_chrome,
         ])
         .run(tauri::generate_context!())
         .expect("OpenDict failed to start");

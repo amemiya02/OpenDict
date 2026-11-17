@@ -11,7 +11,7 @@
 import { spawn, execFileSync, type ChildProcess } from "node:child_process";
 import { createServer, type Server } from "node:http";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { release, tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { after, before, test } from "node:test";
 import assert from "node:assert/strict";
@@ -443,6 +443,89 @@ test("History lists committed Lookups, and Back and Forward retrace them", async
   assert.deepEqual(history.slice(0, 2), ["cat", "apple"]);
   if (process.env.OPENDICT_E2E_HISTORY_SCREENSHOT) await page.screenshot({ path: process.env.OPENDICT_E2E_HISTORY_SCREENSHOT });
   await page.getByRole("button", { name: "Suggestions" }).click();
+});
+
+test("the window has the system's own title bar controls, Mica on Windows 11, and stays usable when narrow", async () => {
+  // The system draws the title bar and its controls; on Windows 11 Mica shows through the column.
+  const decorated = await page.evaluate(() =>
+    (window as unknown as { __TAURI_INTERNALS__: { invoke: (cmd: string, args: object) => Promise<boolean> } }).__TAURI_INTERNALS__.invoke(
+      "plugin:window|is_decorated",
+      { label: "main" },
+    ),
+  );
+  assert.equal(decorated, true, "native window controls");
+  const windows11 = Number(release().split(".")[2]) >= 22000;
+  const material = await page.evaluate(() => document.documentElement.dataset.material ?? null);
+  assert.equal(material, windows11 ? "mica" : null, "Mica exactly where Windows has it");
+  if (windows11) {
+    const grounds = await page.evaluate(() => ({
+      body: getComputedStyle(document.body).backgroundColor,
+      column: getComputedStyle(document.querySelector("aside")!).backgroundColor,
+      main: getComputedStyle(document.querySelector("main")!.parentElement!).backgroundColor,
+    }));
+    assert.equal(grounds.body, "rgba(0, 0, 0, 0)", "the window is clear for Mica");
+    assert.match(grounds.column, /color\(srgb [\d. ]+ \/ 0\.65\)|rgba\(.*0\.65\)/, `the column lets Mica through (${grounds.column})`);
+    assert.doesNotMatch(grounds.main, /rgba\(0, 0, 0, 0\)|\/ 0\)/, "the page stays solid");
+  }
+
+  await page.getByRole("button", { name: "Suggestions", exact: true }).click();
+  await lookUp("thumb");
+  const cdp = await page.context().newCDPSession(page);
+  const narrow = async (width: number) => {
+    await cdp.send("Emulation.setDeviceMetricsOverride", { width, height: 700, deviceScaleFactor: 0, mobile: false });
+    await page.waitForFunction((width) => window.innerWidth === width, width);
+  };
+  const box = (selector: string) =>
+    page.evaluate((selector) => {
+      const element = document.querySelector(selector);
+      if (!element) return null;
+      const { x, width } = element.getBoundingClientRect();
+      return { x, width, display: getComputedStyle(element).display, position: getComputedStyle(element).position };
+    }, selector);
+  const column = page.getByRole("complementary", { name: "Headword column" });
+  const toggle = page.getByRole("button", { name: "Show or hide the headword column" });
+  try {
+    await narrow(1000);
+    assert.equal((await box('nav[aria-label="Jump to dictionary"]'))?.width, 46, "at 1100px and below the thumb index is notches only");
+    assert.equal((await box('nav[aria-label="Jump to dictionary"] a span'))?.display, "none", "no captions");
+    assert.equal((await box("aside"))?.width, 264);
+    assert.equal(await toggle.isVisible(), false, "no toggle while the column fits");
+
+    await narrow(800);
+    assert.equal((await box("aside"))?.width, 200, "at 860px and below the column narrows");
+
+    await narrow(600);
+    assert.equal(await column.isVisible(), false, "at 620px and below the column leaves the page");
+    assert.equal(await toggle.isVisible(), true, "a toggle in the cover band brings it back");
+    assert.ok(((await box("main")) ?? { width: 0 }).width > 500, "the page takes the width");
+    for (const name of ["Back", "Forward"]) {
+      const button = page.getByRole("button", { name, exact: true });
+      if ((await button.count()) > 0) assert.equal(await button.isVisible(), true, `${name} stays`);
+    }
+
+    await toggle.click();
+    await column.waitFor({ state: "visible" });
+    const overlay = await box("aside");
+    assert.equal(overlay?.position, "fixed", "the column lies over the page");
+    assert.equal(overlay?.x, 0);
+    if (process.env.OPENDICT_E2E_NARROW_SCREENSHOT) await page.screenshot({ path: process.env.OPENDICT_E2E_NARROW_SCREENSHOT });
+    const other = column.getByRole("option").filter({ hasNotText: "thumb" }).first();
+    const word = await other.getAttribute("data-headword");
+    await other.click();
+    await page.getByRole("heading", { level: 1, name: `【${word}】` }).waitFor({ timeout: 10_000 });
+    await column.waitFor({ state: "hidden" });
+
+    // Typing brings the column up over the page; Esc puts it away.
+    const search = page.getByRole("combobox", { name: "Type a word" });
+    await search.click();
+    await search.fill("ser");
+    await column.waitFor({ state: "visible" });
+    await search.press("Escape");
+    await column.waitFor({ state: "hidden" });
+  } finally {
+    await cdp.send("Emulation.clearDeviceMetricsOverride");
+    await cdp.detach();
+  }
 });
 
 // Runs last: unlocking adds a Dictionary, and with it a headword, to the Library.
