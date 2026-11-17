@@ -45,3 +45,103 @@ fn an_inflected_form_finds_its_base_headword_first_with_a_note() {
     assert_eq!(headwords(&suggestions.items), ["serendipity", "serene", "shadow"]);
     assert!(!suggestions.miss && !suggestions.near && !suggestions.browse);
 }
+
+#[test]
+fn a_verb_form_finds_its_verb() {
+    let (_folder, library) = library_of(&["rumour", "run", "rune", "runner", "rush"]);
+
+    let suggestions = library.suggest("running", 3).unwrap();
+
+    assert_eq!(suggestions.lemma, lemma("running", "run"));
+    assert_eq!(headwords(&suggestions.items), ["run", "rune", "runner"]);
+}
+
+#[test]
+fn a_query_that_is_itself_a_headword_stays_first() {
+    let (_folder, library) = library_of(&["run", "runs", "runway"]);
+
+    let suggestions = library.suggest("runs", 10).unwrap();
+
+    assert_eq!(headwords(&suggestions.items), ["runs", "run", "runway"]);
+    assert_eq!(suggestions.lemma, lemma("runs", "run"));
+}
+
+#[test]
+fn the_base_form_is_offered_only_when_an_enabled_dictionary_files_it() {
+    let folder = tempfile::tempdir().unwrap();
+    put(folder.path(), "a.mdx", &dictionary("A", &["sea", "shadow"]));
+    put(folder.path(), "b.mdx", &dictionary("B", &["serendipity"]));
+    let mut library = Library::open(folder.path()).unwrap();
+    let b = library
+        .dictionaries()
+        .find(|d| d.title == "B")
+        .unwrap()
+        .id
+        .clone();
+
+    library.set_enabled(&b, false).unwrap();
+    let suggestions = library.suggest("serendipities", 10).unwrap();
+
+    assert_eq!(suggestions.lemma, None);
+    assert!(suggestions.miss);
+    assert_eq!(headwords(&suggestions.items), ["shadow"]);
+}
+
+/// Looks each form up in a Library that files every expected base form (and some
+/// tempting wrong ones) and none of the forms, and returns the forms that did not find
+/// their base form.
+fn wrong_lemmas<'a>(cases: &[(&'a str, &'a str)], distractors: &[&str]) -> Vec<(&'a str, String)> {
+    let mut filed: Vec<&str> = cases.iter().map(|(_, base)| *base).collect();
+    filed.extend(distractors);
+    let (_folder, library) = library_of(&filed);
+    cases
+        .iter()
+        .filter_map(|&(form, base)| {
+            let found = library.suggest(form, 5).unwrap().lemma.map(|lemma| lemma.to);
+            (found.as_deref() != Some(base)).then(|| (form, format!("{found:?}, not {base}")))
+        })
+        .collect()
+}
+
+#[test]
+fn english_rules_cover_plurals_verb_forms_comparison_and_irregular_forms() {
+    let cases = [
+        ("cats", "cat"),
+        ("boxes", "box"),
+        ("cities", "city"),
+        ("knives", "knife"),
+        ("wolves", "wolf"),
+        ("gives", "give"),
+        ("goes", "go"),
+        ("reader's", "reader"),
+        ("stopped", "stop"),
+        ("hoped", "hope"),
+        ("carried", "carry"),
+        ("agreed", "agree"),
+        ("walking", "walk"),
+        ("making", "make"),
+        ("singing", "sing"),
+        ("lying", "lie"),
+        ("bigger", "big"),
+        ("larger", "large"),
+        ("happiest", "happy"),
+        ("children", "child"),
+        ("mice", "mouse"),
+        ("went", "go"),
+        ("written", "write"),
+        ("better", "good"),
+        ("Running", "run"),
+    ];
+    assert_eq!(wrong_lemmas(&cases, &["gif", "hop", "singe", "stopp"]), []);
+}
+
+#[test]
+fn an_ending_common_in_base_forms_is_not_undone_when_the_query_is_a_headword() {
+    let (_folder, library) = library_of(&["numb", "number", "numbest"]);
+
+    assert_eq!(library.suggest("number", 10).unwrap().lemma, None);
+    assert_eq!(
+        library.suggest("numbers", 10).unwrap().lemma,
+        lemma("numbers", "number")
+    );
+}
