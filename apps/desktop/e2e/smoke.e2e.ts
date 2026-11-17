@@ -569,7 +569,6 @@ test("History lists committed Lookups, and Back and Forward retrace them", async
 });
 
 test("a Group made in the Library is switched from the cover band, and a miss points back to the whole Library", async () => {
-  const page = browser!.contexts()[0]!.pages()[0]!;
   const search = page.getByRole("combobox", { name: "Type a word" });
   const onPage = (headword: string) =>
     page.waitForFunction((word) => document.querySelector("h1")?.textContent === `【${word}】`, headword, { timeout: 10_000 });

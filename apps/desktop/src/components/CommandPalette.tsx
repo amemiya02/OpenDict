@@ -34,8 +34,13 @@ export function CommandPalette({ commands, onClose }: { commands: () => Command[
   const ids = useId();
   const [needle, setNeedle] = useState("");
   const [selected, setSelected] = useState(0);
-  /** The command to run once the palette has closed. */
-  const chosen = useRef<Command | null>(null);
+  /**
+   * Closes the palette (once), hands the focus back, tells the owner and runs the chosen
+   * command, if any. Not left to the `close` event: browsers queue it as a task, and
+   * WebView2 was seen to hold it until the next key press, so the palette stayed "open" for
+   * the window's shortcuts after Esc.
+   */
+  const finish = useRef<(command?: Command) => void>(() => {});
 
   const wanted = needle.trim().toLowerCase();
   const shown = commands().filter((command) => command.label.toLowerCase().includes(wanted));
@@ -54,24 +59,30 @@ export function CommandPalette({ commands, onClose }: { commands: () => Command[
     const down = (event: PointerEvent) => {
       pressedOutside = outside(event);
     };
+    let done = false;
+    finish.current = (command) => {
+      if (done) return;
+      done = true;
+      if (element.open) element.close(); // gives the focus back, at once
+      onClose();
+      command?.run();
+    };
     const up = (event: PointerEvent) => {
-      if (pressedOutside && outside(event)) element.close();
+      if (pressedOutside && outside(event)) finish.current();
     };
     if (!("closedBy" in HTMLDialogElement.prototype)) {
       element.addEventListener("pointerdown", down);
       element.addEventListener("pointerup", up);
     }
-    const closed = () => {
-      onClose();
-      const command = chosen.current;
-      chosen.current = null;
-      command?.run();
-    };
+    // Esc and light dismiss: `cancel` comes at once; `close` is the fallback.
+    const closed = () => finish.current();
+    element.addEventListener("cancel", closed);
     element.addEventListener("close", closed);
     element.showModal();
     return () => {
       element.removeEventListener("pointerdown", down);
       element.removeEventListener("pointerup", up);
+      element.removeEventListener("cancel", closed);
       element.removeEventListener("close", closed);
     };
     // Opened once per mount; `onClose` belongs to the mount that opened it.
@@ -84,9 +95,7 @@ export function CommandPalette({ commands, onClose }: { commands: () => Command[
 
   function run(index: number) {
     const command = shown[index];
-    if (!command) return;
-    chosen.current = command;
-    dialog.current?.close();
+    if (command) finish.current(command);
   }
 
   function keyDown(event: KeyboardEvent<HTMLInputElement>) {
@@ -140,7 +149,7 @@ export function CommandPalette({ commands, onClose }: { commands: () => Command[
         <button
           type="button"
           aria-label={t.close}
-          onClick={() => dialog.current?.close()}
+          onClick={() => finish.current()}
           className="flex h-6 items-center rounded-sharp px-1 text-[12px] text-text-secondary hover:bg-shade hover:text-text"
         >
           <kbd className="rounded-sharp border border-hair px-[5px] font-sans text-[11px] leading-4">Esc</kbd>
