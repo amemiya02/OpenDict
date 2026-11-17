@@ -140,7 +140,10 @@ export function ThumbIndex({
         <a
           key={notch.dictionaryId}
           href={`#${sectionId(notch.dictionaryId)}`}
-          title={`Alt+${index + 1}`}
+          // Below 1100px the caption is hidden and only the mark shows: the name and the
+          // tooltip must still say which Dictionary this is.
+          title={`${notch.title} (Alt+${index + 1})`}
+          aria-label={notch.title}
           aria-current={index === current}
           onClick={(event) => {
             event.preventDefault();

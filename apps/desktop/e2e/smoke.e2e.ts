@@ -126,6 +126,11 @@ before(async () => {
   // The main window; the Mini Window (mini.html) is the other page.
   page = await pageOf((url) => !url.endsWith("/mini.html"));
   await page.waitForLoadState();
+  // CI's screen is far smaller than a desktop's; OPENDICT_E2E_VIEWPORT=WxH lays the page
+  // out at another size to reproduce it. The size used is printed either way.
+  const viewport = /^(\d+)x(\d+)$/.exec(process.env.OPENDICT_E2E_VIEWPORT ?? "");
+  if (viewport) await page.setViewportSize({ width: Number(viewport[1]), height: Number(viewport[2]) });
+  console.log("Main window viewport:", await page.evaluate(() => `${innerWidth}x${innerHeight} @${devicePixelRatio}x`));
   // The status line fills in once the Library has been opened.
   await page.waitForFunction(() => Boolean(document.querySelector("footer")?.textContent?.trim()), null, { timeout: 30_000 });
 });
