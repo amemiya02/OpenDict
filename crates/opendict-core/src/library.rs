@@ -769,14 +769,10 @@ impl Library {
             if answering.dictionaries.is_empty() {
                 continue;
             }
-            let found = answering.suggest(query, 1)?;
-            if found.miss || found.near || found.browse {
-                continue;
-            }
-            if let Some(first) = found.items.into_iter().next() {
+            if let Some(headword) = answering.offer(&key)? {
                 return Ok(Some(Elsewhere {
                     group: group.map(str::to_owned),
-                    headword: first.headword,
+                    headword,
                 }));
             }
         }
@@ -964,6 +960,22 @@ struct Answering<'a> {
 }
 
 impl Answering<'_> {
+    /// The headword these Dictionaries offer first for the query `key`, as the column
+    /// would: the query itself when it is a headword, else its base form, else the first
+    /// headword starting with it. Close spellings are not looked for.
+    fn offer(&self, key: &str) -> Result<Option<String>> {
+        let first = self.merged(Start::AtKey(key), 1)?.into_iter().next();
+        if let Some((headword, _)) = first.as_ref().filter(|(h, _)| h.key == key) {
+            return Ok(Some(headword.headword.clone()));
+        }
+        if let Some((base, _)) = self.base_headword(key, false)? {
+            return Ok(Some(base.headword));
+        }
+        Ok(first
+            .filter(|(h, _)| h.key.starts_with(key))
+            .map(|(h, _)| h.headword))
+    }
+
     /// Up to `limit` suggestions for `query`, from enabled Dictionaries: the headwords
     /// whose key starts with the query's, then the headwords that follow them in index
     /// order, like a page of a printed index. A query with wildcards (`*` for any run of

@@ -445,6 +445,43 @@ test("History lists committed Lookups, and Back and Forward retrace them", async
   await page.getByRole("button", { name: "Suggestions" }).click();
 });
 
+test("a Group made in the Library is switched from the cover band, and a miss points back to the whole Library", async () => {
+  const page = browser!.contexts()[0]!.pages()[0]!;
+  const search = page.getByRole("combobox", { name: "Type a word" });
+  const onPage = (headword: string) =>
+    page.waitForFunction((word) => document.querySelector("h1")?.textContent === `【${word}】`, headword, { timeout: 10_000 });
+
+  await page.getByRole("button", { name: "Library", exact: true }).click();
+  await page.getByRole("button", { name: "New Group…" }).click();
+  await page.getByLabel("Group name", { exact: true }).fill("日本語");
+  await page.getByLabel("Group name", { exact: true }).press("Enter");
+  const tick = page.getByRole("checkbox", { name: "サンプル国語辞典 is in Group 日本語" });
+  await tick.click();
+  await page.getByRole("checkbox", { name: "サンプル国語辞典 is in Group 日本語", checked: true }).waitFor({ timeout: 10_000 });
+  await page.getByRole("list", { name: "日本語" }).waitFor({ timeout: 10_000 });
+  if (process.env.OPENDICT_E2E_GROUPS_SCREENSHOT) {
+    await page.screenshot({ path: process.env.OPENDICT_E2E_GROUPS_SCREENSHOT.replace(/\.png$/, "-library.png"), fullPage: true });
+  }
+
+  const switcher = page.getByRole("combobox", { name: "Current Group" });
+  await search.fill("thumb");
+  await search.press("Enter");
+  await onPage("thumb");
+  await switcher.selectOption({ label: "日本語" });
+  // The word stays; only the Group's one Dictionary answers now.
+  await page.getByText("in 1 of 1 dictionary").waitFor({ timeout: 10_000 });
+  await onPage("thumb");
+  assert.equal(await page.getByRole("region").count(), 1);
+
+  await search.fill("serendipity");
+  const offer = page.getByRole("button", { name: "“serendipity” is in Group “All dictionaries”" });
+  await offer.waitFor({ timeout: 10_000 });
+  if (process.env.OPENDICT_E2E_GROUPS_SCREENSHOT) await page.screenshot({ path: process.env.OPENDICT_E2E_GROUPS_SCREENSHOT });
+  await offer.click();
+  await onPage("serendipity");
+  assert.equal(await switcher.inputValue(), "");
+});
+
 // Runs last: unlocking adds a Dictionary, and with it a headword, to the Library.
 test("a Dictionary that needs a registration code opens once the reader enters it", async () => {
   const page = browser!.contexts()[0]!.pages()[0]!;

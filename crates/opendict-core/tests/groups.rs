@@ -397,6 +397,12 @@ fn a_miss_points_to_another_group_that_has_the_word() {
     // Only the whole Library has "banana": B is in no Group.
     let banana = library.elsewhere("banana").unwrap().unwrap();
     assert_eq!((banana.group, banana.headword.as_str()), (None, "banana"));
+    // A headword that starts with it counts; a close spelling does not.
+    assert_eq!(
+        library.elsewhere("bana").unwrap().unwrap().headword,
+        "banana"
+    );
+    assert_eq!(library.elsewhere("bananna").unwrap(), None);
     // Nothing anywhere, a pattern, an empty query: nowhere to point to.
     assert_eq!(library.elsewhere("zzzz").unwrap(), None);
     assert_eq!(library.elsewhere("ban*").unwrap(), None);
