@@ -12,9 +12,13 @@ pub use state::{AppState, EntryView, LibraryView};
 /// kept in memory only (used by tests and development).
 pub const LIBRARY_FOLDER_ENV: &str = "OPENDICT_LIBRARY_FOLDER";
 
-/// Environment variable that overrides the data directory, where the Library file and
-/// preferences are kept (used by tests and development).
+/// Environment variable that overrides the data directory, where the Library file,
+/// preferences and Word Books are kept (used by tests and development).
 pub const DATA_DIR_ENV: &str = "OPENDICT_DATA_DIR";
+
+/// Environment variable naming a folder that Word Books are exported into without asking
+/// the reader where (used by tests).
+pub const EXPORT_DIR_ENV: &str = "OPENDICT_EXPORT_DIR";
 
 pub fn run() {
     tauri::Builder::default()
@@ -56,6 +60,15 @@ pub fn run() {
             commands::move_dictionary,
             commands::register_dictionary,
             commands::set_allow_network,
+            commands::word_books,
+            commands::toggle_word,
+            commands::create_word_book,
+            commands::rename_word_book,
+            commands::delete_word_book,
+            commands::choose_word_book,
+            commands::remove_saved_word,
+            commands::set_word_note,
+            commands::export_word_book,
         ])
         .run(tauri::generate_context!())
         .expect("OpenDict failed to start");

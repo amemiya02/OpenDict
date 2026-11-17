@@ -16,6 +16,15 @@
     "allow-move-dictionary",
     "allow-register-dictionary",
     "allow-set-allow-network",
+    "allow-word-books",
+    "allow-toggle-word",
+    "allow-create-word-book",
+    "allow-rename-word-book",
+    "allow-delete-word-book",
+    "allow-choose-word-book",
+    "allow-remove-saved-word",
+    "allow-set-word-note",
+    "allow-export-word-book",
     "updater:default",
     "process:allow-restart"
   ]

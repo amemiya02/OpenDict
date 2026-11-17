@@ -13,6 +13,15 @@ fn main() {
         "set_dictionary_enabled",
         "move_dictionary",
         "register_dictionary",
+        "word_books",
+        "toggle_word",
+        "create_word_book",
+        "rename_word_book",
+        "delete_word_book",
+        "choose_word_book",
+        "remove_saved_word",
+        "set_word_note",
+        "export_word_book",
     ]);
     tauri_build::try_build(tauri_build::Attributes::new().app_manifest(manifest))
         .expect("failed to run tauri-build");
