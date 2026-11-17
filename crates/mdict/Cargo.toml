@@ -15,8 +15,11 @@ name = "opendict_mdict"
 
 [dependencies]
 adler2 = "2"
+encoding_rs = "0.8"
 flate2.workspace = true
+lzokay = { version = "2", default-features = false, features = ["decompress"] }
 memmap2.workspace = true
+ripemd = "0.2"
 thiserror.workspace = true
 
 [dev-dependencies]

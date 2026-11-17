@@ -64,7 +64,7 @@ impl Mdx {
         let mut reader = Reader::new(&map);
         let header = Header::read(&mut reader)?;
         check_supported(&header)?;
-        let keys = read_key_section(&mut reader)?;
+        let keys = read_key_section(&mut reader, header.encrypted() & 2 != 0)?;
         let records = read_record_section(&mut reader, keys.len())?;
 
         let mut sorted: Vec<usize> = (0..keys.len()).collect();
@@ -181,7 +181,7 @@ fn check_supported(header: &Header) -> Result<()> {
             header.encoding()
         )));
     }
-    if header.encrypted() != 0 {
+    if header.encrypted() & !2 != 0 {
         return Err(Error::Unsupported("encryption".to_owned()));
     }
     Ok(())
@@ -189,7 +189,7 @@ fn check_supported(header: &Header) -> Result<()> {
 
 /// Reads the key section of a version 2.0 file: a 40-byte header with its checksum, the
 /// key block info table, then the key blocks.
-fn read_key_section(reader: &mut Reader<'_>) -> Result<Vec<Key>> {
+fn read_key_section(reader: &mut Reader<'_>, encrypted_index: bool) -> Result<Vec<Key>> {
     let head = reader.take(40)?;
     let checksum = reader.u32_be()?;
     if adler32(head) != checksum {
@@ -204,7 +204,12 @@ fn read_key_section(reader: &mut Reader<'_>) -> Result<Vec<Key>> {
     let info_stored_len = head.size()?;
     let blocks_len = head.size()?;
 
-    let info = block::decompress(reader.take(info_stored_len)?, info_len)?;
+    let stored_info = reader.take(info_stored_len)?;
+    let info = if encrypted_index {
+        block::decompress(&block::decrypt_key_index(stored_info)?, info_len)?
+    } else {
+        block::decompress(stored_info, info_len)?
+    };
     let mut info = Reader::new(&info);
     let mut keys = Vec::with_capacity(entry_count.min(1 << 20));
     let mut blocks_seen = 0usize;

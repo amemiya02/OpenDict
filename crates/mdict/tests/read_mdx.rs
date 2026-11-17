@@ -159,3 +159,22 @@ fn rejects_a_truncated_file() {
 
     assert!(matches!(Mdx::open(&path), Err(Error::Corrupt(_))));
 }
+
+#[test]
+fn opens_a_file_whose_key_index_is_encrypted_without_any_credentials() {
+    let (_dir, path) = write(
+        &MdxBuilder::new()
+            .entry("apple", "<p>a fruit</p>")
+            .entry("banana", "<p>a long fruit</p>")
+            .encrypt_key_index(),
+    );
+
+    let mdx = Mdx::open(&path).unwrap();
+
+    assert_eq!(mdx.header().encrypted(), 2);
+    assert_eq!(mdx.headwords().collect::<Vec<_>>(), ["apple", "banana"]);
+    assert_eq!(
+        mdx.lookup("banana").unwrap(),
+        [Record::Text("<p>a long fruit</p>".into())]
+    );
+}

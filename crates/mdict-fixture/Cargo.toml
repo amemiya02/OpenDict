@@ -9,7 +9,10 @@ rust-version.workspace = true
 repository.workspace = true
 
 [dependencies]
+encoding_rs = "0.8"
 flate2.workspace = true
+lzokay = { version = "2", default-features = false, features = ["compress", "alloc"] }
+ripemd = "0.2"
 
 [lints]
 workspace = true
