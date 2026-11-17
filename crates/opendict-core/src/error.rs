@@ -43,6 +43,11 @@ pub enum Error {
     #[error("cannot read or write the History file {file}: {reason}")]
     History { file: PathBuf, reason: String },
 
+    /// The data directory, or a folder it was being moved to, could not be read or
+    /// written.
+    #[error("cannot use {path} for the data directory: {reason}")]
+    DataDirectory { path: PathBuf, reason: String },
+
     /// No Dictionary in the Library has this key.
     #[error("no Dictionary in the Library has the key {0}")]
     UnknownDictionary(String),
