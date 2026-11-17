@@ -9,4 +9,4 @@ Dictionary apps are routinely repackaged as closed-source clones, so the applica
 ## Consequences
 
 - The parsing library must be a clean implementation written from public descriptions of the format. It cannot be ported from GPL-licensed readers, and its dependencies must be permissively licensed.
-- GPL-3.0 conflicts with the Apple App Store terms. Shipping on iOS later requires either a single copyright holder who can grant a separate licence (so outside contributions need a CLA) or relicensing the application.
+- GPL-3.0 conflicts with the Apple App Store terms, which rules out an iOS version. That was accepted on 2026-11-17: OpenDict ships for desktop (and possibly Android later), never iOS, so contributions need no CLA and the licence carries no app-store exception. Reversing this later would need every contributor's consent.

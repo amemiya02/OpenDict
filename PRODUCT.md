@@ -36,7 +36,7 @@ Every Dictionary in the Current Group answers on one continuous page, each Entry
 
 ## Capabilities and Constraints
 
-First release (v0.1), desktop only (Windows, macOS, Linux); mobile is a later phase:
+First release (v0.1), desktop only (Windows, macOS, Linux); Android may come later, iOS never:
 
 - Library management: Library Folders, enable/disable, ordering, Groups.
 - Lookup as you type: prefix suggestions, all dictionaries of the Current Group at once, results as collapsible per-dictionary cards on one scrolling page with a jump rail.

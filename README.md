@@ -27,7 +27,7 @@ Then open <http://localhost:8000/design/prototype/>. Every entry in the prototyp
 
 ## Planned
 
-- **Desktop.** Windows, macOS and Linux, built on Tauri and Rust. Mobile comes later.
+- **Desktop.** Windows, macOS and Linux, built on Tauri and Rust. Android may follow later.
 - **Reading MDict files.** MDX/MDD versions 1.2 and 2.0, common compressions and encodings, and both kinds of MDict encryption.
 - **Lookup.** Lookup as you type across a Group of dictionaries, with wildcards, fuzzy matching, and inflection handling for English and Japanese.
 - **Reading tools.** History, Word Books with CSV/TSV export, and a Mini Window that looks up selected text from any application.
@@ -71,7 +71,7 @@ python -m http.server 8000
 
 ### 计划
 
-- **桌面端。** Windows、macOS、Linux，基于 Tauri 和 Rust；移动端在后续阶段。
+- **桌面端。** Windows、macOS、Linux，基于 Tauri 和 Rust；之后可能会有 Android 版。
 - **读取 MDict 文件。** 支持 MDX/MDD 1.2 与 2.0 版本、常见压缩和编码，以及两种 MDict 加密。
 - **查词。** 在一组词典里输入即查，支持通配符、模糊匹配，以及英语和日语的词形还原。
 - **阅读工具。** 历史记录、可导出 CSV/TSV 的生词本，以及可在任意应用里查选中文字的迷你窗口。

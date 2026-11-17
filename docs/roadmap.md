@@ -6,7 +6,8 @@ Vocabulary (Dictionary, Library, Group, Entry, Lookup and so on) is defined in [
 
 ## Scope
 
-- **Platforms.** Desktop first: Windows, macOS, Linux. Android and iOS are a later phase, and the core must be reusable there from day one.
+- **Platforms.** Desktop only for now: Windows, macOS, Linux. Android may follow in a later phase, so the core stays free of desktop-only assumptions. There will be no iOS version (decided 2026-11-17).
+- **Contributions.** Accepted under the repository's licences, with no CLA and no extra licence exceptions; without iOS there is no App Store conflict to plan for (see ADR-0001).
 - **MDict compatibility means reading MDict files.**
   - MDX and MDD, format versions 1.2 and 2.0.
   - zlib and LZO compression.
