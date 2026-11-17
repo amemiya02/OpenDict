@@ -135,6 +135,8 @@ impl DataDirectory {
         to: &Path,
         progress: &mut dyn FnMut(MoveProgress) -> ControlFlow<()>,
     ) -> Result<Option<Relocation>> {
+        // Kept as given, apart from being made absolute, so it reads as the reader chose it.
+        let to = &std::path::absolute(to).map_err(|error| failed(to, error))?;
         let here = resolve(&self.path);
         let there = resolve(to);
         if there == here {
@@ -212,11 +214,10 @@ impl DataDirectory {
     /// was, wherever it is. This is how a second computer takes up data from a synced
     /// folder, and how a reader whose data directory has gone chooses another.
     pub fn use_folder(home: &Path, folder: &Path) -> Result<DataDirectory> {
+        let folder = &std::path::absolute(folder).map_err(|error| failed(folder, error))?;
         std::fs::create_dir_all(folder).map_err(|error| failed(folder, error))?;
-        if folder.join(MOVING).exists() {
-            // Only a copy that never finished, or a leftover, is here: not data to use.
-            clear_unfinished(folder).map_err(|error| failed(folder, error))?;
-        }
+        // The reader chose what is here, even a copy that never finished or one left
+        // behind: it is used as it is, never cleared.
         point(home, folder)?;
         DataDirectory::locate(home)
     }
