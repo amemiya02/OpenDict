@@ -20,10 +20,10 @@ use crate::scan::{self, Stamp, Unit};
 /// Every Dictionary the reader has made available: the Dictionaries found in their
 /// Library Folders, in Library order, each enabled or not.
 ///
-/// A Library loaded from a file ([`Library::load`]) records its Library Folders, order
-/// and enabled states there after every change, and keeps the registration codes the
-/// reader enters in `registrations.json` beside it. Its Groups and the Current Group are
-/// recorded there too. Dictionary files are only ever read.
+/// A Library loaded from a file ([`Library::load`]) records its Library Folders, order,
+/// enabled states, Groups and Current Group there after every change, and keeps the
+/// registration codes the reader enters in `registrations.json` beside it. Dictionary
+/// files are only ever read.
 pub struct Library {
     file: Option<PathBuf>,
     /// Where indexes are stored: `indexes` beside the Library file. `None` for a Library
