@@ -26,7 +26,37 @@ pub const EXPORT_DIR_ENV: &str = "OPENDICT_EXPORT_DIR";
 /// for a folder for their data, without asking (used by tests).
 pub const PICK_DATA_FOLDER_ENV: &str = "OPENDICT_PICK_DATA_FOLDER";
 
+/// Environment variable naming the port on which a test build's webviews accept the
+/// DevTools protocol, for the end-to-end tests. Ignored by release builds.
+pub const E2E_DEBUG_PORT_ENV: &str = "OPENDICT_E2E_DEBUG_PORT";
+
+/// Test builds on Windows only: every window's webview opens the DevTools protocol on the
+/// port the end-to-end tests asked for. All webviews sharing a WebView2 browser need the
+/// same arguments, so every window gets them. Tauri's own default arguments are kept,
+/// since a value of ours replaces them.
+#[cfg(all(windows, debug_assertions))]
+fn open_e2e_debug_port(context: &mut tauri::Context<tauri::Wry>) {
+    let Some(port) = std::env::var(E2E_DEBUG_PORT_ENV)
+        .ok()
+        .and_then(|port| port.parse::<u16>().ok())
+    else {
+        return;
+    };
+    let args = format!(
+        "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection \
+         --remote-debugging-port={port} --lang=en-US"
+    );
+    for window in &mut context.config_mut().app.windows {
+        window.additional_browser_args = Some(args.clone());
+    }
+}
+
 pub fn run() {
+    #[allow(unused_mut)]
+    let mut context = tauri::generate_context!();
+    #[cfg(all(windows, debug_assertions))]
+    open_e2e_debug_port(&mut context);
+
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_process::init())
@@ -117,6 +147,6 @@ pub fn run() {
             commands::set_shortcut,
             commands::set_watch_clipboard,
         ])
-        .run(tauri::generate_context!())
+        .run(context)
         .expect("OpenDict failed to start");
 }

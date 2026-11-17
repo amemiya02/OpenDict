@@ -93,7 +93,10 @@ before(async () => {
       // A WebView2 browser of our own: instances sharing a user data folder share one
       // browser process, and with it the debugging port of whichever started first.
       WEBVIEW2_USER_DATA_FOLDER: join(scratch, "webview"),
-      // English interface, whatever the system language, so the test can find controls by name.
+      // The test build puts the DevTools port (and an English interface, so the test can
+      // find controls by name) into every window's own WebView2 arguments.
+      OPENDICT_E2E_DEBUG_PORT: String(port),
+      // The same through WebView2's own variable, which some machines ignore.
       WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: `--remote-debugging-port=${port} --lang=en-US`,
     },
     stdio: "inherit",
@@ -111,7 +114,9 @@ before(async () => {
         // What is running, and whether a dialog (an error, a missing runtime) holds the app.
         try {
           console.error(execFileSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command",
-            "Get-Process | Where-Object { $_.ProcessName -match 'opendict|msedgewebview2|WerFault' } | Format-Table ProcessName,Id,MainWindowTitle -AutoSize | Out-String -Width 200"], { encoding: "utf8" }));
+            "Get-Process | Where-Object { $_.ProcessName -match 'opendict|msedgewebview2|WerFault' } | Format-Table ProcessName,Id,MainWindowTitle -AutoSize | Out-String -Width 200; " +
+            "Get-CimInstance Win32_Process -Filter \"Name='msedgewebview2.exe'\" | Where-Object { $_.CommandLine -notmatch '--type=' } | ForEach-Object { $_.CommandLine }; " +
+            "Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue | Where-Object { $_.LocalPort -eq " + port + " } | Format-Table -AutoSize | Out-String"], { encoding: "utf8" }));
         } catch { /* only a diagnostic */ }
         throw new Error(`the app at ${appPath} is running but its webview opened no debugging port ${port} within 60 s`, { cause: error });
       }
