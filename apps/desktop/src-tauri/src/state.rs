@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, MutexGuard};
 
-use opendict_core::{Library, Move, OpenError};
+use opendict_core::{Library, Move, OpenError, Suggestion};
 use serde::{Deserialize, Serialize};
 
 /// What the shell holds between commands: the Library, or why it could not be loaded.
@@ -17,6 +17,33 @@ pub struct EntryView {
     pub dictionary_title: String,
     /// Untrusted HTML; the interface renders it only inside a sandboxed frame.
     pub html: String,
+}
+
+/// What the headword column offers for a query: the Lookup result shape settled by the
+/// prototype (`design/prototype/core.js`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SuggestionsView {
+    pub items: Vec<SuggestionView>,
+    pub lemma: Option<LemmaView>,
+    pub near: bool,
+    pub miss: bool,
+    pub browse: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SuggestionView {
+    pub headword: String,
+    /// How many enabled Dictionaries file the headword.
+    pub count: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LemmaView {
+    pub from: String,
+    pub to: String,
 }
 
 /// The Library as the Library view shows it.
@@ -130,6 +157,49 @@ impl AppState {
             .collect())
     }
 
+    /// Up to `limit` suggestions for `query`. Without a Library there are none.
+    pub fn suggest(&self, query: &str, limit: usize) -> Result<SuggestionsView, String> {
+        let guard = self.lock();
+        let Ok(library) = &*guard else {
+            return Ok(SuggestionsView {
+                items: Vec::new(),
+                lemma: None,
+                near: false,
+                miss: !query.trim().is_empty(),
+                browse: query.trim().is_empty(),
+            });
+        };
+        let suggestions = library
+            .suggest(query, limit)
+            .map_err(|error| error.to_string())?;
+        Ok(SuggestionsView {
+            items: suggestions.items.into_iter().map(suggestion).collect(),
+            lemma: suggestions.lemma.map(|lemma| LemmaView {
+                from: lemma.from,
+                to: lemma.to,
+            }),
+            near: suggestions.near,
+            miss: suggestions.miss,
+            browse: suggestions.browse,
+        })
+    }
+
+    /// Up to `limit` headwords after `headword`: the headword column, continued.
+    pub fn headwords_after(
+        &self,
+        headword: &str,
+        limit: usize,
+    ) -> Result<Vec<SuggestionView>, String> {
+        let guard = self.lock();
+        let Ok(library) = &*guard else {
+            return Ok(Vec::new());
+        };
+        let items = library
+            .headwords_after(headword, limit)
+            .map_err(|error| error.to_string())?;
+        Ok(items.into_iter().map(suggestion).collect())
+    }
+
     pub fn library(&self) -> LibraryView {
         view(&self.lock())
     }
@@ -201,6 +271,13 @@ fn view(library: &Result<Library, String>) -> LibraryView {
             })
             .collect(),
         problem: None,
+    }
+}
+
+fn suggestion(item: Suggestion) -> SuggestionView {
+    SuggestionView {
+        headword: item.headword,
+        count: item.count,
     }
 }
 
@@ -279,6 +356,40 @@ mod tests {
                 "html": "<p>a happy accident (sample)</p>"
             }])
         );
+    }
+
+    #[test]
+    fn suggestions_reach_the_interface_in_the_lookup_result_shape() {
+        let data = tempfile::tempdir().unwrap();
+        let folder = library_folder();
+        let state = AppState::load(&data.path().join("library.json"), None);
+        state.add_folder(folder.path()).unwrap();
+
+        assert_eq!(
+            serde_json::to_value(state.suggest("ser", 50).unwrap()).unwrap(),
+            json!({
+                "items": [{ "headword": "serendipity", "count": 1 }],
+                "lemma": null,
+                "near": false,
+                "miss": false,
+                "browse": false
+            })
+        );
+        assert_eq!(
+            serde_json::to_value(state.headwords_after("apple", 50).unwrap()).unwrap(),
+            json!([{ "headword": "serendipity", "count": 1 }])
+        );
+    }
+
+    #[test]
+    fn without_a_library_there_is_nothing_to_suggest() {
+        let data = tempfile::tempdir().unwrap();
+
+        let state = AppState::load(&data.path().join("library.json"), None);
+
+        let suggestions = state.suggest("", 50).unwrap();
+        assert!(suggestions.browse && suggestions.items.is_empty());
+        assert_eq!(state.headwords_after("a", 50).unwrap(), []);
     }
 
     #[test]

@@ -3,6 +3,8 @@ fn main() {
     // capabilities/, so nothing is callable by accident.
     let manifest = tauri_build::AppManifest::new().commands(&[
         "look_up",
+        "suggest",
+        "headwords_after",
         "library",
         "add_library_folder",
         "remove_library_folder",

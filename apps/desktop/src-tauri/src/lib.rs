@@ -22,6 +22,8 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             commands::look_up,
+            commands::suggest,
+            commands::headwords_after,
             commands::library,
             commands::add_library_folder,
             commands::remove_library_folder,
