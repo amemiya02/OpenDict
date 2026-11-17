@@ -6,10 +6,12 @@
 mod error;
 mod format;
 mod library;
+mod registrations;
 mod scan;
 
 pub use error::{Error, Result};
 pub use format::{
     DictionaryFormat, DictionaryReader, FormatError, MdictFormat, OpenError, RawRecord,
+    Registration,
 };
 pub use library::{DictionaryInfo, Entry, Library, LibraryFolder, Move, OpenFailure};

@@ -19,6 +19,15 @@ pub enum Error {
     #[error("no Dictionary in the Library has the key {0}")]
     UnknownDictionary(String),
 
+    /// The registration code or e-mail entered does not unlock the Dictionary at this path.
+    #[error("the registration code or e-mail does not unlock {0}")]
+    WrongRegistration(PathBuf),
+
+    /// Only an e-mail was entered, and the Dictionary at this path does not carry its
+    /// registration code.
+    #[error("{0} needs its registration code as well as the e-mail")]
+    RegistrationCodeNeeded(PathBuf),
+
     /// A Dictionary failed while answering a Lookup.
     #[error("{dictionary}: {reason}")]
     Dictionary { dictionary: String, reason: String },
