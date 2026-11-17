@@ -33,7 +33,14 @@ pub(crate) fn decompress(block: &[u8], expected_len: usize) -> Result<Vec<u8>> {
                 .map_err(|_| Error::Corrupt("a zlib block does not decompress"))?;
             data
         }
-        1 => return Err(Error::Unsupported("LZO compression".to_owned())),
+        1 => {
+            // A raw LZO1X stream; the output buffer is exactly the size the index states.
+            let mut data = vec![0; expected_len];
+            let len = lzokay::decompress::decompress(payload, &mut data)
+                .map_err(|_| Error::Corrupt("an LZO block does not decompress"))?;
+            data.truncate(len);
+            data
+        }
         other => return Err(Error::Unsupported(format!("block type {other:#x}"))),
     };
 
