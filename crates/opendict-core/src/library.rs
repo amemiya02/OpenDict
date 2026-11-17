@@ -83,6 +83,24 @@ pub struct Entry {
     pub html: String,
 }
 
+impl Entry {
+    /// The audio the Entry offers: the targets of its `sound://` links, in the order they
+    /// appear, as paths inside the Dictionary written the way the Entry writes them
+    /// (`uk/apple.mp3`, `us\apple.mp3`).
+    pub fn sounds(&self) -> Vec<String> {
+        crate::links::href_values(&self.html)
+            .filter_map(|href| strip_prefix_ignore_case(&href, "sound://").map(str::to_owned))
+            .filter(|path| !path.is_empty())
+            .collect()
+    }
+}
+
+fn strip_prefix_ignore_case<'a>(text: &'a str, prefix: &str) -> Option<&'a str> {
+    let head = text.get(..prefix.len())?;
+    head.eq_ignore_ascii_case(prefix)
+        .then(|| &text[prefix.len()..])
+}
+
 /// A step in Library order.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Move {

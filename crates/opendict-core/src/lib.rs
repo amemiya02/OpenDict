@@ -6,6 +6,7 @@
 mod error;
 mod format;
 mod library;
+mod links;
 mod preferences;
 mod scan;
 

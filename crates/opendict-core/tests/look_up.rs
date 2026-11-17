@@ -132,3 +132,104 @@ fn names_an_untitled_dictionary_after_its_file() {
         "pocket"
     );
 }
+
+#[test]
+fn follows_a_redirect_chain_to_its_end() {
+    let folder = tempfile::tempdir().unwrap();
+    let mut dictionary = MdxBuilder::new().entry("end", "<p>the real Entry</p>");
+    for hop in 1..=6 {
+        let target = if hop == 1 {
+            "end".to_owned()
+        } else {
+            format!("hop{}", hop - 1)
+        };
+        dictionary = dictionary.link(&format!("hop{hop}"), &target);
+    }
+    put(folder.path(), "sample.mdx", &dictionary);
+
+    let library = Library::open(folder.path()).unwrap();
+
+    assert_eq!(
+        library.look_up("hop6").unwrap()[0].html,
+        "<p>the real Entry</p>"
+    );
+}
+
+#[test]
+fn gives_up_on_redirects_that_loop_or_lead_nowhere() {
+    let folder = tempfile::tempdir().unwrap();
+    let mut dictionary = MdxBuilder::new()
+        .entry("apple", "<p>a fruit</p>")
+        .link("self", "self")
+        .link("into", "loop-a")
+        .link("loop-a", "loop-b")
+        .link("loop-b", "loop-a")
+        .link("dangling", "nowhere");
+    // A chain far longer than any real Dictionary uses, with no cycle in it.
+    for hop in 1..=40 {
+        dictionary = dictionary.link(&format!("long{hop}"), &format!("long{}", hop + 1));
+    }
+    dictionary = dictionary.link("long41", "apple");
+    put(folder.path(), "sample.mdx", &dictionary);
+
+    let library = Library::open(folder.path()).unwrap();
+
+    for headword in ["self", "into", "loop-a", "dangling", "long1"] {
+        assert_eq!(library.look_up(headword).unwrap(), [], "{headword}");
+    }
+    assert_eq!(library.look_up("long41").unwrap()[0].html, "<p>a fruit</p>");
+}
+
+#[test]
+fn a_redirect_inside_one_dictionary_does_not_reach_another() {
+    let folder = tempfile::tempdir().unwrap();
+    put(
+        folder.path(),
+        "a.mdx",
+        &MdxBuilder::new().title("A").link("color", "colour"),
+    );
+    put(
+        folder.path(),
+        "b.mdx",
+        &MdxBuilder::new()
+            .title("B")
+            .entry("colour", "<p>from B</p>"),
+    );
+
+    let library = Library::open(folder.path()).unwrap();
+
+    let answered: Vec<_> = library
+        .look_up("color")
+        .unwrap()
+        .into_iter()
+        .map(|e| e.dictionary_title)
+        .collect();
+    assert!(answered.is_empty(), "{answered:?}");
+}
+
+#[test]
+fn an_entry_lists_the_audio_it_offers_in_order() {
+    let folder = tempfile::tempdir().unwrap();
+    put(
+        folder.path(),
+        "sample.mdx",
+        &MdxBuilder::new()
+            .entry(
+                "apple",
+                r#"<a href="sound://uk/apple.mp3"><img src="uk.png"></a>
+                   <a class="us" href='SOUND://us\apple.mp3'>US</a>
+                   <a href=sound://a&amp;b.spx>both</a>
+                   <a href="entry://pear">pear</a>
+                   <p>a sound:// in prose is not a link</p>"#,
+            )
+            .entry("pear", "<p>no audio</p>"),
+    );
+
+    let library = Library::open(folder.path()).unwrap();
+
+    assert_eq!(
+        library.look_up("apple").unwrap()[0].sounds(),
+        ["uk/apple.mp3", r"us\apple.mp3", "a&b.spx"]
+    );
+    assert!(library.look_up("pear").unwrap()[0].sounds().is_empty());
+}
