@@ -15,6 +15,9 @@
     "allow-set-dictionary-enabled",
     "allow-move-dictionary",
     "allow-set-allow-network",
+    "allow-history",
+    "allow-record-lookup",
+    "allow-clear-history",
     "updater:default",
     "process:allow-restart"
   ]
