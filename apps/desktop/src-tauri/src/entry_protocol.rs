@@ -121,10 +121,11 @@ fn content_policy(dictionary_id: &str, allow_network: bool) -> Vec<(header::Head
     ]
 }
 
-/// Reports the document's height to the app so the frame can fit its content, and hands
-/// the app the reader's clicks on `entry://` and `sound://` links, which the frame cannot
-/// follow itself. The app accepts only these three message shapes, only from the frame it
-/// made, and checks every field (see EntryFrame.tsx). A link to an anchor in the same
+/// Reports the document's height to the app so the frame can fit its content, hands the
+/// app the reader's clicks on `entry://` and `sound://` links, which the frame cannot
+/// follow itself, and passes Esc on (the Mini Window closes on it). The app accepts only
+/// these four message shapes, only from the frame it made, and checks every field (see
+/// EntryFrame.tsx). A link to an anchor in the same
 /// Entry (`entry://#sense2`) stays in the frame. A click the Dictionary's own scripts
 /// already handled (`preventDefault`) is left alone.
 const FRAME_SCRIPT: &str = r#"(()=>{
@@ -139,6 +140,7 @@ const kind=m[1].toLowerCase(),rest=href.slice(m[0].length);
 if(kind==="entry"&&rest.charAt(0)==='#'){let id=rest.slice(1);try{id=decodeURIComponent(id)}catch{}
 const t=document.getElementById(id)||document.getElementsByName(id)[0];if(t)t.scrollIntoView();return}
 parent.postMessage({opendict:kind==="entry"?"link":"sound",href},"*")});
+addEventListener("keydown",e=>{if(e.key==="Escape"&&!e.isComposing&&!e.defaultPrevented)parent.postMessage({opendict:"escape"},"*")});
 })();"#;
 
 /// Wraps Entry HTML in a document of its own. The app sets no type inside it (the

@@ -40,7 +40,9 @@ pub fn capture<C: Clipboard, K: Keyboard>(
     let saved = match clipboard.save() {
         Ok(saved) => saved,
         Err(error) => {
-            eprintln!("OpenDict: the clipboard could not be saved, so nothing was copied ({error})");
+            eprintln!(
+                "OpenDict: the clipboard could not be saved, so nothing was copied ({error})"
+            );
             return None;
         }
     };

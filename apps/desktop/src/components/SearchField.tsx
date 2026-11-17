@@ -1,4 +1,4 @@
-import type { FormEvent, KeyboardEvent, SyntheticEvent } from "react";
+import type { FormEvent, KeyboardEvent, Ref, SyntheticEvent } from "react";
 import { useI18n } from "../i18n";
 import { LIST_ID } from "./HeadwordColumn";
 
@@ -22,6 +22,8 @@ export function SearchField({
   onCommit,
   onEscape,
   onBlur,
+  compact = false,
+  inputRef,
 }: {
   value: string;
   /** The id of the current suggestion, if any. */
@@ -35,6 +37,12 @@ export function SearchField({
   /** Esc, outside an IME composition. */
   onEscape?: () => void;
   onBlur?: () => void;
+  /**
+   * The Mini Window's field: it fills its band, sets the query a size smaller and drives
+   * no headword column (a search box, not a combobox).
+   */
+  compact?: boolean;
+  inputRef?: Ref<HTMLInputElement>;
 }) {
   const { t } = useI18n();
 
@@ -63,7 +71,7 @@ export function SearchField({
       // On macOS the cover band drags the window; the slip of paper set into it does not.
       data-tauri-drag-region="false"
       onSubmit={submit}
-      className="flex h-8 w-[620px] min-w-0 shrink items-center gap-xs rounded-sharp bg-field pr-1.5 pl-0.75 text-field-text focus-within:outline focus-within:outline-offset-1 focus-within:outline-on-cover"
+      className={`${compact ? "h-7 flex-1" : "h-8 w-[620px] shrink"} flex min-w-0 items-center gap-xs rounded-sharp bg-field pr-1.5 pl-0.75 text-field-text focus-within:outline focus-within:outline-offset-1 focus-within:outline-on-cover`}
     >
       <button
         type="submit"
@@ -76,13 +84,12 @@ export function SearchField({
         </svg>
       </button>
       <input
+        ref={inputRef}
         type="text"
-        role="combobox"
         aria-label={t.searchLabel}
-        aria-controls={LIST_ID}
-        aria-expanded="true"
-        aria-autocomplete="list"
-        aria-activedescendant={activeOption}
+        {...(compact
+          ? { role: "searchbox" }
+          : { role: "combobox", "aria-controls": LIST_ID, "aria-expanded": true, "aria-autocomplete": "list" as const, "aria-activedescendant": activeOption })}
         placeholder={t.searchPlaceholder}
         value={value}
         onChange={(event) => {
@@ -96,7 +103,7 @@ export function SearchField({
         autoCapitalize="off"
         spellCheck={false}
         autoFocus
-        className="h-full min-w-0 flex-1 bg-transparent px-1 font-serif text-search outline-0 placeholder:font-sans placeholder:text-[14px] placeholder:text-field-text-secondary"
+        className={`h-full min-w-0 flex-1 bg-transparent px-1 font-serif ${compact ? "text-[15px]" : "text-search"} outline-0 placeholder:font-sans placeholder:text-[14px] placeholder:text-field-text-secondary`}
       />
     </form>
   );

@@ -19,6 +19,20 @@
         "minWidth": 480,
         "minHeight": 360,
         "create": false
+      },
+      {
+        "label": "mini",
+        "url": "mini.html",
+        "title": "OpenDict Mini Window",
+        "width": 408,
+        "height": 468,
+        "resizable": false,
+        "decorations": false,
+        "shadow": true,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "visible": false,
+        "create": false
       }
     ],
     "security": {

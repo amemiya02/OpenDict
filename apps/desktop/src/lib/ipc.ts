@@ -274,3 +274,68 @@ export function recordLookup(headword: string): Promise<string[]> {
 export function clearHistory(): Promise<void> {
   return invoke<void>("clear_history");
 }
+
+/** Calls `handler` with the Word Books whenever a window saves a word or takes one out. */
+export function onWordBooksChanged(handler: (books: WordBooks) => void): Promise<UnlistenFn> {
+  return listen<WordBooks>("word-books", (event) => handler(event.payload));
+}
+
+// The Mini Window (apps/desktop/src-tauri/src/mini/mod.rs).
+
+/** What the Mini Window is to look up. `serial` tells two summonses of the same text apart. */
+export interface Summons {
+  text: string;
+  serial: number;
+}
+
+/** The latest summons, for a Mini Window that loaded after it was sent. */
+export function miniSummons(): Promise<Summons | null> {
+  return invoke<Summons | null>("mini_summons");
+}
+
+/** Calls `handler` each time the Mini Window is summoned (by the shortcut or clipboard watching). */
+export function onSummoned(handler: (summons: Summons) => void): Promise<UnlistenFn> {
+  return listen<Summons>("mini-summoned", (event) => handler(event.payload));
+}
+
+/** Closes the Mini Window and gives focus back to where the reader was. */
+export function closeMini(): Promise<void> {
+  return invoke<void>("close_mini");
+}
+
+/** Closes the Mini Window and looks `headword` up in the main window, brought forward. */
+export function openInMain(headword: string): Promise<void> {
+  return invoke<void>("open_in_main", { headword });
+}
+
+/** Calls `handler` in the main window with a headword the Mini Window hands over. */
+export function onOpenInMain(handler: (headword: string) => void): Promise<UnlistenFn> {
+  return listen<string>("open-in-main", (event) => handler(event.payload));
+}
+
+export type ShortcutRole = "lookUpSelection" | "showMainWindow";
+
+/** The Mini Window's settings. Shortcuts are accelerators such as `Control+Alt+KeyD`; null is off. */
+export interface MiniSettings {
+  lookUpSelection: string | null;
+  showMainWindow: string | null;
+  /** Looks up whatever the reader copies. Off by default. */
+  watchClipboard: boolean;
+  /** Shortcuts another application already has. */
+  unavailable: ShortcutRole[];
+  /** Why the settings file could not be read, if it could not. */
+  problem: string | null;
+}
+
+export function getMiniSettings(): Promise<MiniSettings> {
+  return invoke<MiniSettings>("mini_settings");
+}
+
+/** Changes a global shortcut; null turns it off. Rejects with the reason when it is refused. */
+export function setShortcut(role: ShortcutRole, accelerator: string | null): Promise<MiniSettings> {
+  return invoke<MiniSettings>("set_shortcut", { role, accelerator });
+}
+
+export function setWatchClipboard(on: boolean): Promise<MiniSettings> {
+  return invoke<MiniSettings>("set_watch_clipboard", { on });
+}

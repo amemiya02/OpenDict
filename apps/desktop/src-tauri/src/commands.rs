@@ -10,6 +10,8 @@ use tauri_plugin_dialog::DialogExt;
 use opendict_core::ExportFormat;
 
 use crate::EXPORT_DIR_ENV;
+use crate::mini::settings::Role;
+use crate::mini::{self, Mini, MiniSettingsView, Summons};
 use crate::state::{
     AppState, Direction, EntryView, LibraryView, RegisterError, SuggestionView, SuggestionsView,
     WordBooksView,
@@ -174,14 +176,21 @@ pub fn word_books(state: State<'_, AppState>) -> Result<WordBooksView, String> {
 /// in the reader's language, names the Word Book made for the first word.
 #[tauri::command]
 pub fn toggle_word(
+    app: AppHandle,
     state: State<'_, AppState>,
     headword: String,
     dictionary_id: String,
     dictionary_title: String,
     new_book_name: String,
 ) -> Result<WordBooksView, String> {
-    state.toggle_word(&headword, &dictionary_id, &dictionary_title, &new_book_name)
+    let view = state.toggle_word(&headword, &dictionary_id, &dictionary_title, &new_book_name)?;
+    // The other window (main or Mini) shows the word as saved too.
+    let _ = app.emit(WORD_BOOKS_EVENT, &view);
+    Ok(view)
 }
+
+/// The event that carries the Word Books to every window after a word is saved or taken out.
+pub const WORD_BOOKS_EVENT: &str = "word-books";
 
 #[tauri::command]
 pub fn create_word_book(state: State<'_, AppState>, name: String) -> Result<WordBooksView, String> {
@@ -279,4 +288,43 @@ fn file_name(name: &str) -> String {
     } else {
         safe.to_owned()
     }
+}
+
+/// The latest summons of the Mini Window, for a Mini Window that loaded after it.
+#[tauri::command]
+pub fn mini_summons(mini: State<'_, Mini>) -> Option<Summons> {
+    mini.last()
+}
+
+/// Esc in the Mini Window: it goes, and focus goes back to where the reader was.
+#[tauri::command]
+pub fn close_mini(app: AppHandle) {
+    mini::close(&app);
+}
+
+/// "Open in main window" from the Mini Window.
+#[tauri::command]
+pub fn open_in_main(app: AppHandle, headword: String) {
+    mini::open_in_main(&app, &headword);
+}
+
+#[tauri::command]
+pub fn mini_settings(mini: State<'_, Mini>) -> MiniSettingsView {
+    mini.view()
+}
+
+/// Changes one of the global shortcuts; `None` turns it off. Async: registering waits for
+/// the main thread.
+#[tauri::command]
+pub async fn set_shortcut(
+    app: AppHandle,
+    role: Role,
+    accelerator: Option<String>,
+) -> Result<MiniSettingsView, String> {
+    mini::set_shortcut(&app, role, accelerator.as_deref())
+}
+
+#[tauri::command]
+pub fn set_watch_clipboard(app: AppHandle, on: bool) -> Result<MiniSettingsView, String> {
+    mini::set_watch_clipboard(&app, on)
 }

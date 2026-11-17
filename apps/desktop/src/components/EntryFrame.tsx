@@ -15,9 +15,10 @@ const MAX_HEIGHT = 200_000;
  * scripts but has an opaque origin: no access to the app, Tauri IPC, storage or other
  * Dictionaries. The app sets no type inside it (the Hands-Off Entry Rule).
  *
- * The frame's document can say three things, by message, and nothing else: its height,
- * an `entry://` link the reader clicked (`onLink` gets the headword) and a `sound://` link
- * the reader clicked (`onSound` gets a URL beneath this frame's own Dictionary). Messages
+ * The frame's document can say four things, by message, and nothing else: its height,
+ * an `entry://` link the reader clicked (`onLink` gets the headword), a `sound://` link
+ * the reader clicked (`onSound` gets a URL beneath this frame's own Dictionary) and Esc
+ * pressed while the focus is in it (`onEscape`, which the Mini Window closes on). Messages
  * from any other window, of any other shape, or (for links) with no reader action in this
  * frame behind them are dropped.
  */
@@ -26,11 +27,13 @@ export function EntryFrame({
   src,
   onLink,
   onSound,
+  onEscape,
 }: {
   dictionaryTitle: string;
   src: string;
   onLink?: (headword: string) => void;
   onSound?: (url: string) => void;
+  onEscape?: () => void;
 }) {
   const { t } = useI18n();
   const frame = useRef<HTMLIFrameElement>(null);
@@ -61,6 +64,11 @@ export function EntryFrame({
         if (headword !== null) onLink?.(headword);
         return;
       }
+      case "escape":
+        // Esc is no user activation; that the reader's focus is in this frame is enough
+        // for something as harmless as closing the Mini Window.
+        if (document.activeElement === frame.current) onEscape?.();
+        return;
       case "sound": {
         if (typeof message.href !== "string" || !/^sound:\/\//i.test(message.href) || !readerActedHere()) return;
         const url = soundUrl(src, message.href);

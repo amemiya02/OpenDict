@@ -179,7 +179,8 @@ impl MiniSettings {
 
 /// A shortcut the reader may use: a modifier and one other key.
 fn parse(text: &str) -> Result<Shortcut, String> {
-    let shortcut = Shortcut::from_str(text).map_err(|error| format!("{text} is not a shortcut ({error})"))?;
+    let shortcut =
+        Shortcut::from_str(text).map_err(|error| format!("{text} is not a shortcut ({error})"))?;
     if shortcut.mods.is_empty() {
         return Err(format!("{text} needs Ctrl, Alt, Shift or ⌘ with it"));
     }
@@ -204,7 +205,11 @@ pub fn accelerator(shortcut: Shortcut) -> String {
 }
 
 fn problem(file: &Path, error: impl ToString) -> String {
-    format!("{} could not be read or saved: {}", file.display(), error.to_string())
+    format!(
+        "{} could not be read or saved: {}",
+        file.display(),
+        error.to_string()
+    )
 }
 
 #[cfg(test)]
@@ -219,7 +224,7 @@ mod tests {
 
     #[test]
     fn by_default_ctrl_alt_d_looks_up_ctrl_alt_o_shows_the_main_window_and_the_clipboard_is_not_watched()
-    {
+     {
         let dir = tempfile::tempdir().unwrap();
         let settings = settings_in(&dir);
         assert_eq!(
@@ -231,7 +236,10 @@ mod tests {
             Some(Shortcut::from_str("CommandOrControl+Alt+O").unwrap())
         );
         assert!(!settings.watch_clipboard());
-        assert!(!dir.path().join(FILE_NAME).exists(), "nothing is written until a change");
+        assert!(
+            !dir.path().join(FILE_NAME).exists(),
+            "nothing is written until a change"
+        );
     }
 
     #[test]

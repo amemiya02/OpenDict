@@ -1,6 +1,7 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useEffectEvent, useRef, useState, type ReactNode } from "react";
 import { EntryFrame } from "./components/EntryFrame";
 import { COLUMN_ID, HeadwordColumn, optionId, type ColumnItem, type ColumnList } from "./components/HeadwordColumn";
+import { MiniWindowSettings } from "./components/MiniWindowSettings";
 import { NavButtons } from "./components/NavButtons";
 import { RecentLookups } from "./components/RecentLookups";
 import { sectionId, ThumbIndex } from "./components/ThumbIndex";
@@ -37,6 +38,8 @@ import {
   setWordNote,
   toggleWord,
   windowChrome,
+  onOpenInMain,
+  onWordBooksChanged,
   type Entry,
   type Library,
   type RegisterError,
@@ -244,6 +247,16 @@ export function App() {
     void commit(headword);
     column.refresh(headword).catch(() => {});
   }
+
+  // The Mini Window hands a word over ("Open in main window"), and either window may save
+  // a word to the Word Book.
+  const openedFromMini = useEffectEvent((headword: string) => followLink(headword));
+  useEffect(() => {
+    const stops = [onOpenInMain((headword) => openedFromMini(headword)), onWordBooksChanged((books) => setWordBooks(books))];
+    return () => {
+      for (const stop of stops) stop.then((unlisten) => unlisten(), () => {});
+    };
+  }, []);
 
   /** The reader chose a way forward from a miss: a pattern to try or a headword. */
   function search(text: string) {
@@ -520,7 +533,10 @@ export function App() {
       <div className="grid min-h-0 grid-cols-[minmax(0,1fr)_auto] bg-paper">
         <main ref={pageRef} aria-label={t.pageLabel} className="min-h-0 overflow-y-auto pt-[18px] pr-[30px] pb-12 pl-xl">
           {view === "library" && library ? (
-            <LibraryPage library={library} busy={busy} notice={notice} actions={actions} />
+            <>
+              <LibraryPage library={library} busy={busy} notice={notice} actions={actions} />
+              <MiniWindowSettings />
+            </>
           ) : view === "wordBook" ? (
             <WordBookPage wordBooks={wordBooks ?? { books: [], current: null }} busy={busy} notice={bookNotice} actions={bookActions} />
           ) : (

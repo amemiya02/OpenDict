@@ -26,6 +26,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_process::init())
+        .plugin(mini::shortcut_plugin())
         .register_asynchronous_uri_scheme_protocol(
             entry_protocol::SCHEME,
             |context, request, responder| {
@@ -52,6 +53,7 @@ pub fn run() {
             app.manage(state);
             let chrome = window::build_main(app)?;
             app.manage(chrome);
+            mini::set_up(app, &data_dir)?;
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -81,6 +83,12 @@ pub fn run() {
             commands::record_lookup,
             commands::clear_history,
             window::window_chrome,
+            commands::mini_summons,
+            commands::close_mini,
+            commands::open_in_main,
+            commands::mini_settings,
+            commands::set_shortcut,
+            commands::set_watch_clipboard,
         ])
         .run(tauri::generate_context!())
         .expect("OpenDict failed to start");
