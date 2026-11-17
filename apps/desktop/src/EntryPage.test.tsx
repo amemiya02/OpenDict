@@ -7,7 +7,7 @@ import { I18nProvider } from "./i18n";
 import type { Dictionary, Entry, Library } from "./lib/ipc";
 
 function dictionary(id: string, title: string, enabled = true): Dictionary {
-  return { id, title, path: `D:\\Dictionaries\\${id}.mdx`, entryCount: 100, size: 1024, enabled };
+  return { id, title, path: `D:\\Dictionaries\\${id}.mdx`, entryCount: 100, size: 1024, enabled, index: { state: "ready" } };
 }
 
 const library: Library = {
@@ -19,11 +19,12 @@ const library: Library = {
     dictionary("off", "Switched Off", false),
   ],
   failures: [],
+  indexing: null,
   problem: null,
 };
 
 function entry(id: string, title: string, pronunciation: string | null = null): Entry {
-  return { dictionaryId: id, dictionaryTitle: title, src: `http://odentry.localhost/${id}/?headword=serendipity`, allowNetwork: false, pronunciation };
+  return { dictionaryId: id, dictionaryTitle: title, src: `http://odentry.localhost/${id}/?headword=serendipity`, allowNetwork: false, sound: null, pronunciation };
 }
 
 /** "serendipity" is in two of the three enabled Dictionaries. */
@@ -44,7 +45,7 @@ function fakeShell() {
     }
     if (command === "headwords_after") return [];
     throw new Error(`unexpected command ${command}`);
-  });
+  }, { shouldMockEvents: true });
 }
 
 async function lookUp(word: string) {

@@ -6,12 +6,17 @@ import { EmptyLibrary, LibraryPage, OutlineButton, type LibraryActions } from ".
 import { SearchField } from "./components/SearchField";
 import { UpdateNotice } from "./components/UpdateNotice";
 import { useI18n } from "./i18n";
+import { soundUrl } from "./lib/entryLinks";
+import { playSound } from "./lib/sound";
 import {
   addLibraryFolder,
+  cancelIndexing,
   getLibrary,
+  indexLibrary,
   lookUp,
   moveDictionary,
   registerDictionary,
+  onLibraryChanged,
   removeLibraryFolder,
   rescanLibrary,
   setAllowNetwork,
@@ -21,13 +26,16 @@ import {
   type Library,
   type RegisterError,
   type WindowChrome,
+  type Suggestion,
 } from "./lib/ipc";
 import { useHeadwordColumn } from "./lib/useHeadwordColumn";
+import { wildcardHint } from "./lib/wildcard";
 
 type PageState =
   | { kind: "idle" }
   | { kind: "found"; headword: string; entries: Entry[] }
-  | { kind: "missing"; query: string }
+  /** Nothing found for `query`; `next` are the headwords after where it would stand. */
+  | { kind: "missing"; query: string; next: Suggestion[] }
   | { kind: "failed"; reason: string };
 
 type View = "lookup" | "library";
@@ -63,6 +71,20 @@ export function App() {
       },
       (error: unknown) => setPage({ kind: "failed", reason: String(error) }),
     );
+    // Indexing runs in the shell's background and reports the Library as it goes. When
+    // another Dictionary's index is ready, the column has more to offer.
+    let ready = -1;
+    const unlisten = onLibraryChanged((changed) => {
+      setLibrary(changed);
+      const nowReady = changed.dictionaries.filter((d) => d.index.state === "ready").length;
+      if (nowReady !== ready) {
+        ready = nowReady;
+        refresh(typed.current).catch(() => {});
+      }
+    });
+    return () => {
+      unlisten.then((stop) => stop(), () => {});
+    };
   }, [refresh]);
 
   // The shell says what it built the window with: the styles leave room for the title bar
@@ -98,7 +120,7 @@ export function App() {
     try {
       const entries = await lookUp(headword);
       if (ticket !== pageRequests.current) return;
-      setPage(entries.length > 0 ? { kind: "found", headword, entries } : { kind: "missing", query: headword });
+      setPage(entries.length > 0 ? { kind: "found", headword, entries } : { kind: "missing", query: headword, next: [] });
     } catch (error) {
       if (ticket === pageRequests.current) setPage({ kind: "failed", reason: String(error) });
     }
@@ -114,7 +136,7 @@ export function App() {
         void show(answer.headword);
       } else if (text.trim()) {
         setView("lookup");
-        setPageNow({ kind: "missing", query: text.trim() });
+        setPageNow({ kind: "missing", query: text.trim(), next: answer.miss ? answer.items : [] });
       } else {
         setPageNow({ kind: "idle" });
       }
@@ -144,6 +166,18 @@ export function App() {
   function putColumnAway() {
     setTyping(false);
     setColumnOpen(false);
+  }
+
+  /** An `entry://` link in an Entry: the linked headword, as if the reader had typed and chosen it. */
+  function followLink(headword: string) {
+    commit(headword);
+    column.refresh(headword).catch(() => {});
+  }
+
+  /** The reader chose a way forward from a miss: a pattern to try or a headword. */
+  function search(text: string) {
+    type(text);
+    void changeQuery(text);
   }
 
   function commitCurrent() {
@@ -198,11 +232,24 @@ export function App() {
         setBusy(false);
       }
     },
+    index: () => change(indexLibrary),
+    cancelIndexing: () => {
+      cancelIndexing().catch((error: unknown) => setNotice(t.libraryActionFailed(String(error))));
+    },
   };
 
   const enabledCount = library?.dictionaries.filter((d) => d.enabled).length ?? 0;
   const asked = page.kind === "found" ? Math.max(enabledCount, page.entries.length) : enabledCount;
-  const { items, selected, miss } = column.state;
+  const { items, selected, miss, near, lemma } = column.state;
+  const note = lemma ? (
+    <>
+      {t.lemmatized} <b>{lemma.from}</b> → <b>{lemma.to}</b>
+    </>
+  ) : near ? (
+    t.nearNote
+  ) : miss && items.length > 0 ? (
+    t.missNote
+  ) : null;
 
   return (
     <div className="grid h-full grid-cols-[264px_minmax(0,1fr)] grid-rows-[48px_minmax(0,1fr)_26px] max-[860px]:grid-cols-[200px_minmax(0,1fr)] max-[620px]:grid-cols-[minmax(0,1fr)]">
@@ -249,7 +296,7 @@ export function App() {
       <HeadwordColumn
         items={items}
         selected={selected}
-        note={miss && items.length > 0 ? t.missNote : null}
+        note={note}
         view={view}
         onPick={pick}
         onNeedMore={() => void column.loadMore().catch(() => {})}
@@ -266,7 +313,16 @@ export function App() {
           {view === "library" && library ? (
             <LibraryPage library={library} busy={busy} notice={notice} actions={actions} />
           ) : (
-            <PageContent page={page} asked={asked} library={library} busy={busy} notice={notice} onAddFolder={actions.addFolder} />
+            <PageContent
+              page={page}
+              asked={asked}
+              library={library}
+              busy={busy}
+              notice={notice}
+              onAddFolder={actions.addFolder}
+              onLookUp={followLink}
+              onSearch={search}
+            />
           )}
         </main>
         {view === "lookup" ? (
@@ -298,6 +354,8 @@ function PageContent({
   busy,
   notice,
   onAddFolder,
+  onLookUp,
+  onSearch,
 }: {
   page: PageState;
   /** How many Dictionaries the Lookup ran against. */
@@ -306,6 +364,8 @@ function PageContent({
   busy: boolean;
   notice: string | null;
   onAddFolder: () => void;
+  onLookUp: (headword: string) => void;
+  onSearch: (text: string) => void;
 }) {
   const { t } = useI18n();
   switch (page.kind) {
@@ -316,10 +376,11 @@ function PageContent({
           headword={page.headword}
           entries={page.entries}
           asked={asked}
+          onLookUp={onLookUp}
         />
       );
     case "missing":
-      return <Lead>{t.notFound(page.query)}</Lead>;
+      return <NoMatch query={page.query} next={page.next} onSearch={onSearch} />;
     case "failed":
       return <Lead>{t.lookupFailed(page.reason)}</Lead>;
     case "idle":
@@ -344,11 +405,26 @@ function PageContent({
   }
 }
 
-/** The page head and one section per answering Dictionary. `asked` is how many Dictionaries the Lookup ran against. */
-function EntryPage({ headword, entries: initial, asked }: { headword: string; entries: Entry[]; asked: number }) {
+/**
+ * The page head and one section per answering Dictionary. `asked` is how many Dictionaries
+ * the Lookup ran against. An `entry://` link in any Entry looks its headword up; a
+ * `sound://` link plays from its own Dictionary.
+ */
+function EntryPage({
+  headword,
+  entries: initial,
+  asked,
+  onLookUp,
+}: {
+  headword: string;
+  entries: Entry[];
+  asked: number;
+  onLookUp: (headword: string) => void;
+}) {
   const { t } = useI18n();
   const [entries, setEntries] = useState(initial);
   const pronunciation = entries.find((entry) => entry.pronunciation)?.pronunciation;
+  const sound = firstSound(entries);
   const [folded, setFolded] = useState<ReadonlySet<string>>(new Set());
 
   function toggleFold(dictionaryId: string) {
@@ -358,6 +434,21 @@ function EntryPage({ headword, entries: initial, asked }: { headword: string; en
       return next;
     });
   }
+
+  // Alt+P: the Pronounce action, wherever focus is in the app (not inside an Entry frame,
+  // whose keys stay its own).
+  useEffect(() => {
+    if (sound === null) return;
+    const url = sound;
+    function onKeyDown(event: KeyboardEvent) {
+      if (!event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
+      if (event.code !== "KeyP" && event.key.toLowerCase() !== "p") return;
+      event.preventDefault();
+      playSound(url);
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [sound]);
 
   async function toggleNetwork(entry: Entry) {
     const allow = !entry.allowNetwork;
@@ -375,6 +466,11 @@ function EntryPage({ headword, entries: initial, asked }: { headword: string; en
         <h1 className="-ml-3.5 font-serif text-display font-bold [overflow-wrap:anywhere]">【{headword}】</h1>
         {pronunciation ? <span className="font-serif text-[16px] text-text-secondary">{pronunciation}</span> : null}
         <span className="text-[12px] text-text-secondary">{t.answeredOf(entries.length, asked)}</span>
+        {sound !== null && (
+          <div className="ml-auto flex gap-1.5 self-center">
+            <PronounceButton onClick={() => playSound(sound)} />
+          </div>
+        )}
       </div>
       {entries.map((entry) => {
         const open = !folded.has(entry.dictionaryId);
@@ -395,11 +491,92 @@ function EntryPage({ headword, entries: initial, asked }: { headword: string; en
             {/* Folded, the Entry stays loaded out of sight, so unfolding shows it as it was. */}
             <div id={body} hidden={!open} className="pb-3.5">
               {/* A new frame when the switch changes, so the document reloads under its new policy. */}
-              <EntryFrame key={String(entry.allowNetwork)} dictionaryTitle={entry.dictionaryTitle} src={entry.src} />
+              <EntryFrame
+                key={String(entry.allowNetwork)}
+                dictionaryTitle={entry.dictionaryTitle}
+                src={entry.src}
+                onLink={onLookUp}
+                onSound={playSound}
+              />
             </div>
           </section>
         );
       })}
+    </article>
+  );
+}
+
+/** The URL of the first audio the Entries offer, in page order, or null. */
+function firstSound(entries: Entry[]): string | null {
+  for (const entry of entries) {
+    const url = entry.sound ? soundUrl(entry.src, entry.sound) : null;
+    if (url !== null) return url;
+  }
+  return null;
+}
+
+function PronounceButton({ onClick }: { onClick: () => void }) {
+  const { t } = useI18n();
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-keyshortcuts="Alt+P"
+      className="flex h-7 items-center gap-1.5 rounded-sharp border border-rule px-2.5 text-body text-text hover:bg-shade active:translate-y-px"
+    >
+      <svg className="size-4 fill-none stroke-current stroke-[1.2]" viewBox="0 0 16 16" aria-hidden="true">
+        <path d="M2.5 6v4H5l3.5 3V3L5 6z" />
+        <path d="M11 5.5a3.5 3.5 0 0 1 0 5" />
+      </svg>
+      <span>{t.pronounce}</span>
+      <kbd aria-hidden="true" className="font-sans text-[11px] text-text-secondary max-[620px]:hidden">
+        Alt P
+      </kbd>
+    </button>
+  );
+}
+
+/**
+ * The page when nothing was found: it says so, suggests a wildcard pattern, and lists the
+ * headwords that follow where the word would stand, so a miss is never a dead end.
+ */
+function NoMatch({ query, next, onSearch }: { query: string; next: Suggestion[]; onSearch: (text: string) => void }) {
+  const { t } = useI18n();
+  const pattern = wildcardHint(query);
+  return (
+    <article>
+      <div className="flex flex-wrap items-baseline gap-x-md gap-y-xs border-b-[3px] border-double border-rule pb-2.5">
+        <h1 className="-ml-3.5 font-serif text-display font-bold [overflow-wrap:anywhere]">【{query}】</h1>
+        <span className="text-[12px] text-text-secondary">{t.notFoundMeta}</span>
+      </div>
+      <Lead>{t.notFound(query)}</Lead>
+      <div className="flex max-w-[860px] flex-wrap items-center gap-x-2.5 gap-y-sm pb-xs text-text-secondary">
+        <span>{t.wildcardTip}</span>
+        <OutlineButton onClick={() => onSearch(pattern)}>
+          {t.tryPattern} <b className="font-serif text-[14px]">{pattern}</b>
+        </OutlineButton>
+      </div>
+      {next.length > 0 ? (
+        <>
+          <h2 id="next-in-index" className="mt-5 mb-1.5 text-[13px] font-bold">
+            {t.nextInIndex}
+          </h2>
+          <ul aria-labelledby="next-in-index" className="columns-[150px] gap-x-7 [column-rule:1px_solid_var(--hairline)] pt-0.5 pb-1.5">
+            {next.slice(0, 40).map((item) => (
+              <li key={item.headword}>
+                <button
+                  type="button"
+                  lang={/[぀-ヿ]/.test(item.headword) ? "ja" : undefined}
+                  onClick={() => onSearch(item.headword)}
+                  className="-ml-1.5 block h-[26px] w-full truncate rounded-sharp px-1.5 text-left font-serif text-index hover:bg-shade"
+                >
+                  {item.headword}
+                </button>
+              </li>
+            ))}
+          </ul>
+        </>
+      ) : null}
     </article>
   );
 }

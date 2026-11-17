@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
+use std::ops::ControlFlow;
 use std::path::{Path, PathBuf};
-use std::sync::OnceLock;
+use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 
@@ -8,9 +9,13 @@ use crate::error::{Error, Result};
 use crate::format::{
     DictionaryFormat, DictionaryReader, MdictFormat, OpenError, RawRecord, Registration,
 };
-use crate::index::{HeadwordIndex, IndexedHeadword, MemoryIndex, Start, index_key};
+use crate::index::{HeadwordIndex, IndexError, IndexedHeadword, Start, StoredIndex, index_key};
+use crate::indexing::{Built, IndexJob, IndexOutcome, IndexResult, IndexState, index_file};
+use crate::lemma;
+use crate::near;
+use crate::pattern::Pattern;
 use crate::registrations::Registrations;
-use crate::scan::{self, Unit};
+use crate::scan::{self, Stamp, Unit};
 
 /// Every Dictionary the reader has made available: the Dictionaries found in their
 /// Library Folders, in Library order, each enabled or not.
@@ -20,6 +25,9 @@ use crate::scan::{self, Unit};
 /// reader enters in `registrations.json` beside it. Dictionary files are only ever read.
 pub struct Library {
     file: Option<PathBuf>,
+    /// Where indexes are stored: `indexes` beside the Library file. `None` for a Library
+    /// kept only in memory, whose indexes are built in memory as it opens.
+    index_folder: Option<PathBuf>,
     formats: Vec<&'static dyn DictionaryFormat>,
     record: Record,
     registrations: Registrations,
@@ -41,26 +49,61 @@ struct Record {
 
 struct Dictionary {
     info: DictionaryInfo,
-    reader: Box<dyn DictionaryReader>,
-    /// Built on the first query that needs it, so opening the Library stays quick.
-    index: OnceLock<Box<dyn HeadwordIndex>>,
+    reader: Arc<dyn DictionaryReader>,
+    stamp: Stamp,
+    /// Present when `info.index` is [`IndexState::Ready`].
+    index: Option<StoredIndex>,
 }
 
 impl Dictionary {
-    fn new(info: DictionaryInfo, reader: Box<dyn DictionaryReader>) -> Dictionary {
-        Dictionary {
-            info,
-            reader,
-            index: OnceLock::new(),
+    /// Up to `limit` headwords from `start` in index order that `scan` takes, reading the
+    /// index a page at a time until `scan` says stop or the index ends. A Dictionary whose
+    /// index is not built yet has none.
+    fn scan(
+        &self,
+        start: Start<'_>,
+        limit: usize,
+        scan: &dyn Fn(&IndexedHeadword) -> Scan,
+    ) -> std::result::Result<Vec<IndexedHeadword>, IndexError> {
+        let Some(index) = self.index.as_ref() else {
+            return Ok(Vec::new());
+        };
+        let page_size = limit.clamp(SCAN_PAGE, 16 * SCAN_PAGE);
+        let mut taken = Vec::new();
+        let mut page = index.headwords(start, page_size)?;
+        while taken.len() < limit {
+            let full = page.len() == page_size;
+            for headword in &page {
+                match scan(headword) {
+                    Scan::Take => taken.push(headword.clone()),
+                    Scan::Skip => {}
+                    Scan::Stop => return Ok(taken),
+                }
+                if taken.len() == limit {
+                    return Ok(taken);
+                }
+            }
+            match page.last() {
+                Some(last) if full => page = index.headwords(Start::After(last), page_size)?,
+                _ => break,
+            }
         }
-    }
-
-    fn index(&self) -> &dyn HeadwordIndex {
-        self.index
-            .get_or_init(|| Box::new(MemoryIndex::build(self.reader.as_ref())))
-            .as_ref()
+        Ok(taken)
     }
 }
+
+/// What a scan of the index does with one headword.
+enum Scan {
+    /// Keep it and read on.
+    Take,
+    /// Pass it over and read on.
+    Skip,
+    /// Read no further.
+    Stop,
+}
+
+/// How many headwords a scan reads from an index at least at a time.
+const SCAN_PAGE: usize = 256;
 
 /// A Library Folder and what was found in it.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -91,6 +134,8 @@ pub struct DictionaryInfo {
     pub size: u64,
     /// Whether it answers Lookups.
     pub enabled: bool,
+    /// Whether its index is built. Only a Dictionary whose index is ready answers.
+    pub index: IndexState,
 }
 
 /// A Dictionary file that was found but could not be opened.
@@ -107,6 +152,24 @@ pub struct Entry {
     pub dictionary_title: String,
     /// The Entry's content: untrusted HTML that must be rendered in isolation.
     pub html: String,
+}
+
+impl Entry {
+    /// The audio the Entry offers: the targets of its `sound://` links, in the order they
+    /// appear, as paths inside the Dictionary written the way the Entry writes them
+    /// (`uk/apple.mp3`, `us\apple.mp3`).
+    pub fn sounds(&self) -> Vec<String> {
+        crate::links::href_values(&self.html)
+            .filter_map(|href| strip_prefix_ignore_case(&href, "sound://").map(str::to_owned))
+            .filter(|path| !path.is_empty())
+            .collect()
+    }
+}
+
+fn strip_prefix_ignore_case<'a>(text: &'a str, prefix: &str) -> Option<&'a str> {
+    let head = text.get(..prefix.len())?;
+    head.eq_ignore_ascii_case(prefix)
+        .then(|| &text[prefix.len()..])
 }
 
 /// What the headword column offers for what the reader typed.
@@ -154,6 +217,10 @@ const MAX_REDIRECTS: usize = 8;
 impl Library {
     /// The Library recorded in `file`, with its Library Folders scanned. A missing file is
     /// an empty Library; the file is written on the first change.
+    ///
+    /// Indexes are stored in the folder `indexes` beside `file`. A Dictionary whose
+    /// stored index is missing or out of date is [`IndexState::Pending`] until its index
+    /// is built: see [`Library::index_jobs`].
     pub fn load(file: &Path) -> Result<Library> {
         Self::load_with(file, &[&MdictFormat])
     }
@@ -179,7 +246,8 @@ impl Library {
         Ok(library)
     }
 
-    /// A Library of the one Library Folder `folder`, kept only in memory.
+    /// A Library of the one Library Folder `folder`, kept only in memory. Every
+    /// Dictionary is indexed (in memory) before it is returned, and again on a rescan.
     pub fn open(folder: &Path) -> Result<Library> {
         Self::open_with(folder, &[&MdictFormat])
     }
@@ -202,6 +270,7 @@ impl Library {
         record: Record,
     ) -> Library {
         Library {
+            index_folder: file.as_deref().map(|file| file.with_file_name("indexes")),
             file,
             formats: formats.to_vec(),
             record,
@@ -242,6 +311,7 @@ impl Library {
     /// place and enabled state.
     pub fn rescan(&mut self) -> Result<()> {
         let mut folders = Vec::new();
+        let mut known = std::mem::take(&mut self.dictionaries);
         let mut dictionaries: Vec<Dictionary> = Vec::new();
         let mut failures: Vec<OpenFailure> = Vec::new();
 
@@ -281,14 +351,33 @@ impl Library {
                 {
                     continue;
                 }
+                let stamp = match scan::stamp(path) {
+                    Ok(stamp) => stamp,
+                    Err(error) => {
+                        failures.push(OpenFailure {
+                            path: path.clone(),
+                            reason: OpenError::Unreadable(error.to_string()),
+                        });
+                        continue;
+                    }
+                };
                 let opened = match self.registrations.get(path) {
                     Some(registration) => format.open_registered(path, registration),
                     None => format.open(path),
                 };
                 match opened {
                     Ok(reader) => {
-                        let info = describe(id, &unit, reader.as_ref(), &self.record);
-                        dictionaries.push(Dictionary::new(info, reader));
+                        let mut info = describe(id, &unit, reader.as_ref(), &self.record);
+                        let index = self.known_index(&mut known, &info.id, &stamp);
+                        if index.is_some() {
+                            info.index = IndexState::Ready;
+                        }
+                        dictionaries.push(Dictionary {
+                            info,
+                            reader: Arc::from(reader),
+                            stamp,
+                            index,
+                        });
                     }
                     Err(reason) => failures.push(OpenFailure {
                         path: path.clone(),
@@ -315,7 +404,110 @@ impl Library {
         if self.record_order() {
             self.save()?;
         }
+        if self.index_folder.is_none() {
+            self.build_indexes();
+        }
         Ok(())
+    }
+
+    /// The index a Dictionary already has: the one in memory from before a rescan, or the
+    /// stored one, if it was built from the file as it is now.
+    fn known_index(
+        &self,
+        known: &mut Vec<Dictionary>,
+        id: &str,
+        stamp: &Stamp,
+    ) -> Option<StoredIndex> {
+        if let Some(at) = known
+            .iter()
+            .position(|d| d.info.id == id && d.stamp == *stamp && d.index.is_some())
+        {
+            return known.swap_remove(at).index;
+        }
+        let folder = self.index_folder.as_ref()?;
+        StoredIndex::open(&index_file(folder, id), stamp)
+    }
+
+    /// One job for each Dictionary whose index is [`IndexState::Pending`], in Library
+    /// order. Run them anywhere (each holds what it needs) and hand each outcome back
+    /// with [`Library::finish_index`].
+    pub fn index_jobs(&self) -> Vec<IndexJob> {
+        self.dictionaries
+            .iter()
+            .filter(|d| d.info.index == IndexState::Pending)
+            .map(|d| IndexJob {
+                dictionary_id: d.info.id.clone(),
+                title: d.info.title.clone(),
+                reader: Arc::clone(&d.reader),
+                stamp: d.stamp,
+                folder: self.index_folder.clone(),
+            })
+            .collect()
+    }
+
+    /// Puts a built index in place, or records why it could not be built. An outcome
+    /// for a Dictionary that has left the Library, or whose file changed meanwhile, is
+    /// dropped.
+    pub fn finish_index(&mut self, outcome: IndexOutcome) {
+        let dictionary = self
+            .dictionaries
+            .iter_mut()
+            .find(|d| d.info.id == outcome.dictionary_id);
+        let built = match outcome.result {
+            IndexResult::Built(built) => built,
+            IndexResult::Cancelled => return,
+            IndexResult::Failed(reason) => {
+                if let Some(dictionary) = dictionary {
+                    dictionary.info.index = IndexState::Failed(reason);
+                }
+                return;
+            }
+        };
+        let Some(dictionary) = dictionary.filter(|d| d.stamp == built.stamp) else {
+            if let Built::File { partial, .. } = &built.place {
+                let _ = std::fs::remove_file(partial);
+            }
+            return;
+        };
+        let index = match built.place {
+            Built::Memory(bytes) => StoredIndex::from_bytes(bytes, &built.stamp)
+                .ok_or_else(|| "the index could not be read back".to_owned()),
+            Built::File { partial, path } => {
+                // Unmap the old index first: a mapped file cannot be replaced on Windows.
+                dictionary.index = None;
+                std::fs::rename(&partial, &path)
+                    .map_err(|error| error.to_string())
+                    .and_then(|()| {
+                        StoredIndex::open(&path, &built.stamp)
+                            .ok_or_else(|| "the stored index could not be read back".to_owned())
+                    })
+            }
+        };
+        match index {
+            Ok(index) => {
+                dictionary.index = Some(index);
+                dictionary.info.index = IndexState::Ready;
+            }
+            Err(reason) => dictionary.info.index = IndexState::Failed(reason),
+        }
+    }
+
+    /// Builds every pending index here and now, without progress reports. The desktop
+    /// shell runs [`Library::index_jobs`] on a thread instead.
+    pub fn build_indexes(&mut self) {
+        for job in self.index_jobs() {
+            let outcome = job.run(&mut |_| ControlFlow::Continue(()));
+            self.finish_index(outcome);
+        }
+    }
+
+    /// The headword index of the Dictionary with key `id`, if it is built.
+    pub fn index_of(&self, id: &str) -> Option<&dyn HeadwordIndex> {
+        self.dictionaries
+            .iter()
+            .find(|d| d.info.id == id)
+            .and_then(|d| d.index.as_ref())
+            .map(|index| index as &dyn HeadwordIndex)
     }
 
     /// Every Dictionary in the Library, enabled or not, in Library order.
@@ -410,23 +602,127 @@ impl Library {
 
     /// Up to `limit` suggestions for `query`, from enabled Dictionaries: the headwords
     /// whose key starts with the query's, then the headwords that follow them in index
-    /// order, like a page of a printed index. An empty query browses the index from its
-    /// start.
+    /// order, like a page of a printed index. A query with wildcards (`*` for any run of
+    /// characters, `?` for one) offers only its matches. An empty query browses the index
+    /// from its start.
     pub fn suggest(&self, query: &str, limit: usize) -> Result<Suggestions> {
-        let key = index_key(query.trim());
-        let items = self.merged(Start::AtKey(&key), limit)?;
+        let typed = query.trim();
+        let key = index_key(typed);
+        // A pattern offers only its matches; Lemmatization does not apply to it.
+        if let Some(pattern) = Pattern::parse(&key) {
+            return self.suggest_pattern(&pattern, limit);
+        }
+        let mut items = self.merged(Start::AtKey(&key), limit)?;
         let browse = key.is_empty();
-        let miss = !browse
-            && !items
-                .first()
-                .is_some_and(|(first, _)| first.key.starts_with(&key));
+        let matched = items
+            .first()
+            .is_some_and(|(first, _)| first.key.starts_with(&key));
+        let mut lemma = None;
+        if !browse && limit > 0 {
+            // A query that is itself a headword stays first; its base form follows it.
+            let is_headword = items.first().is_some_and(|(first, _)| first.key == key);
+            if let Some(base) = self.base_headword(&key, is_headword)? {
+                lemma = Some(Lemma {
+                    from: typed.to_owned(),
+                    to: base.0.headword.clone(),
+                });
+                if matched {
+                    items.retain(|(headword, _)| *headword != base.0);
+                    items.insert(usize::from(is_headword), base);
+                    items.truncate(limit);
+                } else {
+                    // Nothing starts with the query: the column reads on from the base form.
+                    let after = self.merged(Start::After(&base.0), limit - 1)?;
+                    items = std::iter::once(base).chain(after).collect();
+                }
+            }
+        }
+        // No headword starts with the query and it has no base form filed: offer close
+        // spellings, and failing those, the index from where the query would stand.
+        let unanswered = !browse && !matched && lemma.is_none();
+        let mut near = false;
+        if unanswered {
+            let close = self.near(&key, limit)?;
+            if !close.is_empty() {
+                items = close;
+                near = true;
+            }
+        }
+        Ok(Suggestions {
+            items: items.into_iter().map(suggestion).collect(),
+            lemma,
+            near,
+            miss: unanswered && !near,
+            browse,
+        })
+    }
+
+    /// Up to `limit` headwords spelt nearly like `key`, nearest first, then in index order,
+    /// each with how many enabled Dictionaries file it.
+    fn near(&self, key: &str, limit: usize) -> Result<Vec<(IndexedHeadword, usize)>> {
+        let query: Vec<char> = key.chars().collect();
+        let tolerance = near::tolerance(&query);
+        let distance = |headword: &IndexedHeadword| {
+            let candidate: Vec<char> = headword.key.chars().collect();
+            near::distance(&query, &candidate, tolerance)
+        };
+        let close = |headword: &IndexedHeadword| match distance(headword) {
+            Some(_) => Scan::Take,
+            None => Scan::Skip,
+        };
+        let counts = self.counted(Start::AtKey(""), usize::MAX, &close)?;
+        let mut found: Vec<(usize, IndexedHeadword, usize)> = counts
+            .into_iter()
+            .filter_map(|(headword, count)| Some((distance(&headword)?, headword, count)))
+            .collect();
+        found.sort();
+        Ok(found
+            .into_iter()
+            .take(limit)
+            .map(|(_, headword, count)| (headword, count))
+            .collect())
+    }
+
+    fn suggest_pattern(&self, pattern: &Pattern, limit: usize) -> Result<Suggestions> {
+        let prefix = pattern.prefix();
+        let items = self.merged_where(Start::AtKey(prefix), limit, matching(pattern))?;
+        let miss = items.is_empty();
+        // Nothing matches: the index from where the pattern's letters would stand.
+        let items = if miss {
+            self.merged(Start::AtKey(prefix), limit)?
+        } else {
+            items
+        };
         Ok(Suggestions {
             items: items.into_iter().map(suggestion).collect(),
             lemma: None,
             near: false,
             miss,
-            browse,
+            browse: false,
         })
+    }
+
+    /// The headword of the most likely base form of the query `key` that an enabled
+    /// Dictionary files, with how many of them file it: Lemmatization.
+    fn base_headword(
+        &self,
+        key: &str,
+        query_is_headword: bool,
+    ) -> Result<Option<(IndexedHeadword, usize)>> {
+        for base in lemma::base_forms(key) {
+            if base.doubtful && query_is_headword {
+                continue;
+            }
+            let base_key = index_key(&base.form);
+            if base_key.is_empty() || base_key == key {
+                continue;
+            }
+            let first = self.merged(Start::AtKey(&base_key), 1)?.into_iter().next();
+            if let Some(found) = first.filter(|(headword, _)| headword.key == base_key) {
+                return Ok(Some(found));
+            }
+        }
+        Ok(None)
     }
 
     /// Up to `limit` headwords that follow `headword` in index order, from enabled
@@ -440,25 +736,67 @@ impl Library {
             .collect())
     }
 
+    /// Up to `limit` more suggestions for `query`, after `headword`: the column continued as
+    /// the reader scrolls. A pattern's column continues with its matches; any other column
+    /// continues through the index.
+    pub fn suggest_after(
+        &self,
+        query: &str,
+        headword: &str,
+        limit: usize,
+    ) -> Result<Vec<Suggestion>> {
+        let after = IndexedHeadword::new(headword);
+        let items = match Pattern::parse(&index_key(query.trim())) {
+            Some(pattern) if pattern.matches(&after.key) => {
+                self.merged_where(Start::After(&after), limit, matching(&pattern))?
+            }
+            _ => self.merged(Start::After(&after), limit)?,
+        };
+        Ok(items.into_iter().map(suggestion).collect())
+    }
+
     /// The first `limit` headwords from `start` across enabled Dictionaries, each once,
     /// with how many of them file it.
     fn merged(&self, start: Start<'_>, limit: usize) -> Result<Vec<(IndexedHeadword, usize)>> {
+        self.merged_where(start, limit, |_| Scan::Take)
+    }
+
+    /// Like [`Library::merged`], keeping only the headwords `scan` takes and reading each
+    /// index only until `scan` says stop.
+    fn merged_where(
+        &self,
+        start: Start<'_>,
+        limit: usize,
+        scan: impl Fn(&IndexedHeadword) -> Scan,
+    ) -> Result<Vec<(IndexedHeadword, usize)>> {
         // Each headword among the first `limit` overall is among the first `limit` of
         // every Dictionary that files it, so `limit` from each is enough to count it.
+        let counts = self.counted(start, limit, &scan)?;
+        Ok(counts.into_iter().take(limit).collect())
+    }
+
+    /// Up to `limit` headwords `scan` takes from each enabled Dictionary, from `start`,
+    /// with how many of them file each.
+    fn counted(
+        &self,
+        start: Start<'_>,
+        limit: usize,
+        scan: &dyn Fn(&IndexedHeadword) -> Scan,
+    ) -> Result<BTreeMap<IndexedHeadword, usize>> {
         let mut counts: BTreeMap<IndexedHeadword, usize> = BTreeMap::new();
         for dictionary in self.dictionaries.iter().filter(|d| d.info.enabled) {
-            let headwords = dictionary
-                .index()
-                .headwords(start, limit)
-                .map_err(|error| Error::Dictionary {
-                    dictionary: dictionary.info.title.clone(),
-                    reason: error.to_string(),
-                })?;
+            let headwords =
+                dictionary
+                    .scan(start, limit, scan)
+                    .map_err(|error| Error::Dictionary {
+                        dictionary: dictionary.info.title.clone(),
+                        reason: error.to_string(),
+                    })?;
             for headword in headwords {
                 *counts.entry(headword).or_default() += 1;
             }
         }
-        Ok(counts.into_iter().take(limit).collect())
+        Ok(counts)
     }
 
     /// The Entry for exactly `headword` in the Dictionary with `dictionary_id`, if that
@@ -538,6 +876,20 @@ impl Library {
     }
 }
 
+/// A scan for `pattern`'s matches. They all start with its prefix, so the scan stops at
+/// the first headword that does not.
+fn matching(pattern: &Pattern) -> impl Fn(&IndexedHeadword) -> Scan {
+    move |headword| {
+        if !headword.key.starts_with(pattern.prefix()) {
+            Scan::Stop
+        } else if pattern.matches(&headword.key) {
+            Scan::Take
+        } else {
+            Scan::Skip
+        }
+    }
+}
+
 fn suggestion((headword, count): (IndexedHeadword, usize)) -> Suggestion {
     Suggestion {
         headword: headword.headword,
@@ -546,8 +898,12 @@ fn suggestion((headword, count): (IndexedHeadword, usize)) -> Suggestion {
 }
 
 impl Dictionary {
+    /// The Entry for exactly `headword`. A Dictionary answers once its index is built.
     fn entry(&self, headword: &str) -> Result<Option<Entry>> {
-        let records = resolve(self.reader.as_ref(), headword).map_err(|e| self.error(e))?;
+        let Some(index) = &self.index else {
+            return Ok(None);
+        };
+        let records = resolve(self.reader.as_ref(), index, headword).map_err(|e| self.error(e))?;
         Ok((!records.is_empty()).then(|| Entry {
             dictionary_id: self.info.id.clone(),
             dictionary_title: self.info.title.clone(),
@@ -555,7 +911,7 @@ impl Dictionary {
         }))
     }
 
-    fn error(&self, error: crate::FormatError) -> Error {
+    fn error(&self, error: impl std::fmt::Display) -> Error {
         Error::Dictionary {
             dictionary: self.info.title.clone(),
             reason: error.to_string(),
@@ -582,10 +938,19 @@ fn same_file(a: &Path, b: &Path) -> bool {
 /// The text records for `headword`, following redirects with cycle protection.
 fn resolve(
     reader: &dyn DictionaryReader,
+    index: &StoredIndex,
     headword: &str,
-) -> std::result::Result<Vec<String>, crate::FormatError> {
+) -> std::result::Result<Vec<String>, String> {
+    let records = |headword: &str| -> std::result::Result<Vec<RawRecord>, String> {
+        index
+            .locations(headword)
+            .map_err(|error| error.to_string())?
+            .into_iter()
+            .map(|location| reader.record(location).map_err(|error| error.to_string()))
+            .collect()
+    };
     let mut texts = Vec::new();
-    for record in reader.records(headword)? {
+    for record in records(headword)? {
         let mut record = record;
         let mut visited = vec![headword.to_owned()];
         loop {
@@ -598,7 +963,7 @@ fn resolve(
                     if visited.contains(&target) || visited.len() > MAX_REDIRECTS {
                         break;
                     }
-                    let Some(next) = reader.records(&target)?.into_iter().next() else {
+                    let Some(next) = records(&target)?.into_iter().next() else {
                         break;
                     };
                     visited.push(target);
@@ -638,5 +1003,6 @@ fn describe(
         companions: unit.companions.clone(),
         entry_count: reader.entry_count(),
         size,
+        index: IndexState::Pending,
     }
 }

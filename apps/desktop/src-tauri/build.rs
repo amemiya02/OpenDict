@@ -13,6 +13,8 @@ fn main() {
         "set_dictionary_enabled",
         "move_dictionary",
         "register_dictionary",
+        "index_library",
+        "cancel_indexing",
         "window_chrome",
     ]);
     tauri_build::try_build(tauri_build::Attributes::new().app_manifest(manifest))

@@ -1,7 +1,7 @@
 //! Files that need a registration code (`Encrypted="1"`): opened with the code and the
 //! e-mail (or device ID) it was issued to, refused without them or with wrong ones.
 
-use opendict_mdict::{Error, Mdd, Mdx, Record, Registration};
+use opendict_mdict::{Error, LazyMdx, Mdd, Mdx, Record, Registration};
 use opendict_mdict_fixture::{Compression, Identity, MddBuilder, MdxBuilder, Version};
 
 const EMAIL: &str = "reader@example.com";
@@ -154,4 +154,32 @@ fn reads_codes_as_32_hex_digits_ignoring_spaces_and_dashes() {
 fn never_prints_the_code_or_the_email() {
     let shown = format!("{:?}", registration(EMAIL, CODE));
     assert!(!shown.contains(EMAIL) && !shown.to_lowercase().contains(&CODE.to_lowercase()));
+}
+
+#[test]
+fn a_lazily_opened_file_needs_and_takes_the_registration_too() {
+    for version in Version::ALL {
+        let (_dir, path) = write(&sold(version, Identity::Utf16).build(), "sold.mdx");
+
+        assert!(
+            matches!(LazyMdx::open(&path), Err(Error::Encrypted)),
+            "{version:?}"
+        );
+        assert!(
+            matches!(
+                LazyMdx::open_registered(&path, &registration(EMAIL, OTHER_CODE)),
+                Err(Error::WrongRegistration)
+            ),
+            "{version:?}"
+        );
+        let mdx = LazyMdx::open_registered(&path, &registration(EMAIL, CODE)).unwrap();
+        let keys: Vec<(String, u64)> = mdx.keys().collect::<Result<_, _>>().unwrap();
+        let headwords: Vec<&str> = keys.iter().map(|(headword, _)| headword.as_str()).collect();
+        assert_eq!(headwords, ["apple", "bank"], "{version:?}");
+        assert_eq!(
+            mdx.record(keys[1].1..mdx.record_stream_len()).unwrap(),
+            Record::Text("<p>a place for money</p>".into()),
+            "{version:?}"
+        );
+    }
 }

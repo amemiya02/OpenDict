@@ -121,9 +121,25 @@ fn content_policy(dictionary_id: &str, allow_network: bool) -> Vec<(header::Head
     ]
 }
 
-/// Reports the document's height to the app so the frame can fit its content. The app
-/// trusts only the size, and only from the frame it made.
-const FRAME_SCRIPT: &str = r#"(()=>{const post=()=>{const b=document.body;parent.postMessage({opendict:"size",height:Math.ceil(Math.max(document.documentElement.getBoundingClientRect().height,b?b.scrollHeight:0))},"*")};new ResizeObserver(post).observe(document.documentElement);addEventListener("load",post)})();"#;
+/// Reports the document's height to the app so the frame can fit its content, and hands
+/// the app the reader's clicks on `entry://` and `sound://` links, which the frame cannot
+/// follow itself. The app accepts only these three message shapes, only from the frame it
+/// made, and checks every field (see EntryFrame.tsx). A link to an anchor in the same
+/// Entry (`entry://#sense2`) stays in the frame. A click the Dictionary's own scripts
+/// already handled (`preventDefault`) is left alone.
+const FRAME_SCRIPT: &str = r#"(()=>{
+const post=()=>{const b=document.body;parent.postMessage({opendict:"size",height:Math.ceil(Math.max(document.documentElement.getBoundingClientRect().height,b?b.scrollHeight:0))},"*")};
+new ResizeObserver(post).observe(document.documentElement);addEventListener("load",post);
+addEventListener("click",e=>{
+if(e.defaultPrevented||!(e.target instanceof Element))return;
+const a=e.target.closest("a[href]");if(!a)return;
+const href=a.getAttribute("href").trim(),m=/^(entry|sound):\/\//i.exec(href);if(!m)return;
+e.preventDefault();
+const kind=m[1].toLowerCase(),rest=href.slice(m[0].length);
+if(kind==="entry"&&rest.charAt(0)==='#'){let id=rest.slice(1);try{id=decodeURIComponent(id)}catch{}
+const t=document.getElementById(id)||document.getElementsByName(id)[0];if(t)t.scrollIntoView();return}
+parent.postMessage({opendict:kind==="entry"?"link":"sound",href},"*")});
+})();"#;
 
 /// Wraps Entry HTML in a document of its own. The app sets no type inside it (the
 /// Hands-Off Entry Rule); it only removes the default page margin.
@@ -234,6 +250,10 @@ mod tests {
             .entry(
                 "cat",
                 r#"<img src="img/cat.png"><p>a small cat (sample)</p>"#,
+            )
+            .entry(
+                "meow",
+                r#"<a href="sound://meow.mp3">meow</a> <a href="sound://purr.mp3">purr</a>"#,
             )
             .write_to(library.join("illustrated.mdx"))
             .unwrap();
@@ -346,6 +366,17 @@ mod tests {
         assert!(csp(&allowed).contains("img-src") && csp(&allowed).contains("https: http:"));
         let other = get(&f.state, &entry_url(&f.plain, "cat"));
         assert!(csp(&other).contains("connect-src 'none'"));
+    }
+
+    #[test]
+    fn look_up_offers_the_first_audio_of_each_entry_for_pronouncing() {
+        let f = fixture();
+
+        let meow = f.state.look_up("meow").unwrap();
+        let cat = f.state.look_up("cat").unwrap();
+
+        assert_eq!(meow[0].sound.as_deref(), Some("meow.mp3"));
+        assert_eq!(cat[0].sound, None);
     }
 
     #[test]

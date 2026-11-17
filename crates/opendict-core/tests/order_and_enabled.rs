@@ -13,13 +13,14 @@ fn put(folder: &Path, relative: &str, title: &str) {
         .unwrap();
 }
 
-/// A Library of three Dictionaries, A, B and C, all having "apple".
+/// A Library of three Dictionaries, A, B and C, all having "apple", indexed.
 fn abc(data: &Path, folder: &Path) -> Library {
     put(folder, "a.mdx", "A");
     put(folder, "b.mdx", "B");
     put(folder, "c.mdx", "C");
     let mut library = Library::load(&data.join("library.json")).unwrap();
     library.add_folder(folder).unwrap();
+    library.build_indexes();
     library
 }
 

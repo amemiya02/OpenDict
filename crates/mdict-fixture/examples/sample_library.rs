@@ -31,8 +31,14 @@ fn main() -> std::io::Result<()> {
         .link("apples", "apple")
         .entry(
             "serendipity",
-            r#"<style>.def { font-family: serif; } .ex { color: #555; }</style><p class="def"><b>serendipity</b> <i>noun</i></p><ol><li>Finding something good without looking for it. <span class="ex">It was pure serendipity. (sample)</span></li></ol>"#,
+            r#"<style>.def { font-family: serif; } .ex { color: #555; }</style><p class="def" id="top"><b>serendipity</b> <i>noun</i></p><ol><li>Finding something good without looking for it. <span class="ex">It was pure serendipity. (sample)</span></li></ol><p class="say"><a href="sound://serendipity.wav">Listen</a></p><p class="see">See also <a href="entry://serendipitous">serendipitous</a>, <a href="entry://#top">top</a>.</p>"#,
         )
+        .entry(
+            "serendipitous",
+            r#"<p><b>serendipitous</b> <i>adjective</i></p><ol><li>Found by happy accident. (sample)</li></ol><p>See <a href="entry://serendipity">serendipity</a>.</p>"#,
+        )
+        .link("happy accident", "serendipities")
+        .link("serendipities", "serendipity")
         .entry(
             "thumb",
             &long_entry(
@@ -41,6 +47,9 @@ fn main() -> std::io::Result<()> {
             ),
         )
         .write_to(folder.join("sample-english.mdx"))?;
+    MddBuilder::new()
+        .resource("\\serendipity.wav", &sample_tone())
+        .write_to(folder.join("sample-english.mdd"))?;
 
     MdxBuilder::new()
         .title("サンプル国語辞典")
@@ -134,6 +143,35 @@ fn sample_png(width: u32, height: u32) -> Vec<u8> {
     chunk(&mut out, b"IHDR", &header);
     chunk(&mut out, b"IDAT", &data);
     chunk(&mut out, b"IEND", &[]);
+    out
+}
+
+/// A quarter-second 440 Hz tone as a WAV file: a sample sound written for OpenDict.
+fn sample_tone() -> Vec<u8> {
+    const RATE: u32 = 8000;
+    let samples: Vec<i16> = (0..RATE / 4)
+        .map(|n| {
+            let t = n as f64 / f64::from(RATE);
+            ((t * 440.0 * std::f64::consts::TAU).sin() * 8000.0) as i16
+        })
+        .collect();
+    let data_len = (samples.len() * 2) as u32;
+    let mut out = Vec::new();
+    out.extend(b"RIFF");
+    out.extend((36 + data_len).to_le_bytes());
+    out.extend(b"WAVEfmt ");
+    out.extend(16u32.to_le_bytes());
+    out.extend(1u16.to_le_bytes()); // PCM
+    out.extend(1u16.to_le_bytes()); // mono
+    out.extend(RATE.to_le_bytes());
+    out.extend((RATE * 2).to_le_bytes());
+    out.extend(2u16.to_le_bytes());
+    out.extend(16u16.to_le_bytes());
+    out.extend(b"data");
+    out.extend(data_len.to_le_bytes());
+    for sample in samples {
+        out.extend(sample.to_le_bytes());
+    }
     out
 }
 

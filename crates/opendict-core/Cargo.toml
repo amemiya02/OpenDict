@@ -15,7 +15,9 @@ name = "opendict_core"
 opendict-mdict.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+memmap2.workspace = true
 thiserror.workspace = true
+unicode-normalization.workspace = true
 
 [dev-dependencies]
 opendict-mdict-fixture.workspace = true

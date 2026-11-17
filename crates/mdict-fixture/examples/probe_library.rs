@@ -84,6 +84,12 @@ const PROBE_SCRIPT: &str = r#"
   out.popup = attempt(() => window.open(sink + "/popup"));
   out.topNavigation = attempt(() => { top.location.href = sink + "/top"; return "assigned"; });
 
+  // Links and sounds the reader never clicked, sent as the Entry loads: the app must
+  // ignore them. The sound also tries to climb into another Dictionary's files.
+  parent.postMessage({ opendict: "link", href: "entry://hijacked" }, "*");
+  parent.postMessage({ opendict: "sound", href: `sound://../${hex(otherId)}/networked.css` }, "*");
+  out.unpromptedLink = "sent";
+
   const report = document.getElementById("probe");
   report.textContent = JSON.stringify(out);
   report.dataset.done = "yes";

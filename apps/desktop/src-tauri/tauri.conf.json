@@ -30,6 +30,7 @@
         "font-src": "'self'",
         "connect-src": "ipc: http://ipc.localhost",
         "frame-src": "http://odentry.localhost odentry:",
+        "media-src": "http://odentry.localhost odentry:",
         "object-src": "'none'",
         "base-uri": "'none'"
       },
