@@ -513,7 +513,7 @@ test("in the dark theme Entries are recoloured unless shown as authored; text si
   await reading.getByRole("radio", { name: "Light" }).check();
   await page.waitForFunction(() => document.documentElement.dataset.theme === "light");
   if (process.env.OPENDICT_E2E_SCREENSHOT) await page.screenshot({ path: process.env.OPENDICT_E2E_SCREENSHOT.replace(/\.png$/, "-reading-light.png") });
-  await reading.getByRole("radio", { name: "Follow system" }).check();
+  await reading.getByRole("radiogroup", { name: "Theme" }).getByRole("radio", { name: "Follow system" }).check();
   assert.deepEqual(await invoke("appearance"), { theme: "system", allAsAuthored: false, textSize: 16, zoom: 100, language: null });
   await lookUp("serendipity"); // back on the page
 });
@@ -800,7 +800,7 @@ test("the command palette switches the theme and the interface language; shortcu
   await page.keyboard.press("Control+k");
   const dark = palette.getByRole("option", { name: "Theme: dark" });
   assert.equal(await dark.getAttribute("aria-checked"), "true", "the palette ticks the theme");
-  assert.equal(await palette.getByRole("option", { name: "Interface language: English" }).getAttribute("aria-checked"), "true");
+  assert.equal(await palette.getByRole("option", { name: "Interface language: Follow system" }).getAttribute("aria-checked"), "true");
   if (process.env.OPENDICT_E2E_PALETTE_SCREENSHOT) await page.screenshot({ path: process.env.OPENDICT_E2E_PALETTE_SCREENSHOT });
   await page.keyboard.press("Escape");
   await palette.waitFor({ state: "hidden", timeout: 5_000 });
