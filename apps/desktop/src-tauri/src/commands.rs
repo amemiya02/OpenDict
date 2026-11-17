@@ -26,10 +26,11 @@ pub fn suggest(
 #[tauri::command]
 pub fn headwords_after(
     state: State<'_, AppState>,
+    query: String,
     headword: String,
     limit: usize,
 ) -> Result<Vec<SuggestionView>, String> {
-    state.headwords_after(&headword, limit)
+    state.headwords_after(&query, &headword, limit)
 }
 
 #[tauri::command]

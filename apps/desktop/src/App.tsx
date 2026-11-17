@@ -16,13 +16,16 @@ import {
   setDictionaryEnabled,
   type Entry,
   type Library,
+  type Suggestion,
 } from "./lib/ipc";
 import { useHeadwordColumn } from "./lib/useHeadwordColumn";
+import { wildcardHint } from "./lib/wildcard";
 
 type PageState =
   | { kind: "idle" }
   | { kind: "found"; headword: string; entries: Entry[] }
-  | { kind: "missing"; query: string }
+  /** Nothing found for `query`; `next` are the headwords after where it would stand. */
+  | { kind: "missing"; query: string; next: Suggestion[] }
   | { kind: "failed"; reason: string };
 
 type View = "lookup" | "library";
@@ -73,7 +76,7 @@ export function App() {
     try {
       const entries = await lookUp(headword);
       if (ticket !== pageRequests.current) return;
-      setPage(entries.length > 0 ? { kind: "found", headword, entries } : { kind: "missing", query: headword });
+      setPage(entries.length > 0 ? { kind: "found", headword, entries } : { kind: "missing", query: headword, next: [] });
     } catch (error) {
       if (ticket === pageRequests.current) setPage({ kind: "failed", reason: String(error) });
     }
@@ -88,7 +91,7 @@ export function App() {
         void show(answer.headword);
       } else if (text.trim()) {
         setView("lookup");
-        setPageNow({ kind: "missing", query: text.trim() });
+        setPageNow({ kind: "missing", query: text.trim(), next: answer.miss ? answer.items : [] });
       } else {
         setPageNow({ kind: "idle" });
       }
@@ -111,6 +114,12 @@ export function App() {
   function commit(headword: string) {
     type(headword);
     void show(headword);
+  }
+
+  /** The reader chose a way forward from a miss: a pattern to try or a headword. */
+  function search(text: string) {
+    type(text);
+    void changeQuery(text);
   }
 
   function commitCurrent() {
@@ -152,7 +161,7 @@ export function App() {
   };
 
   const enabledCount = library?.dictionaries.filter((d) => d.enabled).length ?? 0;
-  const { items, selected, miss } = column.state;
+  const { items, selected, miss, near } = column.state;
 
   return (
     <div className="grid h-full grid-cols-[264px_minmax(0,1fr)] grid-rows-[48px_minmax(0,1fr)_26px] max-[860px]:grid-cols-[200px_minmax(0,1fr)]">
@@ -175,7 +184,7 @@ export function App() {
       <HeadwordColumn
         items={items}
         selected={selected}
-        note={miss && items.length > 0 ? t.missNote : null}
+        note={near ? t.nearNote : miss && items.length > 0 ? t.missNote : null}
         view={view}
         onPick={pick}
         onNeedMore={() => void column.loadMore().catch(() => {})}
@@ -187,7 +196,14 @@ export function App() {
         {view === "library" && library ? (
           <LibraryPage library={library} busy={busy} notice={notice} actions={actions} />
         ) : (
-          <PageContent page={page} library={library} busy={busy} notice={notice} onAddFolder={actions.addFolder} />
+          <PageContent
+            page={page}
+            library={library}
+            busy={busy}
+            notice={notice}
+            onAddFolder={actions.addFolder}
+            onSearch={search}
+          />
         )}
       </main>
 
@@ -205,19 +221,21 @@ function PageContent({
   busy,
   notice,
   onAddFolder,
+  onSearch,
 }: {
   page: PageState;
   library: Library | null;
   busy: boolean;
   notice: string | null;
   onAddFolder: () => void;
+  onSearch: (text: string) => void;
 }) {
   const { t } = useI18n();
   switch (page.kind) {
     case "found":
       return <EntryPage key={page.headword} headword={page.headword} entries={page.entries} />;
     case "missing":
-      return <Lead>{t.notFound(page.query)}</Lead>;
+      return <NoMatch query={page.query} next={page.next} onSearch={onSearch} />;
     case "failed":
       return <Lead>{t.lookupFailed(page.reason)}</Lead>;
     case "idle":
@@ -273,6 +291,51 @@ function EntryPage({ headword, entries: initial }: { headword: string; entries: 
           <EntryFrame key={String(entry.allowNetwork)} dictionaryTitle={entry.dictionaryTitle} src={entry.src} />
         </section>
       ))}
+    </article>
+  );
+}
+
+/**
+ * The page when nothing was found: it says so, suggests a wildcard pattern, and lists the
+ * headwords that follow where the word would stand, so a miss is never a dead end.
+ */
+function NoMatch({ query, next, onSearch }: { query: string; next: Suggestion[]; onSearch: (text: string) => void }) {
+  const { t } = useI18n();
+  const pattern = wildcardHint(query);
+  return (
+    <article>
+      <div className="flex flex-wrap items-baseline gap-x-md gap-y-xs border-b-[3px] border-double border-rule pb-2.5">
+        <h1 className="-ml-3.5 font-serif text-display font-bold [overflow-wrap:anywhere]">【{query}】</h1>
+        <span className="text-[12px] text-text-secondary">{t.notFoundMeta}</span>
+      </div>
+      <Lead>{t.notFound(query)}</Lead>
+      <div className="flex max-w-[860px] flex-wrap items-center gap-x-2.5 gap-y-sm pb-xs text-text-secondary">
+        <span>{t.wildcardTip}</span>
+        <OutlineButton onClick={() => onSearch(pattern)}>
+          {t.tryPattern} <b className="font-serif text-[14px]">{pattern}</b>
+        </OutlineButton>
+      </div>
+      {next.length > 0 ? (
+        <>
+          <h2 id="next-in-index" className="mt-5 mb-1.5 text-[13px] font-bold">
+            {t.nextInIndex}
+          </h2>
+          <ul aria-labelledby="next-in-index" className="columns-[150px] gap-x-7 [column-rule:1px_solid_var(--hairline)] pt-0.5 pb-1.5">
+            {next.slice(0, 40).map((item) => (
+              <li key={item.headword}>
+                <button
+                  type="button"
+                  lang={/[぀-ヿ]/.test(item.headword) ? "ja" : undefined}
+                  onClick={() => onSearch(item.headword)}
+                  className="-ml-1.5 block h-[26px] w-full truncate rounded-sharp px-1.5 text-left font-serif text-index hover:bg-shade"
+                >
+                  {item.headword}
+                </button>
+              </li>
+            ))}
+          </ul>
+        </>
+      ) : null}
     </article>
   );
 }

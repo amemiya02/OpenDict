@@ -199,9 +199,11 @@ impl AppState {
         })
     }
 
-    /// Up to `limit` headwords after `headword`: the headword column, continued.
+    /// Up to `limit` more suggestions for `query` after `headword`: the headword column,
+    /// continued.
     pub fn headwords_after(
         &self,
+        query: &str,
         headword: &str,
         limit: usize,
     ) -> Result<Vec<SuggestionView>, String> {
@@ -210,7 +212,7 @@ impl AppState {
             return Ok(Vec::new());
         };
         let items = library
-            .headwords_after(headword, limit)
+            .suggest_after(query, headword, limit)
             .map_err(|error| error.to_string())?;
         Ok(items.into_iter().map(suggestion).collect())
     }
@@ -438,7 +440,21 @@ mod tests {
             })
         );
         assert_eq!(
-            serde_json::to_value(state.headwords_after("apple", 50).unwrap()).unwrap(),
+            serde_json::to_value(state.headwords_after("", "apple", 50).unwrap()).unwrap(),
+            json!([{ "headword": "serendipity", "count": 1 }])
+        );
+    }
+
+    #[test]
+    fn a_patterns_column_continues_with_its_matches_only() {
+        let data = tempfile::tempdir().unwrap();
+        let folder = library_folder();
+        let state = AppState::load(&data.path().join("library.json"), None, data.path());
+        state.add_folder(folder.path()).unwrap();
+
+        assert_eq!(state.headwords_after("a*", "apple", 50).unwrap(), []);
+        assert_eq!(
+            serde_json::to_value(state.headwords_after("s*", "s", 50).unwrap()).unwrap(),
             json!([{ "headword": "serendipity", "count": 1 }])
         );
     }
@@ -451,7 +467,7 @@ mod tests {
 
         let suggestions = state.suggest("", 50).unwrap();
         assert!(suggestions.browse && suggestions.items.is_empty());
-        assert_eq!(state.headwords_after("a", 50).unwrap(), []);
+        assert_eq!(state.headwords_after("", "a", 50).unwrap(), []);
     }
 
     #[test]

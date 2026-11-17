@@ -82,9 +82,12 @@ export function suggest(query: string, limit: number): Promise<Suggestions> {
   return invoke<Suggestions>("suggest", { query, limit });
 }
 
-/** The headword column continued: up to `limit` headwords after `headword` in index order. */
-export function headwordsAfter(headword: string, limit: number): Promise<Suggestion[]> {
-  return invoke<Suggestion[]>("headwords_after", { headword, limit });
+/**
+ * The headword column for `query` continued: up to `limit` more suggestions after
+ * `headword`. A pattern's column continues with its matches, any other through the index.
+ */
+export function headwordsAfter(query: string, headword: string, limit: number): Promise<Suggestion[]> {
+  return invoke<Suggestion[]>("headwords_after", { query, headword, limit });
 }
 
 export function getLibrary(): Promise<Library> {

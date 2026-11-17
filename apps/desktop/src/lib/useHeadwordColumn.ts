@@ -8,8 +8,10 @@ export interface HeadwordColumnState extends Omit<Suggestions, "items"> {
   items: Suggestion[];
   /** Index of the current suggestion, or -1 when none is current. */
   selected: number;
-  /** The index has no headwords after the last item. */
+  /** There is nothing to load after the last item. */
   exhausted: boolean;
+  /** The query the items answer. */
+  query: string;
 }
 
 const initial: HeadwordColumnState = {
@@ -20,6 +22,7 @@ const initial: HeadwordColumnState = {
   browse: true,
   selected: -1,
   exhausted: true,
+  query: "",
 };
 
 /**
@@ -40,15 +43,17 @@ export function useHeadwordColumn() {
 
   /** Asks for the suggestions for `query`; resolves to the current headword, if any. */
   const refresh = useCallback(
-    async (query: string): Promise<{ headword: string | null; miss: boolean } | null> => {
+    async (query: string): Promise<{ headword: string | null; miss: boolean; items: Suggestion[] } | null> => {
       const ticket = ++generation.current;
       loading.current = null;
       const answer = await suggest(query, PAGE_SIZE);
       if (ticket !== generation.current) return null;
       // Browsing the index or looking at a miss, nothing is current until the reader picks.
       const selected = answer.browse || answer.miss || answer.items.length === 0 ? -1 : 0;
-      update({ ...answer, selected, exhausted: answer.items.length < PAGE_SIZE });
-      return { headword: answer.items[selected]?.headword ?? null, miss: answer.miss };
+      // Close spellings are a short list of their own; anything else may continue.
+      const exhausted = answer.near || answer.items.length < PAGE_SIZE;
+      update({ ...answer, selected, exhausted, query });
+      return { headword: answer.items[selected]?.headword ?? null, miss: answer.miss, items: answer.items };
     },
     [update],
   );
@@ -60,7 +65,7 @@ export function useHeadwordColumn() {
     if (now.exhausted || !last) return Promise.resolve();
     if (loading.current) return loading.current;
     const ticket = generation.current;
-    const request = headwordsAfter(last.headword, PAGE_SIZE)
+    const request = headwordsAfter(now.query, last.headword, PAGE_SIZE)
       .then((more) => {
         if (ticket !== generation.current) return;
         const current = latest.current;

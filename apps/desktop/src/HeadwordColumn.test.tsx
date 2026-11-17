@@ -153,7 +153,7 @@ describe("headword column", () => {
     await userEvent.keyboard("{ArrowDown}");
 
     await waitFor(() => expect(pageHeadword()).toBe(`【${word(PAGE_SIZE)}】`));
-    expect(calls).toContainEqual({ command: "headwords_after", args: { headword: word(PAGE_SIZE - 1), limit: PAGE_SIZE } });
+    expect(calls).toContainEqual({ command: "headwords_after", args: { query: "", headword: word(PAGE_SIZE - 1), limit: PAGE_SIZE } });
     expect(shownHeadwords()).toHaveLength(PAGE_SIZE + 1);
   });
 
