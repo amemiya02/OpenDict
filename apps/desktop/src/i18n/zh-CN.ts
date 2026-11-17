@@ -118,6 +118,7 @@ export const zhCN = {
   cMiniSettings: "迷你窗口设置…",
   cMoveData: "移动数据目录…",
   interfaceLanguage: "界面语言",
+  languageSystem: "跟随系统",
   pronounce: "发音",
   collapse: "折叠",
   expand: "展开",

@@ -117,6 +117,7 @@ export const en = {
   cMiniSettings: "Mini Window settings…",
   cMoveData: "Move the data directory…",
   interfaceLanguage: "Interface language",
+  languageSystem: "Follow system",
   pronounce: "Pronounce",
   collapse: "Collapse",
   expand: "Expand",

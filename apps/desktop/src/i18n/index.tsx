@@ -29,16 +29,19 @@ export function pickLocale(preferred: readonly string[]): Locale {
 interface I18n {
   /** The interface language on screen. */
   locale: Locale;
+  /** Whether that is the system's language because the reader has chosen none. */
+  followsSystem: boolean;
   t: Catalogue;
-  /** Switches the interface language at once, and keeps the choice. */
-  chooseLanguage: (locale: Locale) => void;
+  /** Switches the interface language at once, and keeps the choice; `null` follows the system's. */
+  chooseLanguage: (locale: Locale | null) => void;
 }
 
-const I18nContext = createContext<I18n>({ locale: "en", t: en, chooseLanguage: () => {} });
+const I18nContext = createContext<I18n>({ locale: "en", followsSystem: true, t: en, chooseLanguage: () => {} });
 
 /**
  * The interface language: `locale` (the system's) until the shell says the reader chose
- * another, and whatever the reader chooses from then on, in this window or another one.
+ * another, and whatever the reader chooses from then on, in this window or another one,
+ * the system's again included.
  * It writes the language to `<html lang>`, so CJK text picks the right fonts.
  */
 export function I18nProvider({ locale, children }: { locale: Locale; children: ReactNode }) {
@@ -64,13 +67,15 @@ export function I18nProvider({ locale, children }: { locale: Locale; children: R
     document.documentElement.lang = current;
   }, [current]);
 
-  const chooseLanguage = useCallback((language: Locale) => {
+  const chooseLanguage = useCallback((language: Locale | null) => {
     touched.current = true;
     setChosen(language);
     saveLanguage(language).catch(() => {}); // still switched, for this session
   }, []);
 
-  return <I18nContext value={{ locale: current, t: catalogues[current], chooseLanguage }}>{children}</I18nContext>;
+  return (
+    <I18nContext value={{ locale: current, followsSystem: chosen === null, t: catalogues[current], chooseLanguage }}>{children}</I18nContext>
+  );
 }
 
 export function useI18n() {

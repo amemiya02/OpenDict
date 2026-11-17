@@ -137,7 +137,8 @@ describe("the theme", () => {
     await vi.waitFor(() => expect(document.documentElement.dataset.theme).toBe("light"));
 
     const settings = await openReadingSettings();
-    expect((within(settings).getByRole("radio", { name: "Follow system" }) as HTMLInputElement).checked).toBe(true);
+    const themes = within(settings).getByRole("radiogroup", { name: "Theme" });
+    expect((within(themes).getByRole("radio", { name: "Follow system" }) as HTMLInputElement).checked).toBe(true);
   });
 
   it("turns dark when the operating system does, while it follows the system", async () => {

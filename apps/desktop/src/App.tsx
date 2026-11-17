@@ -81,7 +81,7 @@ type View = "lookup" | "library" | "wordBook";
 
 /** The main window: cover band, headword column, page and status line. */
 export function App() {
-  const { t, locale, chooseLanguage } = useI18n();
+  const { t, locale, followsSystem, chooseLanguage } = useI18n();
   const [query, setQuery] = useState("");
   const [page, setPage] = useState<PageState>({ kind: "idle" });
   const [view, setView] = useState<View>("lookup");
@@ -701,8 +701,9 @@ export function App() {
         ? { label: t.cRecolourAll, run: () => void reading.setAllAsAuthored(false).catch(() => {}) }
         : { label: t.cAuthoredAll, run: () => void reading.setAllAsAuthored(true).catch(() => {}) },
     );
+    list.push({ label: t.cLanguage(t.languageSystem), checked: followsSystem, run: () => chooseLanguage(null) });
     for (const [language, name] of Object.entries(LANGUAGES) as [Locale, string][]) {
-      list.push({ label: t.cLanguage(name), checked: language === locale, run: () => chooseLanguage(language) });
+      list.push({ label: t.cLanguage(name), checked: !followsSystem && language === locale, run: () => chooseLanguage(language) });
     }
     const { zoom, textSize } = appearance.appearance;
     list.push(

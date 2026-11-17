@@ -118,6 +118,7 @@ export const ja = {
   cMiniSettings: "ミニウィンドウの設定…",
   cMoveData: "データフォルダーを移動…",
   interfaceLanguage: "表示言語",
+  languageSystem: "システムに合わせる",
   pronounce: "発音",
   collapse: "折りたたむ",
   expand: "展開する",

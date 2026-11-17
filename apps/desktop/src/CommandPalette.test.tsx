@@ -130,9 +130,9 @@ async function lookUp(word: string) {
   await screen.findByRole("heading", { level: 1, name: `【${word}】` });
 }
 
-async function openPalette() {
+async function openPalette(name = "Command palette") {
   await userEvent.keyboard("{Control>}k{/Control}");
-  return screen.findByRole("dialog", { name: "Command palette" });
+  return screen.findByRole("dialog", { name });
 }
 
 /** The palette's row for a command, found by the start of its label. */
@@ -187,7 +187,9 @@ describe("the command palette", () => {
     const palette = await openPalette();
     await vi.waitFor(() => expect(command(palette, "Theme: dark").getAttribute("aria-checked")).toBe("true"));
     expect(command(palette, "Theme: light").getAttribute("aria-checked")).toBe("false");
-    expect(command(palette, "Interface language: English").getAttribute("aria-checked")).toBe("true");
+    // No language chosen yet: the interface follows the system's.
+    expect(command(palette, "Interface language: Follow system").getAttribute("aria-checked")).toBe("true");
+    expect(command(palette, "Interface language: English").getAttribute("aria-checked")).toBe("false");
     expect(command(palette, "Interface language: 简体中文").getAttribute("aria-checked")).toBe("false");
     expect(command(palette, "Use all dictionaries").getAttribute("aria-checked")).toBe("true");
     expect(command(palette, "Switch to Group “Reading”").getAttribute("aria-checked")).toBe("false");
@@ -315,11 +317,41 @@ describe("the interface language", () => {
     await userEvent.click(await screen.findByRole("button", { name: "Library" }));
 
     const languages = await screen.findByRole("radiogroup", { name: "Interface language" });
-    expect(within(languages).getByRole<HTMLInputElement>("radio", { name: "English" }).checked).toBe(true);
+    expect(within(languages).getByRole<HTMLInputElement>("radio", { name: "Follow system" }).checked).toBe(true);
+    expect(within(languages).getByRole<HTMLInputElement>("radio", { name: "English" }).checked).toBe(false);
     await userEvent.click(within(languages).getByRole("radio", { name: "日本語" }));
 
     expect(await screen.findByRole("radiogroup", { name: "表示言語" })).toBeTruthy();
     expect(shell.changes).toEqual([{ command: "set_language", args: { language: "ja" } }]);
+  });
+
+  it("follows the system again once the reader picks that in the palette", async () => {
+    const shell = fakeShell({ language: "ja" });
+    renderApp("en");
+    await screen.findByRole("combobox", { name: "調べたい語を入力" });
+
+    const palette = await openPalette("コマンドパレット");
+    expect(command(palette, "表示言語：日本語").getAttribute("aria-checked")).toBe("true");
+    expect(command(palette, "表示言語：システムに合わせる").getAttribute("aria-checked")).toBe("false");
+    await userEvent.click(command(palette, "表示言語：システムに合わせる"));
+
+    expect(await screen.findByRole("combobox", { name: "Type a word" })).toBeTruthy();
+    expect(document.documentElement.lang).toBe("en");
+    expect(shell.changes).toEqual([{ command: "set_language", args: { language: null } }]);
+  });
+
+  it("follows the system again once the reader picks that under Reading", async () => {
+    const shell = fakeShell({ language: "ja" });
+    renderApp("en");
+    await userEvent.click(await screen.findByRole("button", { name: "ライブラリ" }));
+
+    const languages = await screen.findByRole("radiogroup", { name: "表示言語" });
+    expect(within(languages).getByRole<HTMLInputElement>("radio", { name: "日本語" }).checked).toBe(true);
+    await userEvent.click(within(languages).getByRole("radio", { name: "システムに合わせる" }));
+
+    const followed = await screen.findByRole("radiogroup", { name: "Interface language" });
+    expect(within(followed).getByRole<HTMLInputElement>("radio", { name: "Follow system" }).checked).toBe(true);
+    expect(shell.changes).toEqual([{ command: "set_language", args: { language: null } }]);
   });
 
   it("starts in the language the reader chose before", async () => {

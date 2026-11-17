@@ -9,7 +9,7 @@ import { TEXT_SIZES, ZOOMS, zoomStep, type AppearanceControls } from "../lib/use
  * like the Library above it: a heading, then rows divided by hairlines, no boxes.
  */
 export function ReadingSettings({ controls }: { controls: AppearanceControls }) {
-  const { t, locale, chooseLanguage } = useI18n();
+  const { t, locale, followsSystem, chooseLanguage } = useI18n();
   const heading = useId();
   const { appearance, setTheme, setAllAsAuthored, setTextSize, setZoom } = controls;
   const themes: [Theme, string][] = [
@@ -25,9 +25,13 @@ export function ReadingSettings({ controls }: { controls: AppearanceControls }) 
       </h2>
       <Row label={t.interfaceLanguage}>
         <div role="radiogroup" aria-label={t.interfaceLanguage} className="flex flex-wrap gap-x-3.5 gap-y-1">
+          <label className="flex items-center gap-1.5">
+            <input type="radio" name="language" checked={followsSystem} onChange={() => chooseLanguage(null)} />
+            {t.languageSystem}
+          </label>
           {(Object.entries(LANGUAGES) as [Locale, string][]).map(([language, name]) => (
             <label key={language} lang={language} className="flex items-center gap-1.5">
-              <input type="radio" name="language" checked={locale === language} onChange={() => chooseLanguage(language)} />
+              <input type="radio" name="language" checked={!followsSystem && locale === language} onChange={() => chooseLanguage(language)} />
               {name}
             </label>
           ))}
