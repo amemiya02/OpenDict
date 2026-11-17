@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-set-as-authored"
+description = "Enables the set_as_authored command without any pre-configured scope."
+commands.allow = ["set_as_authored"]
+
+[[permission]]
+identifier = "deny-set-as-authored"
+description = "Denies the set_as_authored command without any pre-configured scope."
+commands.deny = ["set_as_authored"]

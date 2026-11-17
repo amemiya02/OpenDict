@@ -13,6 +13,12 @@ fn main() {
         "set_dictionary_enabled",
         "move_dictionary",
         "register_dictionary",
+        "appearance",
+        "set_theme",
+        "set_as_authored",
+        "set_all_as_authored",
+        "set_text_size",
+        "set_zoom",
     ]);
     tauri_build::try_build(tauri_build::Attributes::new().app_manifest(manifest))
         .expect("failed to run tauri-build");

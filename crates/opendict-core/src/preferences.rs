@@ -155,7 +155,9 @@ impl Preferences {
 
     /// The base text size of Entries, in CSS pixels.
     pub fn text_size(&self) -> u32 {
-        self.stored.text_size.clamp(*TEXT_SIZES.start(), *TEXT_SIZES.end())
+        self.stored
+            .text_size
+            .clamp(*TEXT_SIZES.start(), *TEXT_SIZES.end())
     }
 
     /// Sets the base text size, kept within readable limits, saves, and returns the size

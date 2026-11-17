@@ -41,7 +41,12 @@ pub fn run() {
                 None => app.path().app_data_dir()?,
             };
             let library_file = data_dir.join("library.json");
-            app.manage(AppState::load(&library_file, override_folder, &data_dir));
+            let state = AppState::load(&library_file, override_folder, &data_dir);
+            // The reader's theme and zoom from the last session, before the page shows.
+            let appearance = state.appearance();
+            commands::apply_theme(app.handle(), appearance.theme);
+            commands::apply_zoom(app.handle(), appearance.zoom);
+            app.manage(state);
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -56,6 +61,12 @@ pub fn run() {
             commands::move_dictionary,
             commands::register_dictionary,
             commands::set_allow_network,
+            commands::appearance,
+            commands::set_theme,
+            commands::set_as_authored,
+            commands::set_all_as_authored,
+            commands::set_text_size,
+            commands::set_zoom,
         ])
         .run(tauri::generate_context!())
         .expect("OpenDict failed to start");

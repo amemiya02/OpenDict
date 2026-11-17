@@ -53,7 +53,7 @@ pub fn respond(state: &AppState, request: &Request<Vec<u8>>) -> Response<Vec<u8>
                 .header(header::CONTENT_TYPE, "text/html; charset=utf-8")
                 .header(header::CACHE_CONTROL, "no-store")
                 .headers(&policy)
-                .body(entry_document(&html).into_bytes())
+                .body(entry_document(&html, state.appearance().text_size).into_bytes())
                 .expect("valid response"),
             Ok(None) => plain(StatusCode::NOT_FOUND, &policy),
             Err(_) => plain(StatusCode::INTERNAL_SERVER_ERROR, &policy),
@@ -123,13 +123,21 @@ fn content_policy(dictionary_id: &str, allow_network: bool) -> Vec<(header::Head
 
 /// Reports the document's height to the app so the frame can fit its content. The app
 /// trusts only the size, and only from the frame it made.
-const FRAME_SCRIPT: &str = r#"(()=>{const post=()=>{const b=document.body;parent.postMessage({opendict:"size",height:Math.ceil(Math.max(document.documentElement.getBoundingClientRect().height,b?b.scrollHeight:0))},"*")};new ResizeObserver(post).observe(document.documentElement);addEventListener("load",post)})();"#;
+///
+/// It also takes a new base text size from the app while the Entry is open, so the reader
+/// can change it without reloading the Entry. It accepts that only from the app window
+/// (another Dictionary's frame is a different `source`), and only a whole number of pixels
+/// in range; all it changes is the text-size rule just before it.
+const FRAME_SCRIPT: &str = r#"(()=>{const post=()=>{const b=document.body;parent.postMessage({opendict:"size",height:Math.ceil(Math.max(document.documentElement.getBoundingClientRect().height,b?b.scrollHeight:0))},"*")};new ResizeObserver(post).observe(document.documentElement);addEventListener("load",post);const t=document.currentScript.previousElementSibling;addEventListener("message",e=>{const d=e.data;if(e.source!==parent||!d||d.opendict!=="textSize")return;const n=d.size;if(Number.isInteger(n)&&n>=10&&n<=32)t.textContent=":where(html){font-size:"+n+"px}"})})();"#;
 
 /// Wraps Entry HTML in a document of its own. The app sets no type inside it (the
-/// Hands-Off Entry Rule); it only removes the default page margin.
-fn entry_document(html: &str) -> String {
+/// Hands-Off Entry Rule): it removes the default page margin and gives the reader's text
+/// size as the base size, the way a browser's default font size works. That rule has no
+/// specificity and comes before the Entry, so any size the Dictionary sets itself wins.
+fn entry_document(html: &str, text_size: u32) -> String {
     format!(
         "<!doctype html><html><head><meta charset=\"utf-8\"><style>html,body{{margin:0}}</style>\
+         <style>:where(html){{font-size:{text_size}px}}</style>\
          <script>{FRAME_SCRIPT}</script></head><body>{html}</body></html>"
     )
 }
@@ -346,6 +354,41 @@ mod tests {
         assert!(csp(&allowed).contains("img-src") && csp(&allowed).contains("https: http:"));
         let other = get(&f.state, &entry_url(&f.plain, "cat"));
         assert!(csp(&other).contains("connect-src 'none'"));
+    }
+
+    #[test]
+    fn an_entry_document_takes_the_readers_text_size_as_its_base_size() {
+        let f = fixture();
+        f.state.set_text_size(20).unwrap();
+
+        let response = get(&f.state, &entry_url(&f.plain, "cat"));
+
+        let body = String::from_utf8(response.body().clone()).unwrap();
+        // Zero specificity, ahead of the Entry: any size the Dictionary sets itself wins.
+        assert!(body.contains(":where(html){font-size:20px}"), "{body}");
+        assert!(body.find(":where(html)").unwrap() < body.find("<body>").unwrap());
+    }
+
+    #[test]
+    fn look_up_says_which_dictionaries_show_as_authored_in_the_dark_theme() {
+        let f = fixture();
+        f.state.set_as_authored(&f.plain, true).unwrap();
+
+        let shown: Vec<_> = f
+            .state
+            .look_up("cat")
+            .unwrap()
+            .into_iter()
+            .map(|e| (e.dictionary_title, e.as_authored))
+            .collect();
+
+        assert_eq!(
+            shown,
+            [
+                ("Illustrated".to_owned(), false),
+                ("Plain".to_owned(), true)
+            ]
+        );
     }
 
     #[test]

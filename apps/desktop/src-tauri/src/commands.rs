@@ -4,11 +4,12 @@
 
 use std::path::PathBuf;
 
-use tauri::{AppHandle, State};
+use tauri::{AppHandle, Manager, State};
 use tauri_plugin_dialog::DialogExt;
 
 use crate::state::{
-    AppState, Direction, EntryView, LibraryView, RegisterError, SuggestionView, SuggestionsView,
+    AppState, AppearanceView, Direction, EntryView, LibraryView, RegisterError, SuggestionView,
+    SuggestionsView, Theme,
 };
 
 /// Unlocks a Dictionary that needs a registration code with the code and e-mail the
@@ -104,4 +105,63 @@ pub fn set_allow_network(
     allow: bool,
 ) -> Result<(), String> {
     state.set_allow_network(&dictionary_id, allow)
+}
+
+#[tauri::command]
+pub fn appearance(state: State<'_, AppState>) -> AppearanceView {
+    state.appearance()
+}
+
+/// Remembers the theme and gives it to the windows, so their native frames and the
+/// interface's `prefers-color-scheme` follow it.
+#[tauri::command]
+pub fn set_theme(app: AppHandle, state: State<'_, AppState>, theme: Theme) -> Result<(), String> {
+    state.set_theme(theme)?;
+    apply_theme(&app, theme);
+    Ok(())
+}
+
+#[tauri::command]
+pub fn set_as_authored(
+    state: State<'_, AppState>,
+    dictionary_id: String,
+    as_authored: bool,
+) -> Result<(), String> {
+    state.set_as_authored(&dictionary_id, as_authored)
+}
+
+#[tauri::command]
+pub fn set_all_as_authored(state: State<'_, AppState>, as_authored: bool) -> Result<(), String> {
+    state.set_all_as_authored(as_authored)
+}
+
+/// Remembers the base text size of Entries; returns it as set, within limits.
+#[tauri::command]
+pub fn set_text_size(state: State<'_, AppState>, size: u32) -> Result<u32, String> {
+    state.set_text_size(size)
+}
+
+/// Remembers the page zoom and zooms the windows; returns it as set, within limits.
+#[tauri::command]
+pub fn set_zoom(app: AppHandle, state: State<'_, AppState>, percent: u32) -> Result<u32, String> {
+    let zoom = state.set_zoom(percent)?;
+    apply_zoom(&app, zoom);
+    Ok(zoom)
+}
+
+/// Gives the windows the reader's theme; `System` lets them follow the operating system.
+pub fn apply_theme(app: &AppHandle, theme: Theme) {
+    app.set_theme(match theme {
+        Theme::System => None,
+        Theme::Light => Some(tauri::Theme::Light),
+        Theme::Dark => Some(tauri::Theme::Dark),
+    });
+}
+
+/// Zooms every window's page, Entry frames included, to `percent`.
+pub fn apply_zoom(app: &AppHandle, percent: u32) {
+    for window in app.webview_windows().values() {
+        // A platform without page zoom keeps the page at its own size.
+        let _ = window.set_zoom(f64::from(percent) / 100.0);
+    }
 }

@@ -16,6 +16,12 @@
     "allow-move-dictionary",
     "allow-register-dictionary",
     "allow-set-allow-network",
+    "allow-appearance",
+    "allow-set-theme",
+    "allow-set-as-authored",
+    "allow-set-all-as-authored",
+    "allow-set-text-size",
+    "allow-set-zoom",
     "updater:default",
     "process:allow-restart"
   ]
