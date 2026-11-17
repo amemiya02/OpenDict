@@ -3,10 +3,13 @@
 //! `cargo run -p opendict-mdict-fixture --example sample_library -- <folder>`
 //!
 //! Every Entry is a sample written for OpenDict, not taken from a real dictionary.
+//!
+//! `sample-bought.mdx` needs a registration code (`Encrypted="1"`): it opens with the
+//! e-mail `reader@example.com` and the code `0123456789ABCDEF0123456789ABCDEF`.
 
 use std::path::PathBuf;
 
-use opendict_mdict_fixture::MdxBuilder;
+use opendict_mdict_fixture::{Identity, MdxBuilder};
 
 fn main() -> std::io::Result<()> {
     let folder: PathBuf = std::env::args_os()
@@ -35,6 +38,19 @@ fn main() -> std::io::Result<()> {
             "<p><b>たべる【食べる】</b></p><p>食物を口に入れ、かんで飲み込む。（見本）</p>",
         )
         .write_to(folder.join("sample-japanese.mdx"))?;
+
+    MdxBuilder::new()
+        .title("Sample Bought Dictionary")
+        .entry(
+            "bargain",
+            "<p><b>bargain</b> <i>noun</i></p><p>Something bought for less than it is worth. (sample)</p>",
+        )
+        .registered_to(
+            "reader@example.com",
+            "0123456789ABCDEF0123456789ABCDEF",
+            Identity::Utf16,
+        )
+        .write_to(folder.join("sample-bought.mdx"))?;
 
     println!("{}", folder.display());
     Ok(())

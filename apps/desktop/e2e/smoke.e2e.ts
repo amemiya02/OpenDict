@@ -18,7 +18,8 @@ import { chromium, type Browser } from "playwright-core";
 const repo = resolve(import.meta.dirname, "../../..");
 const targetDir = process.env.CARGO_TARGET_DIR ?? join(repo, "target");
 const appPath = process.env.OPENDICT_APP ?? join(targetDir, "debug", process.platform === "win32" ? "opendict-desktop.exe" : "opendict-desktop");
-const port = 9333;
+// Override with OPENDICT_E2E_PORT when several worktrees run the test at once.
+const port = Number(process.env.OPENDICT_E2E_PORT ?? 9333);
 
 let app: ChildProcess | undefined;
 let browser: Browser | undefined;
@@ -141,4 +142,29 @@ test("the Library view lists the Dictionaries, and a disabled one stops answerin
   await search.fill("serendipity");
   await search.press("Enter");
   await page.locator("iframe").waitFor({ timeout: 10_000 });
+});
+
+test("a Dictionary that needs a registration code opens once the reader enters it", async () => {
+  const page = browser!.contexts()[0]!.pages()[0]!;
+  await page.getByRole("button", { name: "Library", exact: true }).click();
+  const failure = page.getByRole("listitem").filter({ hasText: "sample-bought.mdx" });
+  assert.match(await failure.innerText(), /needs its registration code/);
+
+  await failure.getByRole("button", { name: /^Enter the registration code for / }).click();
+  await page.getByLabel("E-mail").fill("reader@example.com");
+  await page.getByLabel("Registration code").fill("FEDCBA9876543210FEDCBA9876543210");
+  await page.getByRole("button", { name: "Unlock" }).click();
+  await page.getByRole("alert").filter({ hasText: "do not unlock the dictionary" }).waitFor({ timeout: 10_000 });
+  if (process.env.OPENDICT_E2E_SCREENSHOT) {
+    await page.screenshot({ path: process.env.OPENDICT_E2E_SCREENSHOT.replace(/\.png$/, "-registration.png") });
+  }
+
+  await page.getByLabel("Registration code").fill("0123 4567 89AB CDEF 0123 4567 89AB CDEF");
+  await page.getByRole("button", { name: "Unlock" }).click();
+  await page.getByRole("rowheader", { name: /Sample Bought Dictionary/ }).waitFor({ timeout: 10_000 });
+
+  const search = page.getByRole("searchbox");
+  await search.fill("bargain");
+  await search.press("Enter");
+  await page.frameLocator("iframe").getByText("Something bought for less than it is worth.").waitFor({ timeout: 10_000 });
 });
