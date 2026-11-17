@@ -1,44 +1,64 @@
-// End-to-end smoke test against the built app (Windows: WebView2 over the DevTools protocol).
+// End-to-end tests against the built app (Windows: WebView2 over the DevTools protocol).
 //
 //   npx tauri build --debug --no-bundle
 //   npm run e2e
 //
-// It writes a sample Library Folder with the fixture writer, starts the app on it with
-// remote debugging enabled, types a headword and checks that the Entry appears inside
-// a sandboxed frame the app cannot reach into.
+// They write a Library Folder with the fixture writer (the sample Library plus hostile
+// "probe" Dictionaries), start the app on it with remote debugging enabled, and drive the
+// real window. A local HTTP server stands in for the network: any request that reaches it
+// from an Entry that was not allowed the network is a failure.
 
 import { spawn, execFileSync, type ChildProcess } from "node:child_process";
+import { createServer, type Server } from "node:http";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { after, before, test } from "node:test";
 import assert from "node:assert/strict";
-import { chromium, type Browser } from "playwright-core";
+import { chromium, type Browser, type Frame, type Page } from "playwright-core";
 
 const repo = resolve(import.meta.dirname, "../../..");
 const targetDir = process.env.CARGO_TARGET_DIR ?? join(repo, "target");
 const appPath = process.env.OPENDICT_APP ?? join(targetDir, "debug", process.platform === "win32" ? "opendict-desktop.exe" : "opendict-desktop");
-const port = 9333;
 
 let app: ChildProcess | undefined;
 let browser: Browser | undefined;
-let library = "";
-let webviewProfile = "";
+let sink: Server | undefined;
+let page: Page;
+let scratch = "";
+/** Every request that reached the stand-in network, in order. */
+const sinkRequests: string[] = [];
 
 before(async () => {
-  if (process.platform !== "win32") throw new Error("This smoke test drives WebView2 and runs on Windows only.");
-  library = mkdtempSync(join(tmpdir(), "opendict-e2e-"));
-  execFileSync("cargo", ["run", "-q", "-p", "opendict-mdict-fixture", "--example", "sample_library", "--", library], { cwd: repo, stdio: "inherit" });
-  writeFileSync(join(library, "notes.mdx"), "these are notes, not a dictionary");
-  // A throwaway WebView2 profile: the test never shares the developer's (or another
-  // test run's) profile, which WebView2 refuses to open with different arguments.
-  webviewProfile = mkdtempSync(join(tmpdir(), "opendict-e2e-webview-"));
+  if (process.platform !== "win32") throw new Error("These tests drive WebView2 and run on Windows only.");
+  scratch = mkdtempSync(join(tmpdir(), "opendict-e2e-"));
+  const library = join(scratch, "library");
 
+  sink = createServer((request, response) => {
+    sinkRequests.push(request.url ?? "");
+    response.writeHead(200, { "Content-Type": "text/plain", "Access-Control-Allow-Origin": "*" }).end("reached");
+  });
+  await new Promise<void>((done) => sink!.listen(0, "127.0.0.1", done));
+  const address = sink.address();
+  assert.ok(address && typeof address === "object");
+  const sinkUrl = `http://127.0.0.1:${address.port}`;
+
+  const cargo = (example: string, ...args: string[]) =>
+    execFileSync("cargo", ["run", "-q", "-p", "opendict-mdict-fixture", "--example", example, "--", ...args], { cwd: repo, stdio: "inherit" });
+  cargo("sample_library", library);
+  cargo("probe_library", join(library, "probes"), sinkUrl);
+  writeFileSync(join(library, "notes.mdx"), "these are notes, not a dictionary");
+
+  // A free port of our own: other copies of the app may be under test at the same time.
+  const port = await freePort();
   app = spawn(appPath, [], {
     env: {
       ...process.env,
       OPENDICT_LIBRARY_FOLDER: library,
-      WEBVIEW2_USER_DATA_FOLDER: webviewProfile,
+      OPENDICT_DATA_DIR: join(scratch, "data"),
+      // A WebView2 browser of our own: instances sharing a user data folder share one
+      // browser process, and with it the debugging port of whichever started first.
+      WEBVIEW2_USER_DATA_FOLDER: join(scratch, "webview"),
       // English interface, whatever the system language, so the test can find controls by name.
       WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: `--remote-debugging-port=${port} --lang=en-US`,
     },
@@ -54,63 +74,154 @@ before(async () => {
       await new Promise((r) => setTimeout(r, 500));
     }
   }
+  const context = browser.contexts()[0]!;
+  page = context.pages()[0] ?? (await context.waitForEvent("page"));
+  await page.waitForLoadState();
+  // The status line fills in once the Library has been opened.
+  await page.waitForFunction(() => Boolean(document.querySelector("footer")?.textContent?.trim()), null, { timeout: 30_000 });
 });
 
 after(async () => {
   await browser?.close().catch(() => {});
-  app?.kill();
-  if (library) rmSync(library, { recursive: true, force: true });
-  if (webviewProfile) rmSync(webviewProfile, { recursive: true, force: true, maxRetries: 5, retryDelay: 500 });
+  if (app && app.exitCode === null) {
+    const exited = new Promise((done) => app!.once("exit", done));
+    app.kill();
+    await exited;
+  }
+  sink?.close();
+  // WebView2's browser processes let go of their user data folder a moment after the app exits.
+  if (scratch) rmSync(scratch, { recursive: true, force: true, maxRetries: 20, retryDelay: 500 });
 });
 
-test("typing a headword shows its Entry in a sandboxed frame", async () => {
-  const context = browser!.contexts()[0]!;
-  const page = context.pages()[0] ?? (await context.waitForEvent("page"));
-  await page.waitForLoadState();
+async function freePort(): Promise<number> {
+  const probe = createServer();
+  await new Promise<void>((done) => probe.listen(0, "127.0.0.1", done));
+  const { port } = probe.address() as { port: number };
+  await new Promise((done) => probe.close(done));
+  return port;
+}
 
-  // The status line fills in once the Library has been opened.
-  await page.waitForFunction(() => Boolean(document.querySelector("footer")?.textContent?.trim()), null, { timeout: 30_000 });
+async function lookUp(headword: string) {
   const search = page.getByRole("searchbox");
-  await search.fill("serendipity");
+  // Key presses sent over DevTools are sometimes dropped when the field was focused by autoFocus
+  // before DevTools attached; a real click first makes WebView2 deliver them.
+  await search.click();
+  await search.fill(headword);
   await search.press("Enter");
+  await page
+    .getByRole("heading", { level: 1, name: `【${headword}】` })
+    .waitFor({ timeout: 10_000 })
+    .catch(async (error: unknown) => {
+      throw new Error(`No page for ${headword}. The window says: ${await page.locator("body").innerText()}`, { cause: error });
+    });
+}
 
-  const frame = page.locator("iframe");
-  await frame.waitFor({ timeout: 10_000 }).catch(async (error: unknown) => {
-    throw new Error(`No Entry frame appeared. The page says: ${await page.locator("body").innerText()}`, { cause: error });
+/** The frame holding one Dictionary's Entry, once its document has loaded. */
+async function entryFrame(dictionaryTitle: string): Promise<Frame> {
+  // By section, named with the Dictionary's own title, not by the frame's translated title.
+  const element = page.getByRole("region", { name: dictionaryTitle, exact: true }).locator("iframe");
+  await element.waitFor({ timeout: 10_000 }).catch(async (error: unknown) => {
+    throw new Error(`No frame for ${dictionaryTitle}. The page says: ${await page.locator("body").innerText()}`, { cause: error });
   });
-  await page.frameLocator("iframe").getByText("Finding something good without looking for it.").waitFor({ timeout: 10_000 });
+  const frame = await (await element.elementHandle())!.contentFrame();
+  assert.ok(frame, `the frame for ${dictionaryTitle} has a document`);
+  await frame.waitForLoadState();
+  return frame;
+}
 
-  assert.equal(await frame.getAttribute("sandbox"), "", "the Entry frame must have no sandbox allowances");
+test("typing a headword shows its Entry in a sandboxed frame", async () => {
+  await lookUp("serendipity");
+
+  const frame = await entryFrame("Sample English Dictionary");
+  await frame.getByText("Finding something good without looking for it.").waitFor({ timeout: 10_000 });
+  assert.equal(await page.locator("iframe").first().getAttribute("sandbox"), "allow-scripts");
   assert.equal(
     await page.evaluate(() => document.querySelector("iframe")?.contentDocument ?? null),
     null,
     "the app must not be able to reach into the Entry frame (opaque origin)",
   );
-  const entryFrame = page.frames().find((f) => f !== page.mainFrame());
-  assert.ok(entryFrame);
+  assert.equal(await frame.evaluate(() => document.querySelector("p.def")?.getAttribute("class")), "def", "the Entry keeps its own markup");
+});
+
+test("an Entry shows the image from its MDD and the stylesheet beside its MDX, and its frame fits it", async () => {
+  await lookUp("cat");
+
+  const frame = await entryFrame("Sample Illustrated Dictionary");
+  await frame.waitForFunction(() => (document.querySelector("img.pic") as HTMLImageElement | null)?.complete, null, { timeout: 10_000 });
+  assert.equal(await frame.evaluate(() => (document.querySelector("img.pic") as HTMLImageElement).naturalWidth), 8, "the MDD image loads");
   assert.equal(
-    await entryFrame.evaluate(() => document.querySelector("p.def")?.getAttribute("class")),
-    "def",
-    "the Entry keeps its own markup",
+    await frame.evaluate(() => getComputedStyle(document.querySelector(".hw")!).color),
+    "rgb(0, 128, 128)",
+    "the stylesheet beside the MDX applies",
   );
 
-  // WebView2 injects Tauri's bootstrap into subframes too. The frame runs no scripts, so
-  // Entry content cannot use it; this probe (run through DevTools, which ignores the
-  // sandbox) checks that even a call made from inside the frame never reaches the app.
-  // Timers do not run in a frame without scripts, so the time limit lives out here.
-  const probe = await Promise.race([
-    entryFrame.evaluate(async () => {
-      const internals = (window as unknown as { __TAURI_INTERNALS__?: { invoke: (cmd: string) => Promise<unknown> } }).__TAURI_INTERNALS__;
-      if (!internals) return "no Tauri internals";
-      return internals.invoke("library_status").then(
-        (value) => ({ answered: value }),
-        (error: unknown) => `rejected: ${String(error)}`,
-      );
-    }),
-    new Promise<string>((resolve) => setTimeout(() => resolve("no answer within 3 s"), 3000)),
-  ]);
-  console.log("IPC probe from inside the Entry frame:", JSON.stringify(probe));
-  assert.ok(typeof probe === "string", "a call from inside the Entry frame must not reach the app");
+  const documentHeight = await frame.evaluate(() => Math.ceil(document.documentElement.getBoundingClientRect().height));
+  await page.waitForFunction(
+    (expected) => Math.abs((document.querySelector('section[aria-label="Sample Illustrated Dictionary"] iframe') as HTMLElement).clientHeight - expected) <= 1,
+    documentHeight,
+    { timeout: 5_000 },
+  );
+});
+
+test("an Entry's scripts run but cannot reach the app, stored data, other Dictionaries or the network", async () => {
+  await lookUp("probe");
+
+  const frame = await entryFrame("Probe");
+  await frame.locator("#probe[data-done]").waitFor({ timeout: 30_000 });
+  const results = JSON.parse((await frame.locator("#probe").textContent()) ?? "{}") as Record<string, string>;
+  console.log("What the probe Entry could do:", JSON.stringify(results, null, 2));
+
+  // Scripts run, on an opaque origin.
+  assert.equal(results.origin, "null");
+  // No IPC route answers. (WebView2 injects Tauri's bootstrap into frames, so it is there.)
+  for (const route of ["invokeLookUp", "invokeSetAllowNetwork", "fetch http://ipc.localhost/set_allow_network", "fetch ipc://localhost/set_allow_network"]) {
+    if (results[route] !== undefined) assert.ok(!results[route]!.startsWith("answered"), `${route}: ${results[route]}`);
+  }
+  // Not the app's document or storage, nor any of its own.
+  for (const route of ["parentDocument", "topDocument", "parentLocalStorage", "localStorage", "cookie"]) {
+    assert.ok(results[route]!.startsWith("blocked"), `${route}: ${results[route]}`);
+  }
+  // Not this or another Dictionary's files by script, and not the network.
+  for (const route of ["fetchOwnResource", "fetchOtherDictionary", "fetchSink", "image", "webSocket"]) {
+    assert.ok(!results[route]!.startsWith("answered"), `${route}: ${results[route]}`);
+  }
+  assert.ok(!results.topNavigation!.startsWith("allowed"), `topNavigation: ${results.topNavigation}`);
+
+  // Meanwhile "Wandering Probe" navigated its own frame to the network. Whatever the
+  // frames tried, nothing reached the network.
+  await new Promise((r) => setTimeout(r, 2000));
+  assert.deepEqual(sinkRequests, [], "nothing reached the network");
+  const wandering = page.getByRole("region", { name: "Wandering Probe", exact: true }).locator("iframe");
+  assert.ok(!(await (await wandering.elementHandle())!.contentFrame())!.url().startsWith("http://127.0.0.1"), "the frame did not leave");
+
+  // Nothing a frame tried changed a preference: no probe has network access.
+  const entries = await page.evaluate(() =>
+    (window as unknown as { __TAURI_INTERNALS__: { invoke: (cmd: string, args: unknown) => Promise<{ dictionaryTitle: string; allowNetwork: boolean }[]> } })
+      .__TAURI_INTERNALS__.invoke("look_up", { headword: "probe" }),
+  );
+  assert.deepEqual(
+    entries.map((e) => [e.dictionaryTitle, e.allowNetwork]),
+    [["Networked Probe", false], ["Probe", false], ["Wandering Probe", false]],
+  );
+});
+
+test("a Dictionary reaches the network only once the reader allows it from its section header", async () => {
+  await lookUp("probe");
+  await entryFrame("Networked Probe");
+  await new Promise((r) => setTimeout(r, 1000));
+  assert.ok(!sinkRequests.some((url) => url.startsWith("/allowed.png")), "blocked by default");
+
+  const networkSwitch = page.getByRole("region", { name: "Networked Probe", exact: true }).locator("button[aria-pressed]");
+  assert.equal(await networkSwitch.getAttribute("aria-pressed"), "false");
+  await networkSwitch.click();
+
+  const deadline = Date.now() + 10_000;
+  while (!sinkRequests.some((url) => url.startsWith("/allowed.png"))) {
+    if (Date.now() > deadline) assert.fail(`the allowed Dictionary did not reach the network; requests: ${JSON.stringify(sinkRequests)}`);
+    await new Promise((r) => setTimeout(r, 200));
+  }
+  const frame = await entryFrame("Networked Probe");
+  await frame.waitForFunction(() => (document.getElementById("remote") as HTMLImageElement | null)?.complete, null, { timeout: 5_000 });
 });
 
 test("the Library view lists the Dictionaries, and a disabled one stops answering", async () => {
@@ -120,15 +231,21 @@ test("the Library view lists the Dictionaries, and a disabled one stops answerin
   await page.getByRole("heading", { level: 1, name: "【Library】" }).waitFor({ timeout: 10_000 });
 
   const names = await page.getByRole("rowheader").allInnerTexts();
-  assert.equal(names.length, 2, `two Dictionaries, got ${JSON.stringify(names)}`);
-  assert.ok(names[0]!.includes("Sample English Dictionary") && names[1]!.includes("サンプル国語辞典"), "in Library order");
+  const position = (list: string[], title: string) => list.findIndex((name) => name.includes(title));
+  assert.equal(names.length, 6, `six Dictionaries, got ${JSON.stringify(names)}`);
+  const japanese = position(names, "サンプル国語辞典");
+  assert.ok(position(names, "Sample English Dictionary") < japanese, "in Library order");
   assert.match(await page.getByRole("listitem").filter({ hasText: "notes.mdx" }).innerText(), /Not a dictionary file/);
   if (process.env.OPENDICT_E2E_SCREENSHOT) await page.screenshot({ path: process.env.OPENDICT_E2E_SCREENSHOT });
 
   await page.getByRole("switch", { name: "Enable Sample English Dictionary" }).click();
   await page.getByRole("switch", { name: "Enable Sample English Dictionary", checked: false }).waitFor({ timeout: 10_000 });
   await page.getByRole("button", { name: "Move up: サンプル国語辞典" }).click();
-  await page.waitForFunction(() => document.querySelector("tbody th")?.textContent?.includes("サンプル国語辞典"), null, { timeout: 10_000 });
+  await page.waitForFunction(
+    (at) => document.querySelectorAll("tbody th")[at]?.textContent?.includes("サンプル国語辞典"),
+    japanese - 1,
+    { timeout: 10_000 },
+  );
 
   const search = page.getByRole("searchbox");
   await search.fill("serendipity");

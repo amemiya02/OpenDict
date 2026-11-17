@@ -445,26 +445,38 @@ impl Library {
     pub fn look_up(&self, headword: &str) -> Result<Vec<Entry>> {
         let mut entries = Vec::new();
         for dictionary in self.dictionaries.iter().filter(|d| d.info.enabled) {
-            // A Dictionary answers once its index is built.
-            let Some(index) = &dictionary.index else {
-                continue;
-            };
-            let records =
-                resolve(dictionary.reader.as_ref(), index, headword).map_err(|error| {
-                    Error::Dictionary {
-                        dictionary: dictionary.info.title.clone(),
-                        reason: error.to_string(),
-                    }
-                })?;
-            if !records.is_empty() {
-                entries.push(Entry {
-                    dictionary_id: dictionary.info.id.clone(),
-                    dictionary_title: dictionary.info.title.clone(),
-                    html: records.join("\n"),
-                });
-            }
+            entries.extend(dictionary.entry(headword)?);
         }
         Ok(entries)
+    }
+
+    /// The Entry for exactly `headword` in the Dictionary with `dictionary_id`, if that
+    /// Dictionary is in the Library and has the headword.
+    pub fn entry(&self, dictionary_id: &str, headword: &str) -> Result<Option<Entry>> {
+        match self.dictionary(dictionary_id) {
+            Some(dictionary) => dictionary.entry(headword),
+            None => Ok(None),
+        }
+    }
+
+    /// The bytes of a file the Dictionary's Entries refer to, by the relative path an Entry
+    /// uses (`img/cat.png`): from its MDD files or from beside its main file. `None` when
+    /// the Dictionary has no such file; never a file from outside the Dictionary.
+    pub fn resource(&self, dictionary_id: &str, path: &str) -> Result<Option<Vec<u8>>> {
+        let Some(dictionary) = self.dictionary(dictionary_id) else {
+            return Ok(None);
+        };
+        dictionary
+            .reader
+            .resource(path)
+            .map_err(|error| dictionary.error(error))
+    }
+
+    /// An enabled Dictionary: a disabled one answers nothing, not even by its key.
+    fn dictionary(&self, id: &str) -> Option<&Dictionary> {
+        self.dictionaries
+            .iter()
+            .find(|d| d.info.id == id && d.info.enabled)
     }
 
     fn find_mut(&mut self, id: &str) -> Result<&mut Dictionary> {
@@ -512,6 +524,28 @@ impl Library {
         let partial = file.with_extension("json.partial");
         std::fs::write(&partial, text).map_err(|error| failed(error.to_string()))?;
         std::fs::rename(&partial, file).map_err(|error| failed(error.to_string()))
+    }
+}
+
+impl Dictionary {
+    /// The Entry for exactly `headword`. A Dictionary answers once its index is built.
+    fn entry(&self, headword: &str) -> Result<Option<Entry>> {
+        let Some(index) = &self.index else {
+            return Ok(None);
+        };
+        let records = resolve(self.reader.as_ref(), index, headword).map_err(|e| self.error(e))?;
+        Ok((!records.is_empty()).then(|| Entry {
+            dictionary_id: self.info.id.clone(),
+            dictionary_title: self.info.title.clone(),
+            html: records.join("\n"),
+        }))
+    }
+
+    fn error(&self, error: impl std::fmt::Display) -> Error {
+        Error::Dictionary {
+            dictionary: self.info.title.clone(),
+            reason: error.to_string(),
+        }
     }
 }
 

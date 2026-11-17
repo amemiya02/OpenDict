@@ -5,7 +5,7 @@
 //! answers through [`DictionaryReader`].
 
 use std::ops::ControlFlow;
-use std::path::Path;
+use std::path::{Component, Path, PathBuf};
 
 /// A dictionary file format the Library can read.
 pub trait DictionaryFormat: Send + Sync {
@@ -40,6 +40,14 @@ pub trait DictionaryReader: Send + Sync {
 
     /// The record at `location`, as [`DictionaryReader::headwords`] reported it.
     fn record(&self, location: Location) -> Result<RawRecord, FormatError>;
+
+    /// The bytes of a file the Dictionary's Entries refer to (an image, a stylesheet, a
+    /// sound), by the relative path an Entry uses, or `None` if the Dictionary has no such
+    /// file. Must never return anything from outside the Dictionary.
+    fn resource(&self, path: &str) -> Result<Option<Vec<u8>>, FormatError> {
+        let _ = path;
+        Ok(None)
+    }
 }
 
 /// Where a record lies in a Dictionary's file: two numbers whose meaning is the format's
@@ -101,12 +109,20 @@ impl DictionaryFormat for MdictFormat {
 
     fn open(&self, path: &Path) -> Result<Box<dyn DictionaryReader>, OpenError> {
         let mdx = opendict_mdict::LazyMdx::open(path).map_err(open_error)?;
-        Ok(Box::new(MdictReader { mdx }))
+        Ok(Box::new(MdictReader {
+            mdx,
+            resource_files: open_resource_files(path),
+            folder: path.parent().map(Path::to_owned).unwrap_or_default(),
+        }))
     }
 }
 
 struct MdictReader {
     mdx: opendict_mdict::LazyMdx,
+    /// `name.mdd`, `name.1.mdd`, `name.2.mdd`, … in that order.
+    resource_files: Vec<opendict_mdict::Mdd>,
+    /// The folder the MDX is in; stylesheets and scripts beside it belong to the Dictionary.
+    folder: PathBuf,
 }
 
 /// How many headwords are read between two progress reports.
@@ -164,6 +180,71 @@ impl DictionaryReader for MdictReader {
             opendict_mdict::Record::Link(target) => RawRecord::Link(target),
         })
     }
+
+    /// A file beside the MDX first (so a loose stylesheet can stand in for the one in the
+    /// MDD), then each MDD in order.
+    fn resource(&self, path: &str) -> Result<Option<Vec<u8>>, FormatError> {
+        let Some(relative) = contained_path(path) else {
+            return Ok(None);
+        };
+        if is_loose_resource(&relative) {
+            match std::fs::read(self.folder.join(&relative)) {
+                Ok(bytes) => return Ok(Some(bytes)),
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => return Err(FormatError(error.to_string())),
+            }
+        }
+        let key = relative.to_string_lossy();
+        for mdd in &self.resource_files {
+            if let Some(bytes) = mdd.resource(&key).map_err(mdict_error)? {
+                return Ok(Some(bytes));
+            }
+        }
+        Ok(None)
+    }
+}
+
+/// The MDD files that go with the MDX at `path`. One that cannot be read is skipped: the
+/// Entries still open, without its resources.
+fn open_resource_files(path: &Path) -> Vec<opendict_mdict::Mdd> {
+    let Some(stem) = path.file_stem().map(|s| s.to_string_lossy().into_owned()) else {
+        return Vec::new();
+    };
+    let names =
+        std::iter::once(format!("{stem}.mdd")).chain((1..).map(|n| format!("{stem}.{n}.mdd")));
+    names
+        .map(|name| path.with_file_name(name))
+        .take_while(|candidate| candidate.is_file())
+        .filter_map(|candidate| opendict_mdict::Mdd::open(candidate).ok())
+        .collect()
+}
+
+/// `path` as a relative path made only of plain names, or `None` if it could reach
+/// outside the Dictionary's folder (`..`, a root, a drive prefix).
+fn contained_path(path: &str) -> Option<PathBuf> {
+    let mut relative = PathBuf::new();
+    for part in path.split(['/', '\\']) {
+        if part.is_empty() && relative.as_os_str().is_empty() {
+            continue; // a leading separator: MDD keys start with one
+        }
+        let mut components = Path::new(part).components();
+        match (components.next(), components.next()) {
+            (Some(Component::Normal(name)), None) if !part.contains(':') => relative.push(name),
+            _ => return None,
+        }
+    }
+    (!relative.as_os_str().is_empty()).then_some(relative)
+}
+
+/// File types served from beside the MDX. Never the dictionary files themselves, nor
+/// documents that could stand in for an Entry.
+fn is_loose_resource(path: &Path) -> bool {
+    const TYPES: &[&str] = &[
+        "css", "js", "png", "jpg", "jpeg", "gif", "webp", "bmp", "ico", "ttf", "otf", "woff",
+        "woff2", "mp3", "ogg", "oga", "spx", "wav", "m4a", "aac",
+    ];
+    path.extension()
+        .is_some_and(|ext| TYPES.iter().any(|t| ext.eq_ignore_ascii_case(t)))
 }
 
 fn open_error(error: opendict_mdict::Error) -> OpenError {

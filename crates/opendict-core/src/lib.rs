@@ -9,6 +9,7 @@ mod format;
 mod index;
 mod indexing;
 mod library;
+mod preferences;
 mod scan;
 
 pub use error::{Error, Result};
@@ -18,3 +19,4 @@ pub use format::{
 pub use index::{HeadwordIndex, IndexError, IndexedHeadword, Start, index_key};
 pub use indexing::{BuiltIndex, IndexJob, IndexOutcome, IndexResult, IndexState};
 pub use library::{DictionaryInfo, Entry, Library, LibraryFolder, Move, OpenFailure};
+pub use preferences::Preferences;

@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "The main window may call OpenDict's own commands and the core window defaults, nothing else. Entry frames are sandboxed and get nothing.",
+  "description": "The main window may call OpenDict's own commands, the core window defaults, the updater and restart, nothing else. Entry frames are sandboxed and get nothing.",
   "windows": ["main"],
   "permissions": [
     "core:default",
@@ -13,6 +13,9 @@
     "allow-set-dictionary-enabled",
     "allow-move-dictionary",
     "allow-index-library",
-    "allow-cancel-indexing"
+    "allow-cancel-indexing",
+    "allow-set-allow-network",
+    "updater:default",
+    "process:allow-restart"
   ]
 }
