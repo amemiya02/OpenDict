@@ -34,7 +34,7 @@ pub use indexing::{BuiltIndex, IndexJob, IndexOutcome, IndexResult, IndexState};
 pub use lemma::{BaseForm, base_forms};
 pub use library::{
     DictionaryInfo, Elsewhere, Entry, Group, Lemma, Library, LibraryFolder, Move, OpenFailure,
-    Suggestion, Suggestions,
+    Scan, Scanned, Suggestion, Suggestions,
 };
 pub use preferences::{DEFAULT_TEXT_SIZE, DEFAULT_ZOOM, Language, Preferences, Theme};
 pub use pronunciation::pronunciation;

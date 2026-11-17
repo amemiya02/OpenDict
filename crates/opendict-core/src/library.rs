@@ -2,6 +2,7 @@ use std::collections::BTreeMap;
 use std::ops::ControlFlow;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 
 use serde::{Deserialize, Serialize};
 
@@ -35,6 +36,10 @@ pub struct Library {
     folders: Vec<LibraryFolder>,
     dictionaries: Vec<Dictionary>,
     failures: Vec<OpenFailure>,
+    /// This Library's own number, and how many scans and registrations have changed it:
+    /// a scan made before a change is not put in place after it.
+    instance: u64,
+    generation: u64,
 }
 
 /// What the Library keeps between starts.
@@ -79,7 +84,7 @@ impl Dictionary {
         &self,
         start: Start<'_>,
         limit: usize,
-        scan: &dyn Fn(&IndexedHeadword) -> Scan,
+        scan: &dyn Fn(&IndexedHeadword) -> Pass,
     ) -> std::result::Result<Vec<IndexedHeadword>, IndexError> {
         let Some(index) = self.index.as_ref() else {
             return Ok(Vec::new());
@@ -91,9 +96,9 @@ impl Dictionary {
             let full = page.len() == page_size;
             for headword in &page {
                 match scan(headword) {
-                    Scan::Take => taken.push(headword.clone()),
-                    Scan::Skip => {}
-                    Scan::Stop => return Ok(taken),
+                    Pass::Take => taken.push(headword.clone()),
+                    Pass::Skip => {}
+                    Pass::Stop => return Ok(taken),
                 }
                 if taken.len() == limit {
                     return Ok(taken);
@@ -109,7 +114,7 @@ impl Dictionary {
 }
 
 /// What a scan of the index does with one headword.
-enum Scan {
+enum Pass {
     /// Keep it and read on.
     Take,
     /// Pass it over and read on.
@@ -120,6 +125,127 @@ enum Scan {
 
 /// How many headwords a scan reads from an index at least at a time.
 const SCAN_PAGE: usize = 256;
+
+/// A scan of Library Folders, made by [`Library::scan`] and its siblings. It holds what
+/// it needs, so it runs (reading the folders and opening every Dictionary in them, the
+/// slow part) without the Library; [`Library::finish_scan`] puts the result in place.
+pub struct Scan {
+    /// Which Library made it, and how many changes that Library had seen then.
+    library: u64,
+    generation: u64,
+    folders: Vec<PathBuf>,
+    formats: Vec<&'static dyn DictionaryFormat>,
+    registrations: Registrations,
+}
+
+/// What a [`Scan`] found, for [`Library::finish_scan`].
+pub struct Scanned {
+    library: u64,
+    generation: u64,
+    /// The Library Folders scanned.
+    folders: Vec<PathBuf>,
+    found_folders: Vec<LibraryFolder>,
+    opened: Vec<Opened>,
+    failures: Vec<OpenFailure>,
+}
+
+/// A Dictionary a scan opened.
+struct Opened {
+    info: DictionaryInfo,
+    reader: Arc<dyn DictionaryReader>,
+    stamp: Stamp,
+}
+
+/// Each Library gets its own number, so a scan is never finished on another Library.
+static LIBRARIES: AtomicU64 = AtomicU64::new(0);
+
+impl Scan {
+    /// Reads every Library Folder and opens every Dictionary found.
+    pub fn run(self) -> Scanned {
+        let mut found_folders = Vec::new();
+        let mut opened: Vec<Opened> = Vec::new();
+        let mut failures: Vec<OpenFailure> = Vec::new();
+
+        for folder in &self.folders {
+            let files = match scan::files_under(folder) {
+                Ok(files) => files,
+                Err(error) => {
+                    found_folders.push(LibraryFolder {
+                        path: folder.clone(),
+                        dictionary_count: 0,
+                        problem: Some(error.to_string()),
+                    });
+                    continue;
+                }
+            };
+            let mut count = 0;
+            for path in &files {
+                let Some(format) = self.formats.iter().find(|format| format.recognises(path))
+                else {
+                    continue;
+                };
+                count += 1;
+                let unit = Unit::gather(path, &files, |file| {
+                    self.formats.iter().any(|format| format.recognises(file))
+                });
+                let id = match scan::identity(path) {
+                    Ok(id) => id,
+                    Err(error) => {
+                        failures.push(OpenFailure {
+                            path: path.clone(),
+                            reason: OpenError::Unreadable(error.to_string()),
+                        });
+                        continue;
+                    }
+                };
+                // Library Folders may overlap; a Dictionary joins the Library once.
+                if opened.iter().any(|known| known.info.id == id)
+                    || failures.iter().any(|known| same_file(&known.path, path))
+                {
+                    continue;
+                }
+                let stamp = match scan::stamp(path) {
+                    Ok(stamp) => stamp,
+                    Err(error) => {
+                        failures.push(OpenFailure {
+                            path: path.clone(),
+                            reason: OpenError::Unreadable(error.to_string()),
+                        });
+                        continue;
+                    }
+                };
+                let reader = match self.registrations.get(path) {
+                    Some(registration) => format.open_registered(path, registration),
+                    None => format.open(path),
+                };
+                match reader {
+                    Ok(reader) => opened.push(Opened {
+                        info: describe(id, &unit, reader.as_ref()),
+                        reader: Arc::from(reader),
+                        stamp,
+                    }),
+                    Err(reason) => failures.push(OpenFailure {
+                        path: path.clone(),
+                        reason,
+                    }),
+                }
+            }
+            found_folders.push(LibraryFolder {
+                path: folder.clone(),
+                dictionary_count: count,
+                problem: None,
+            });
+        }
+        Scanned {
+            library: self.library,
+            generation: self.generation,
+            folders: self.folders,
+            found_folders,
+            opened,
+            failures,
+        }
+    }
+}
 
 /// A Library Folder and what was found in it.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -320,6 +446,8 @@ impl Library {
             folders: Vec::new(),
             dictionaries: Vec::new(),
             failures: Vec::new(),
+            instance: LIBRARIES.fetch_add(1, AtomicOrdering::Relaxed),
+            generation: 0,
         }
     }
 
@@ -331,108 +459,93 @@ impl Library {
     /// Adds a Library Folder: every Dictionary inside it, including in subfolders, joins
     /// the Library. Adding a folder that is already there changes nothing.
     pub fn add_folder(&mut self, folder: &Path) -> Result<()> {
-        readable(folder)?;
-        if self.record.folders.iter().any(|known| known == folder) {
-            return Ok(());
+        if let Some(scan) = self.scan_with_folder(folder)? {
+            self.finish_scan(scan.run())?;
         }
-        self.record.folders.push(folder.to_owned());
-        self.rescan()?;
-        self.save()
+        Ok(())
     }
 
     /// Removes a Library Folder: its Dictionaries leave the Library. Nothing is deleted
     /// from disk.
     pub fn remove_folder(&mut self, folder: &Path) -> Result<()> {
-        self.record.folders.retain(|known| known != folder);
-        self.rescan()?;
-        self.save()
+        let scan = self.scan_without_folder(folder);
+        self.finish_scan(scan.run())?;
+        Ok(())
     }
 
     /// Scans every Library Folder again, so Dictionaries added or removed on disk since the
     /// last scan join or leave the Library. Dictionaries already known keep their key,
     /// place and enabled state.
+    ///
+    /// To scan without holding the Library, use [`Library::scan`], run it, and hand the
+    /// result to [`Library::finish_scan`].
     pub fn rescan(&mut self) -> Result<()> {
-        let mut folders = Vec::new();
-        let mut known = std::mem::take(&mut self.dictionaries);
-        let mut dictionaries: Vec<Dictionary> = Vec::new();
-        let mut failures: Vec<OpenFailure> = Vec::new();
-
-        for folder in &self.record.folders {
-            let files = match scan::files_under(folder) {
-                Ok(files) => files,
-                Err(error) => {
-                    folders.push(LibraryFolder {
-                        path: folder.clone(),
-                        dictionary_count: 0,
-                        problem: Some(error.to_string()),
-                    });
-                    continue;
-                }
-            };
-            let mut count = 0;
-            for path in &files {
-                let Some(format) = self.formats.iter().find(|format| format.recognises(path))
-                else {
-                    continue;
-                };
-                count += 1;
-                let unit = Unit::gather(path, &files, |file| {
-                    self.formats.iter().any(|format| format.recognises(file))
-                });
-                let id = match scan::identity(path) {
-                    Ok(id) => id,
-                    Err(error) => {
-                        failures.push(OpenFailure {
-                            path: path.clone(),
-                            reason: OpenError::Unreadable(error.to_string()),
-                        });
-                        continue;
-                    }
-                };
-                // Library Folders may overlap; a Dictionary joins the Library once.
-                if dictionaries.iter().any(|known| known.info.id == id)
-                    || failures.iter().any(|known| same_file(&known.path, path))
-                {
-                    continue;
-                }
-                let stamp = match scan::stamp(path) {
-                    Ok(stamp) => stamp,
-                    Err(error) => {
-                        failures.push(OpenFailure {
-                            path: path.clone(),
-                            reason: OpenError::Unreadable(error.to_string()),
-                        });
-                        continue;
-                    }
-                };
-                let opened = match self.registrations.get(path) {
-                    Some(registration) => format.open_registered(path, registration),
-                    None => format.open(path),
-                };
-                match opened {
-                    Ok(reader) => {
-                        let mut info = describe(id, &unit, reader.as_ref(), &self.record);
-                        let index = self.known_index(&mut known, &info.id, &stamp);
-                        if index.is_some() {
-                            info.index = IndexState::Ready;
-                        }
-                        dictionaries.push(Dictionary {
-                            info,
-                            reader: Arc::from(reader),
-                            stamp,
-                            index,
-                        });
-                    }
-                    Err(reason) => failures.push(OpenFailure {
-                        path: path.clone(),
-                        reason,
-                    }),
-                }
+        loop {
+            let scanned = self.scan().run();
+            if self.finish_scan(scanned)? {
+                return Ok(());
             }
-            folders.push(LibraryFolder {
-                path: folder.clone(),
-                dictionary_count: count,
-                problem: None,
+        }
+    }
+
+    /// A scan of the Library Folders as they are now, to run with [`Scan::run`] while the
+    /// Library goes on answering, then hand to [`Library::finish_scan`].
+    pub fn scan(&self) -> Scan {
+        self.scan_of(self.record.folders.clone())
+    }
+
+    /// A scan of the Library Folders with `folder` added, or `None` if it is one already.
+    /// Fails if `folder` cannot be read.
+    pub fn scan_with_folder(&self, folder: &Path) -> Result<Option<Scan>> {
+        readable(folder)?;
+        if self.record.folders.iter().any(|known| known == folder) {
+            return Ok(None);
+        }
+        let mut folders = self.record.folders.clone();
+        folders.push(folder.to_owned());
+        Ok(Some(self.scan_of(folders)))
+    }
+
+    /// A scan of the Library Folders with `folder` taken out.
+    pub fn scan_without_folder(&self, folder: &Path) -> Scan {
+        let mut folders = self.record.folders.clone();
+        folders.retain(|known| known != folder);
+        self.scan_of(folders)
+    }
+
+    fn scan_of(&self, folders: Vec<PathBuf>) -> Scan {
+        Scan {
+            library: self.instance,
+            generation: self.generation,
+            folders,
+            formats: self.formats.clone(),
+            registrations: self.registrations.clone(),
+        }
+    }
+
+    /// Puts what a scan found in place: its Library Folders become the Library's, and
+    /// its Dictionaries replace those found before, keeping their place, enabled state
+    /// and index. Returns `false`, changing nothing, if the Library changed while the
+    /// scan ran (another scan finished first, a code was entered); scan again then.
+    pub fn finish_scan(&mut self, scanned: Scanned) -> Result<bool> {
+        if scanned.library != self.instance || scanned.generation != self.generation {
+            return Ok(false);
+        }
+        self.generation += 1;
+        let mut known = std::mem::take(&mut self.dictionaries);
+        let mut dictionaries = Vec::with_capacity(scanned.opened.len());
+        for opened in scanned.opened {
+            let mut info = opened.info;
+            info.enabled = !self.record.disabled.contains(&info.id);
+            let index = self.known_index(&mut known, &info.id, &opened.stamp);
+            if index.is_some() {
+                info.index = IndexState::Ready;
+            }
+            dictionaries.push(Dictionary {
+                info,
+                reader: opened.reader,
+                stamp: opened.stamp,
+                index,
             });
         }
 
@@ -441,17 +554,19 @@ impl Library {
         let position = |id: &str| self.record.order.iter().position(|known| known == id);
         dictionaries.sort_by_key(|dictionary| position(&dictionary.info.id).unwrap_or(usize::MAX));
 
-        self.folders = folders;
+        let folders_changed = self.record.folders != scanned.folders;
+        self.record.folders = scanned.folders;
+        self.folders = scanned.found_folders;
         self.dictionaries = dictionaries;
-        self.failures = failures;
+        self.failures = scanned.failures;
 
-        if self.record_order() {
+        if self.record_order() || folders_changed {
             self.save()?;
         }
         if self.index_folder.is_none() {
             self.build_indexes();
         }
-        Ok(())
+        Ok(true)
     }
 
     /// The index a Dictionary already has: the one in memory from before a rescan, or the
@@ -598,6 +713,7 @@ impl Library {
             }
         }
         self.registrations.insert(path, registration)?;
+        self.generation += 1;
         self.rescan()
     }
 
@@ -1045,8 +1161,8 @@ impl Answering<'_> {
             near::distance(&query, &candidate, tolerance)
         };
         let close = |headword: &IndexedHeadword| match distance(headword) {
-            Some(_) => Scan::Take,
-            None => Scan::Skip,
+            Some(_) => Pass::Take,
+            None => Pass::Skip,
         };
         let counts = self.counted(Start::AtKey(""), usize::MAX, &close)?;
         let mut found: Vec<(usize, IndexedHeadword, usize)> = counts
@@ -1131,7 +1247,7 @@ impl Answering<'_> {
     /// The first `limit` headwords from `start` across enabled Dictionaries, each once,
     /// with how many of them file it.
     fn merged(&self, start: Start<'_>, limit: usize) -> Result<Vec<(IndexedHeadword, usize)>> {
-        self.merged_where(start, limit, |_| Scan::Take)
+        self.merged_where(start, limit, |_| Pass::Take)
     }
 
     /// Like [`Library::merged`], keeping only the headwords `scan` takes and reading each
@@ -1140,7 +1256,7 @@ impl Answering<'_> {
         &self,
         start: Start<'_>,
         limit: usize,
-        scan: impl Fn(&IndexedHeadword) -> Scan,
+        scan: impl Fn(&IndexedHeadword) -> Pass,
     ) -> Result<Vec<(IndexedHeadword, usize)>> {
         // Each headword among the first `limit` overall is among the first `limit` of
         // every Dictionary that files it, so `limit` from each is enough to count it.
@@ -1154,7 +1270,7 @@ impl Answering<'_> {
         &self,
         start: Start<'_>,
         limit: usize,
-        scan: &dyn Fn(&IndexedHeadword) -> Scan,
+        scan: &dyn Fn(&IndexedHeadword) -> Pass,
     ) -> Result<BTreeMap<IndexedHeadword, usize>> {
         let mut counts: BTreeMap<IndexedHeadword, usize> = BTreeMap::new();
         for dictionary in &self.dictionaries {
@@ -1175,14 +1291,14 @@ impl Answering<'_> {
 
 /// A scan for `pattern`'s matches. They all start with its prefix, so the scan stops at
 /// the first headword that does not.
-fn matching(pattern: &Pattern) -> impl Fn(&IndexedHeadword) -> Scan {
+fn matching(pattern: &Pattern) -> impl Fn(&IndexedHeadword) -> Pass {
     move |headword| {
         if !headword.key.starts_with(pattern.prefix()) {
-            Scan::Stop
+            Pass::Stop
         } else if pattern.matches(&headword.key) {
-            Scan::Take
+            Pass::Take
         } else {
-            Scan::Skip
+            Pass::Skip
         }
     }
 }
@@ -1272,12 +1388,9 @@ fn resolve(
     Ok(texts)
 }
 
-fn describe(
-    id: String,
-    unit: &Unit,
-    reader: &dyn DictionaryReader,
-    record: &Record,
-) -> DictionaryInfo {
+/// What the Library shows of a Dictionary just opened; enabled until the Library's
+/// record says otherwise.
+fn describe(id: String, unit: &Unit, reader: &dyn DictionaryReader) -> DictionaryInfo {
     let title = match reader.title().trim() {
         "" => unit
             .main
@@ -1292,7 +1405,7 @@ fn describe(
         .map(|metadata| metadata.len())
         .sum();
     DictionaryInfo {
-        enabled: !record.disabled.contains(&id),
+        enabled: true,
         id,
         title,
         path: unit.main.clone(),

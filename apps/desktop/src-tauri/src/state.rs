@@ -6,8 +6,9 @@ use std::thread::JoinHandle;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use opendict_core::{
-    DataDirectory, Error as CoreError, ExportFormat, History, IndexState, Library, Move, OpenError,
-    Preferences, Registration, SavedFrom, Suggestion, WordBookId, WordBooks,
+    DataDirectory, DictionaryFormat, Error as CoreError, ExportFormat, History, IndexState,
+    Library, MdictFormat, Move, OpenError, Preferences, Registration, SavedFrom, Scan, Suggestion,
+    WordBookId, WordBooks,
 };
 pub use opendict_core::{Language, Theme};
 use serde::{Deserialize, Serialize};
@@ -28,6 +29,8 @@ struct Inner {
     home: PathBuf,
     /// The one Library Folder used instead of the reader's Library, if any.
     override_folder: Option<PathBuf>,
+    /// The dictionary formats the Library reads.
+    formats: Vec<&'static dyn DictionaryFormat>,
     /// The data directory, or where it should be and why it cannot be used. Locked
     /// before anything kept in it whenever both are needed.
     data: Mutex<Result<DataDirectory, DataDirectoryView>>,
@@ -297,12 +300,22 @@ impl AppState {
     /// the environment, for tests and development) the Library is that one folder
     /// instead, kept only in memory, so the reader's own Library is never touched.
     pub fn load(home: &Path, override_folder: Option<PathBuf>) -> AppState {
+        Self::load_with(home, override_folder, &[&MdictFormat])
+    }
+
+    /// Like [`AppState::load`], reading only the given formats.
+    pub fn load_with(
+        home: &Path,
+        override_folder: Option<PathBuf>,
+        formats: &[&'static dyn DictionaryFormat],
+    ) -> AppState {
         let data = located(home);
-        let loaded = Loaded::from(&data, override_folder.as_deref());
+        let loaded = Loaded::from(&data, override_folder.as_deref(), formats);
         AppState {
             inner: Arc::new(Inner {
                 home: home.to_owned(),
                 override_folder,
+                formats: formats.to_vec(),
                 data: Mutex::new(data),
                 library: Mutex::new(loaded.library),
                 preferences: Mutex::new(loaded.preferences),
@@ -379,7 +392,7 @@ impl AppState {
 
         let changed = change(&mut data);
 
-        let loaded = Loaded::from(&data, inner.override_folder.as_deref());
+        let loaded = Loaded::from(&data, inner.override_folder.as_deref(), &inner.formats);
         *library = loaded.library;
         *preferences = loaded.preferences;
         *history = loaded.history;
@@ -745,15 +758,43 @@ impl AppState {
     }
 
     pub fn add_folder(&self, folder: &Path) -> Result<LibraryView, String> {
-        self.change(|library| library.add_folder(folder))
+        self.scan(|library| library.scan_with_folder(folder))
     }
 
     pub fn remove_folder(&self, folder: &Path) -> Result<LibraryView, String> {
-        self.change(|library| library.remove_folder(folder))
+        self.scan(|library| Ok(Some(library.scan_without_folder(folder))))
     }
 
     pub fn rescan(&self) -> Result<LibraryView, String> {
-        self.change(Library::rescan)
+        self.scan(|library| Ok(Some(library.scan())))
+    }
+
+    /// Runs the scan `plan` makes (none: nothing to do) without holding the Library, so
+    /// Lookups are answered meanwhile, then puts its result in place; plans and runs it
+    /// again if the Library changed while it ran.
+    fn scan(
+        &self,
+        plan: impl Fn(&Library) -> opendict_core::Result<Option<Scan>>,
+    ) -> Result<LibraryView, String> {
+        loop {
+            let scan = {
+                let guard = self.lock();
+                let library = guard.as_ref().map_err(|problem| problem.clone())?;
+                match plan(library).map_err(|error| error.to_string())? {
+                    Some(scan) => scan,
+                    None => return Ok(view(&guard, self.progress())),
+                }
+            };
+            let scanned = scan.run();
+            let mut guard = self.lock();
+            let library = guard.as_mut().map_err(|problem| problem.clone())?;
+            if library
+                .finish_scan(scanned)
+                .map_err(|error| error.to_string())?
+            {
+                return Ok(view(&guard, self.progress()));
+            }
+        }
     }
 
     pub fn set_enabled(&self, id: &str, enabled: bool) -> Result<LibraryView, String> {
@@ -979,6 +1020,7 @@ impl Loaded {
     fn from(
         data: &Result<DataDirectory, DataDirectoryView>,
         override_folder: Option<&Path>,
+        formats: &[&'static dyn DictionaryFormat],
     ) -> Loaded {
         let data = match data {
             Ok(data) => data,
@@ -993,8 +1035,8 @@ impl Loaded {
             }
         };
         let library = match override_folder {
-            Some(folder) => Library::open(folder),
-            None => Library::load(&data.library_file()),
+            Some(folder) => Library::open_with(folder, formats),
+            None => Library::load_with(&data.library_file(), formats),
         };
         Loaded {
             library: library.map_err(|error| error.to_string()),
@@ -1348,6 +1390,75 @@ mod tests {
             ]
         );
         assert_eq!(state.look_up("serendipity").unwrap().len(), 1);
+    }
+
+    /// MDict, except that opening `slow.mdx` waits until [`SLOW_GATE`] opens: a Library
+    /// Folder that takes as long to scan as a test needs.
+    struct SlowFormat;
+
+    /// (whether `slow.mdx` is being opened, whether it may finish)
+    static SLOW_GATE: (Mutex<(bool, bool)>, std::sync::Condvar) =
+        (Mutex::new((false, false)), std::sync::Condvar::new());
+
+    impl opendict_core::DictionaryFormat for SlowFormat {
+        fn recognises(&self, path: &Path) -> bool {
+            opendict_core::MdictFormat.recognises(path)
+        }
+
+        fn open(&self, path: &Path) -> Result<Box<dyn opendict_core::DictionaryReader>, OpenError> {
+            if path.file_name().is_some_and(|name| name == "slow.mdx") {
+                let (lock, changed) = &SLOW_GATE;
+                let mut gate = lock.lock().unwrap();
+                gate.0 = true;
+                changed.notify_all();
+                while !gate.1 {
+                    gate = changed.wait(gate).unwrap();
+                }
+            }
+            opendict_core::MdictFormat.open(path)
+        }
+    }
+
+    #[test]
+    fn lookups_are_answered_while_a_library_folder_is_being_scanned() {
+        let data = tempfile::tempdir().unwrap();
+        let folder = library_folder();
+        let state = AppState::load_with(data.path(), None, &[&SlowFormat]);
+        state.add_folder(folder.path()).unwrap();
+        index(&state);
+        let slow = tempfile::tempdir().unwrap();
+        MdxBuilder::new()
+            .title("Slow")
+            .entry("serendipity", "<p>found late (sample)</p>")
+            .write_to(slow.path().join("slow.mdx"))
+            .unwrap();
+
+        let adding = {
+            let state = state.clone();
+            let slow = slow.path().to_owned();
+            std::thread::spawn(move || state.add_folder(&slow))
+        };
+        let (lock, changed) = &SLOW_GATE;
+        let gate = lock.lock().unwrap();
+        let (gate, _) = changed
+            .wait_timeout_while(gate, Duration::from_secs(10), |gate| !gate.0)
+            .unwrap();
+        assert!(gate.0, "the scan reached the slow Dictionary");
+        drop(gate);
+        let (answer, answered) = std::sync::mpsc::channel();
+        {
+            let state = state.clone();
+            std::thread::spawn(move || answer.send(state.look_up("serendipity")));
+        }
+        let during = answered.recv_timeout(Duration::from_secs(5));
+        lock.lock().unwrap().1 = true;
+        changed.notify_all();
+        let added = adding.join().unwrap().unwrap();
+
+        assert_eq!(during.expect("answered during the scan").unwrap().len(), 1);
+        assert_eq!(added.dictionaries.len(), 2);
+        index(&state);
+        assert_eq!(state.look_up("serendipity").unwrap().len(), 2);
     }
 
     #[test]

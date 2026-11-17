@@ -1,6 +1,7 @@
 //! Tauri commands. Each one only forwards to [`AppState`]; no Library or Lookup logic
-//! lives here. Commands that scan Library Folders are `async` so they run off the main
-//! thread and the window stays responsive.
+//! lives here. Commands that read or change the Library run off the main thread
+//! (`async`), so the window stays responsive while one of them waits for the Library
+//! (a scan puts its result in place, an index is swapped in).
 
 use std::path::PathBuf;
 
@@ -89,12 +90,12 @@ pub async fn register_dictionary(
     Ok(view)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn look_up(state: State<'_, AppState>, headword: String) -> Result<Vec<EntryView>, String> {
     state.look_up(&headword)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn suggest(
     state: State<'_, AppState>,
     query: String,
@@ -103,7 +104,7 @@ pub fn suggest(
     state.suggest(&query, limit)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn headwords_after(
     state: State<'_, AppState>,
     query: String,
@@ -113,7 +114,7 @@ pub fn headwords_after(
     state.headwords_after(&query, &headword, limit)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn library(state: State<'_, AppState>) -> LibraryView {
     state.library()
 }
@@ -154,7 +155,7 @@ pub async fn rescan_library(
 }
 
 /// Indexes the Dictionaries still waiting for their index (after a cancel, say).
-#[tauri::command]
+#[tauri::command(async)]
 pub fn index_library(app: AppHandle, state: State<'_, AppState>) -> LibraryView {
     start_indexing(&app, &state);
     state.library()
@@ -196,12 +197,12 @@ pub async fn move_dictionary(
     state.move_dictionary(&id, direction)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn create_group(state: State<'_, AppState>, name: String) -> Result<LibraryView, String> {
     state.create_group(&name)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn rename_group(
     state: State<'_, AppState>,
     id: String,
@@ -210,12 +211,12 @@ pub fn rename_group(
     state.rename_group(&id, &name)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn delete_group(state: State<'_, AppState>, id: String) -> Result<LibraryView, String> {
     state.delete_group(&id)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn set_in_group(
     state: State<'_, AppState>,
     group: String,
@@ -225,7 +226,7 @@ pub fn set_in_group(
     state.set_in_group(&group, &dictionary, member)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn move_in_group(
     state: State<'_, AppState>,
     group: String,
@@ -236,7 +237,7 @@ pub fn move_in_group(
 }
 
 /// Makes `group` the Current Group; `null` makes Lookups run against the whole Library.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn set_current_group(
     state: State<'_, AppState>,
     group: Option<String>,
@@ -245,7 +246,7 @@ pub fn set_current_group(
 }
 
 /// Another Group that has `query` when the Current Group does not, for the no-match page.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn elsewhere(
     state: State<'_, AppState>,
     query: String,

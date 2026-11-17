@@ -183,3 +183,42 @@ fn a_library_folder_gone_missing_is_reported_and_the_others_still_answer() {
     assert_eq!(library.folders()[1].problem, None);
     assert_eq!(titles(&library), ["Kept"]);
 }
+
+#[test]
+fn a_scan_runs_apart_from_the_library_and_is_put_in_place_after() {
+    let data = tempfile::tempdir().unwrap();
+    let folder = tempfile::tempdir().unwrap();
+    put(folder.path(), "old.mdx", &dictionary("Old"));
+    let mut library = Library::load(&data.path().join("library.json")).unwrap();
+    library.add_folder(folder.path()).unwrap();
+    put(folder.path(), "new.mdx", &dictionary("New"));
+
+    let scan = library.scan();
+    let scanned = std::thread::spawn(move || scan.run()).join().unwrap();
+    assert_eq!(
+        titles(&library),
+        ["Old"],
+        "nothing changes until it is put in place"
+    );
+
+    assert!(library.finish_scan(scanned).unwrap());
+    assert_eq!(titles(&library), ["Old", "New"]);
+}
+
+#[test]
+fn a_scan_made_before_the_library_changed_is_not_put_in_place() {
+    let data = tempfile::tempdir().unwrap();
+    let first = tempfile::tempdir().unwrap();
+    let second = tempfile::tempdir().unwrap();
+    put(first.path(), "first.mdx", &dictionary("First"));
+    put(second.path(), "second.mdx", &dictionary("Second"));
+    let mut library = Library::load(&data.path().join("library.json")).unwrap();
+    library.add_folder(first.path()).unwrap();
+
+    let stale = library.scan().run();
+    library.add_folder(second.path()).unwrap();
+
+    assert!(!library.finish_scan(stale).unwrap());
+    assert_eq!(titles(&library), ["First", "Second"]);
+    assert_eq!(library.folders().len(), 2);
+}

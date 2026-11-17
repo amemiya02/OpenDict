@@ -9,7 +9,7 @@ use crate::error::{Error, Result};
 use crate::format::Registration;
 
 /// Registrations by the path of the Dictionary's main file.
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub(crate) struct Registrations {
     /// Where they are kept; `None` keeps them in memory only.
     file: Option<PathBuf>,
