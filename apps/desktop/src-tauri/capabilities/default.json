@@ -6,12 +6,15 @@
   "permissions": [
     "core:default",
     "allow-look-up",
+    "allow-suggest",
+    "allow-headwords-after",
     "allow-library",
     "allow-add-library-folder",
     "allow-remove-library-folder",
     "allow-rescan-library",
     "allow-set-dictionary-enabled",
     "allow-move-dictionary",
+    "allow-register-dictionary",
     "allow-set-allow-network",
     "updater:default",
     "process:allow-restart"

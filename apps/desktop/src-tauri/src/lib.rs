@@ -46,12 +46,15 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             commands::look_up,
+            commands::suggest,
+            commands::headwords_after,
             commands::library,
             commands::add_library_folder,
             commands::remove_library_folder,
             commands::rescan_library,
             commands::set_dictionary_enabled,
             commands::move_dictionary,
+            commands::register_dictionary,
             commands::set_allow_network,
         ])
         .run(tauri::generate_context!())

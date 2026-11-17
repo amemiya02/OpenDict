@@ -36,6 +36,13 @@ function fakeShell() {
   mockIPC((command, payload) => {
     if (command === "library") return library;
     if (command === "look_up") return (payload as { headword: string }).headword === "serendipity" ? answers : [];
+    // The headword column: "serendipity" is the only headword.
+    if (command === "suggest") {
+      const query = (payload as { query: string }).query.trim();
+      const items = "serendipity".startsWith(query) ? [{ headword: "serendipity", count: answers.length }] : [];
+      return { items, lemma: null, near: false, miss: items.length === 0 && query !== "", browse: query === "" };
+    }
+    if (command === "headwords_after") return [];
     throw new Error(`unexpected command ${command}`);
   });
 }
@@ -46,7 +53,7 @@ async function lookUp(word: string) {
       <App />
     </I18nProvider>,
   );
-  await userEvent.type(screen.getByRole("searchbox"), `${word}{Enter}`);
+  await userEvent.type(screen.getByRole("combobox", { name: "Type a word" }), `${word}{Enter}`);
   await screen.findByRole("heading", { level: 1, name: `【${word}】` });
 }
 
@@ -88,11 +95,11 @@ describe("the page of Entries", () => {
 });
 
 describe("the thumb index", () => {
-  /** jsdom has no layout: record where the page asked to scroll instead. */
+  /** jsdom has no layout: record which Dictionary sections the page asked to scroll to instead. */
   function watchScrolling() {
     const scrolledTo: string[] = [];
     Element.prototype.scrollIntoView = function (this: Element) {
-      scrolledTo.push(this.getAttribute("aria-label") ?? this.id);
+      if (this.localName === "section") scrolledTo.push(this.getAttribute("aria-label") ?? this.id);
     };
     return scrolledTo;
   }

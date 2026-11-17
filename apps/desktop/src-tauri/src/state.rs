@@ -1,7 +1,9 @@
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, MutexGuard};
 
-use opendict_core::{Library, Move, OpenError, Preferences};
+use opendict_core::{
+    Error as CoreError, Library, Move, OpenError, Preferences, Registration, Suggestion,
+};
 use serde::{Deserialize, Serialize};
 
 use crate::entry_protocol;
@@ -26,6 +28,33 @@ pub struct EntryView {
     pub allow_network: bool,
     /// How the headword is said, where the Entry shows that plainly. Plain text.
     pub pronunciation: Option<String>,
+}
+
+/// What the headword column offers for a query: the Lookup result shape settled by the
+/// prototype (`design/prototype/core.js`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SuggestionsView {
+    pub items: Vec<SuggestionView>,
+    pub lemma: Option<LemmaView>,
+    pub near: bool,
+    pub miss: bool,
+    pub browse: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SuggestionView {
+    pub headword: String,
+    /// How many enabled Dictionaries file the headword.
+    pub count: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LemmaView {
+    pub from: String,
+    pub to: String,
 }
 
 /// The Library as the Library view shows it.
@@ -76,7 +105,21 @@ pub enum FailureReason {
     UnsupportedVersion(String),
     Damaged,
     NeedsRegistrationCode,
+    WrongRegistrationCode,
     Unsupported(String),
+}
+
+/// Why a registration code was not accepted, as a kind the interface words in the
+/// reader's language.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(tag = "kind", content = "detail", rename_all = "camelCase")]
+pub enum RegisterError {
+    /// The code or the e-mail does not unlock the Dictionary.
+    WrongCode,
+    /// Only an e-mail was entered, and the Dictionary does not carry its code.
+    CodeNeeded,
+    /// Anything else (the Library could not be saved, the file went away...).
+    Failed(String),
 }
 
 /// A step in Library order, as the interface sends it.
@@ -148,6 +191,49 @@ impl AppState {
             .collect())
     }
 
+    /// Up to `limit` suggestions for `query`. Without a Library there are none.
+    pub fn suggest(&self, query: &str, limit: usize) -> Result<SuggestionsView, String> {
+        let guard = self.lock();
+        let Ok(library) = &*guard else {
+            return Ok(SuggestionsView {
+                items: Vec::new(),
+                lemma: None,
+                near: false,
+                miss: !query.trim().is_empty(),
+                browse: query.trim().is_empty(),
+            });
+        };
+        let suggestions = library
+            .suggest(query, limit)
+            .map_err(|error| error.to_string())?;
+        Ok(SuggestionsView {
+            items: suggestions.items.into_iter().map(suggestion).collect(),
+            lemma: suggestions.lemma.map(|lemma| LemmaView {
+                from: lemma.from,
+                to: lemma.to,
+            }),
+            near: suggestions.near,
+            miss: suggestions.miss,
+            browse: suggestions.browse,
+        })
+    }
+
+    /// Up to `limit` headwords after `headword`: the headword column, continued.
+    pub fn headwords_after(
+        &self,
+        headword: &str,
+        limit: usize,
+    ) -> Result<Vec<SuggestionView>, String> {
+        let guard = self.lock();
+        let Ok(library) = &*guard else {
+            return Ok(Vec::new());
+        };
+        let items = library
+            .headwords_after(headword, limit)
+            .map_err(|error| error.to_string())?;
+        Ok(items.into_iter().map(suggestion).collect())
+    }
+
     /// The HTML of one Dictionary's Entry for exactly `headword`.
     pub fn entry_html(
         &self,
@@ -214,6 +300,33 @@ impl AppState {
         self.change(|library| library.set_enabled(id, enabled))
     }
 
+    /// Unlocks the Dictionary at `path` with the registration code and e-mail the reader
+    /// entered (the code may be empty when the Dictionary carries its own). They are kept
+    /// only when they work. Neither is ever logged or put into an error message.
+    pub fn register(
+        &self,
+        path: &Path,
+        email: &str,
+        code: &str,
+    ) -> Result<LibraryView, RegisterError> {
+        let registration = Registration {
+            email: email.trim().to_owned(),
+            code: code.trim().to_owned(),
+        };
+        let mut guard = self.lock();
+        let library = guard
+            .as_mut()
+            .map_err(|problem| RegisterError::Failed(problem.clone()))?;
+        library
+            .register(path, registration)
+            .map_err(|error| match error {
+                CoreError::WrongRegistration(_) => RegisterError::WrongCode,
+                CoreError::RegistrationCodeNeeded(_) => RegisterError::CodeNeeded,
+                other => RegisterError::Failed(other.to_string()),
+            })?;
+        Ok(view(&guard))
+    }
+
     pub fn move_dictionary(&self, id: &str, direction: Direction) -> Result<LibraryView, String> {
         let step = match direction {
             Direction::Up => Move::Up,
@@ -268,6 +381,13 @@ fn view(library: &Result<Library, String>) -> LibraryView {
     }
 }
 
+fn suggestion(item: Suggestion) -> SuggestionView {
+    SuggestionView {
+        headword: item.headword,
+        count: item.count,
+    }
+}
+
 fn reason(error: &OpenError) -> FailureReason {
     match error {
         OpenError::Unreadable(detail) => FailureReason::Unreadable(detail.clone()),
@@ -277,6 +397,7 @@ fn reason(error: &OpenError) -> FailureReason {
         }
         OpenError::Damaged => FailureReason::Damaged,
         OpenError::NeedsRegistrationCode => FailureReason::NeedsRegistrationCode,
+        OpenError::WrongRegistrationCode => FailureReason::WrongRegistrationCode,
         OpenError::Unsupported(feature) => FailureReason::Unsupported(feature.clone()),
         other => FailureReason::Unsupported(other.to_string()),
     }
@@ -284,7 +405,7 @@ fn reason(error: &OpenError) -> FailureReason {
 
 #[cfg(test)]
 mod tests {
-    use opendict_mdict_fixture::MdxBuilder;
+    use opendict_mdict_fixture::{Identity, MdxBuilder};
     use serde_json::json;
 
     use super::*;
@@ -298,6 +419,55 @@ mod tests {
             .unwrap();
         std::fs::write(folder.path().join("broken.mdx"), b"not a dictionary").unwrap();
         folder
+    }
+
+    const EMAIL: &str = "reader@example.com";
+    const CODE: &str = "0123456789ABCDEF0123456789ABCDEF";
+
+    #[test]
+    fn a_dictionary_that_needs_a_code_opens_once_the_reader_enters_it() {
+        let data = tempfile::tempdir().unwrap();
+        let folder = tempfile::tempdir().unwrap();
+        let bought = folder.path().join("bought.mdx");
+        MdxBuilder::new()
+            .title("Bought")
+            .entry("serendipity", "<p>a happy accident (sample)</p>")
+            .registered_to(EMAIL, CODE, Identity::Utf16)
+            .write_to(&bought)
+            .unwrap();
+        let state = AppState::load(&data.path().join("library.json"), None, data.path());
+        let view = serde_json::to_value(state.add_folder(folder.path()).unwrap()).unwrap();
+        assert_eq!(
+            view["failures"],
+            json!([{ "path": bought, "reason": { "kind": "needsRegistrationCode" } }])
+        );
+
+        let wrong = state.register(&bought, EMAIL, "FEDCBA9876543210FEDCBA9876543210");
+        assert_eq!(
+            serde_json::to_value(wrong.unwrap_err()).unwrap(),
+            json!({ "kind": "wrongCode" })
+        );
+        let no_code = state.register(&bought, EMAIL, "");
+        assert_eq!(
+            serde_json::to_value(no_code.unwrap_err()).unwrap(),
+            json!({ "kind": "codeNeeded" })
+        );
+
+        let view = state.register(&bought, EMAIL, CODE).unwrap();
+
+        assert_eq!(view.dictionaries[0].title, "Bought");
+        assert!(view.failures.is_empty());
+        assert_eq!(state.look_up("serendipity").unwrap().len(), 1);
+        let kept = AppState::load(&data.path().join("library.json"), None, data.path());
+        assert_eq!(kept.library().dictionaries.len(), 1, "kept for next time");
+    }
+
+    #[test]
+    fn a_kept_code_that_no_longer_works_is_its_own_reason() {
+        assert_eq!(
+            serde_json::to_value(reason(&OpenError::WrongRegistrationCode)).unwrap(),
+            json!({ "kind": "wrongRegistrationCode" })
+        );
     }
 
     #[test]
@@ -345,6 +515,40 @@ mod tests {
                 "pronunciation": null
             }])
         );
+    }
+
+    #[test]
+    fn suggestions_reach_the_interface_in_the_lookup_result_shape() {
+        let data = tempfile::tempdir().unwrap();
+        let folder = library_folder();
+        let state = AppState::load(&data.path().join("library.json"), None, data.path());
+        state.add_folder(folder.path()).unwrap();
+
+        assert_eq!(
+            serde_json::to_value(state.suggest("ser", 50).unwrap()).unwrap(),
+            json!({
+                "items": [{ "headword": "serendipity", "count": 1 }],
+                "lemma": null,
+                "near": false,
+                "miss": false,
+                "browse": false
+            })
+        );
+        assert_eq!(
+            serde_json::to_value(state.headwords_after("apple", 50).unwrap()).unwrap(),
+            json!([{ "headword": "serendipity", "count": 1 }])
+        );
+    }
+
+    #[test]
+    fn without_a_library_there_is_nothing_to_suggest() {
+        let data = tempfile::tempdir().unwrap();
+
+        let state = AppState::load(&data.path().join("library.json"), None, data.path());
+
+        let suggestions = state.suggest("", 50).unwrap();
+        assert!(suggestions.browse && suggestions.items.is_empty());
+        assert_eq!(state.headwords_after("a", 50).unwrap(), []);
     }
 
     #[test]

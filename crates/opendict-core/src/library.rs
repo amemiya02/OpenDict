@@ -1,20 +1,28 @@
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 
 use serde::{Deserialize, Serialize};
 
 use crate::error::{Error, Result};
-use crate::format::{DictionaryFormat, DictionaryReader, MdictFormat, OpenError, RawRecord};
+use crate::format::{
+    DictionaryFormat, DictionaryReader, MdictFormat, OpenError, RawRecord, Registration,
+};
+use crate::index::{HeadwordIndex, IndexedHeadword, MemoryIndex, Start, index_key};
+use crate::registrations::Registrations;
 use crate::scan::{self, Unit};
 
 /// Every Dictionary the reader has made available: the Dictionaries found in their
 /// Library Folders, in Library order, each enabled or not.
 ///
 /// A Library loaded from a file ([`Library::load`]) records its Library Folders, order
-/// and enabled states there after every change. Dictionary files are only ever read.
+/// and enabled states there after every change, and keeps the registration codes the
+/// reader enters in `registrations.json` beside it. Dictionary files are only ever read.
 pub struct Library {
     file: Option<PathBuf>,
     formats: Vec<&'static dyn DictionaryFormat>,
     record: Record,
+    registrations: Registrations,
     folders: Vec<LibraryFolder>,
     dictionaries: Vec<Dictionary>,
     failures: Vec<OpenFailure>,
@@ -34,6 +42,24 @@ struct Record {
 struct Dictionary {
     info: DictionaryInfo,
     reader: Box<dyn DictionaryReader>,
+    /// Built on the first query that needs it, so opening the Library stays quick.
+    index: OnceLock<Box<dyn HeadwordIndex>>,
+}
+
+impl Dictionary {
+    fn new(info: DictionaryInfo, reader: Box<dyn DictionaryReader>) -> Dictionary {
+        Dictionary {
+            info,
+            reader,
+            index: OnceLock::new(),
+        }
+    }
+
+    fn index(&self) -> &dyn HeadwordIndex {
+        self.index
+            .get_or_init(|| Box::new(MemoryIndex::build(self.reader.as_ref())))
+            .as_ref()
+    }
 }
 
 /// A Library Folder and what was found in it.
@@ -83,6 +109,36 @@ pub struct Entry {
     pub html: String,
 }
 
+/// What the headword column offers for what the reader typed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Suggestions {
+    /// Headwords in index order: the matches first, then the headwords that follow them.
+    pub items: Vec<Suggestion>,
+    /// The query was an inflected form of a headword.
+    pub lemma: Option<Lemma>,
+    /// Nothing matched exactly or by prefix; the items are close spellings.
+    pub near: bool,
+    /// Nothing matched; the items are the headwords after where the query would stand.
+    pub miss: bool,
+    /// The query was empty; the items are the headword index from its start.
+    pub browse: bool,
+}
+
+/// One headword in the headword column.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Suggestion {
+    pub headword: String,
+    /// How many enabled Dictionaries file this headword.
+    pub count: usize,
+}
+
+/// An inflected form and the headword of its base form.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Lemma {
+    pub from: String,
+    pub to: String,
+}
+
 /// A step in Library order.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Move {
@@ -118,6 +174,7 @@ impl Library {
             }
         };
         let mut library = Library::new(Some(file.to_owned()), formats, record);
+        library.registrations = Registrations::load(file.with_file_name("registrations.json"))?;
         library.rescan()?;
         Ok(library)
     }
@@ -148,6 +205,7 @@ impl Library {
             file,
             formats: formats.to_vec(),
             record,
+            registrations: Registrations::default(),
             folders: Vec::new(),
             dictionaries: Vec::new(),
             failures: Vec::new(),
@@ -223,10 +281,14 @@ impl Library {
                 {
                     continue;
                 }
-                match format.open(path) {
+                let opened = match self.registrations.get(path) {
+                    Some(registration) => format.open_registered(path, registration),
+                    None => format.open(path),
+                };
+                match opened {
                     Ok(reader) => {
                         let info = describe(id, &unit, reader.as_ref(), &self.record);
-                        dictionaries.push(Dictionary { info, reader });
+                        dictionaries.push(Dictionary::new(info, reader));
                     }
                     Err(reason) => failures.push(OpenFailure {
                         path: path.clone(),
@@ -264,6 +326,43 @@ impl Library {
     /// The Dictionary files that were found but could not be opened.
     pub fn failures(&self) -> &[OpenFailure] {
         &self.failures
+    }
+
+    /// Unlocks the Dictionary at `path`, which failed to open for want of its registration
+    /// code, with the code and e-mail (or device ID) the reader entered. When they unlock
+    /// it, they are kept, so it opens on every later scan, and it joins the Library. When
+    /// they do not, nothing is kept and the error says why.
+    pub fn register(&mut self, path: &Path, registration: Registration) -> Result<()> {
+        let waiting = self.failures.iter().any(|failure| {
+            failure.path == path
+                && matches!(
+                    failure.reason,
+                    OpenError::NeedsRegistrationCode | OpenError::WrongRegistrationCode
+                )
+        });
+        let format = self
+            .formats
+            .iter()
+            .find(|format| format.recognises(path))
+            .filter(|_| waiting)
+            .ok_or_else(|| Error::UnknownDictionary(path.display().to_string()))?;
+        match format.open_registered(path, &registration) {
+            Ok(reader) => drop(reader),
+            Err(OpenError::WrongRegistrationCode) => {
+                return Err(Error::WrongRegistration(path.to_owned()));
+            }
+            Err(OpenError::NeedsRegistrationCode) => {
+                return Err(Error::RegistrationCodeNeeded(path.to_owned()));
+            }
+            Err(reason) => {
+                return Err(Error::Dictionary {
+                    dictionary: path.display().to_string(),
+                    reason: reason.to_string(),
+                });
+            }
+        }
+        self.registrations.insert(path, registration)?;
+        self.rescan()
     }
 
     /// Enables or disables a Dictionary. A disabled Dictionary stays in the Library but
@@ -307,6 +406,59 @@ impl Library {
             entries.extend(dictionary.entry(headword)?);
         }
         Ok(entries)
+    }
+
+    /// Up to `limit` suggestions for `query`, from enabled Dictionaries: the headwords
+    /// whose key starts with the query's, then the headwords that follow them in index
+    /// order, like a page of a printed index. An empty query browses the index from its
+    /// start.
+    pub fn suggest(&self, query: &str, limit: usize) -> Result<Suggestions> {
+        let key = index_key(query.trim());
+        let items = self.merged(Start::AtKey(&key), limit)?;
+        let browse = key.is_empty();
+        let miss = !browse
+            && !items
+                .first()
+                .is_some_and(|(first, _)| first.key.starts_with(&key));
+        Ok(Suggestions {
+            items: items.into_iter().map(suggestion).collect(),
+            lemma: None,
+            near: false,
+            miss,
+            browse,
+        })
+    }
+
+    /// Up to `limit` headwords that follow `headword` in index order, from enabled
+    /// Dictionaries: the column continued as the reader scrolls.
+    pub fn headwords_after(&self, headword: &str, limit: usize) -> Result<Vec<Suggestion>> {
+        let after = IndexedHeadword::new(headword);
+        Ok(self
+            .merged(Start::After(&after), limit)?
+            .into_iter()
+            .map(suggestion)
+            .collect())
+    }
+
+    /// The first `limit` headwords from `start` across enabled Dictionaries, each once,
+    /// with how many of them file it.
+    fn merged(&self, start: Start<'_>, limit: usize) -> Result<Vec<(IndexedHeadword, usize)>> {
+        // Each headword among the first `limit` overall is among the first `limit` of
+        // every Dictionary that files it, so `limit` from each is enough to count it.
+        let mut counts: BTreeMap<IndexedHeadword, usize> = BTreeMap::new();
+        for dictionary in self.dictionaries.iter().filter(|d| d.info.enabled) {
+            let headwords = dictionary
+                .index()
+                .headwords(start, limit)
+                .map_err(|error| Error::Dictionary {
+                    dictionary: dictionary.info.title.clone(),
+                    reason: error.to_string(),
+                })?;
+            for headword in headwords {
+                *counts.entry(headword).or_default() += 1;
+            }
+        }
+        Ok(counts.into_iter().take(limit).collect())
     }
 
     /// The Entry for exactly `headword` in the Dictionary with `dictionary_id`, if that
@@ -383,6 +535,13 @@ impl Library {
         let partial = file.with_extension("json.partial");
         std::fs::write(&partial, text).map_err(|error| failed(error.to_string()))?;
         std::fs::rename(&partial, file).map_err(|error| failed(error.to_string()))
+    }
+}
+
+fn suggestion((headword, count): (IndexedHeadword, usize)) -> Suggestion {
+    Suggestion {
+        headword: headword.headword,
+        count,
     }
 }
 

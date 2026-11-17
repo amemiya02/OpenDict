@@ -102,7 +102,7 @@ async function freePort(): Promise<number> {
 }
 
 async function lookUp(headword: string) {
-  const search = page.getByRole("searchbox");
+  const search = page.getByRole("combobox", { name: "Type a word" });
   // Key presses sent over DevTools are sometimes dropped when the field was focused by autoFocus
   // before DevTools attached; a real click first makes WebView2 deliver them.
   await search.click();
@@ -302,7 +302,7 @@ test("the Library view lists the Dictionaries, and a disabled one stops answerin
     { timeout: 10_000 },
   );
 
-  const search = page.getByRole("searchbox");
+  const search = page.getByRole("combobox", { name: "Type a word" });
   await search.fill("serendipity");
   await search.press("Enter");
   await page.getByText("Nothing found for “serendipity”.").waitFor({ timeout: 10_000 });
@@ -313,4 +313,58 @@ test("the Library view lists the Dictionaries, and a disabled one stops answerin
   await search.fill("serendipity");
   await search.press("Enter");
   await page.locator("iframe").waitFor({ timeout: 10_000 });
+});
+
+test("the headword column suggests as the reader types and the keyboard browses it", async () => {
+  const search = page.getByRole("combobox", { name: "Type a word" });
+  const column = page.getByRole("listbox", { name: "Headwords" });
+  const heading = page.getByRole("heading", { level: 1 });
+
+  // An empty field shows the headword index to browse, guide words above it.
+  await search.click();
+  await search.fill("");
+  await column.getByRole("option", { name: "apple, in 1 dictionary" }).waitFor({ timeout: 10_000 });
+  const index = await column.getByRole("option").evaluateAll((options) => options.map((o) => (o as HTMLElement).dataset.headword));
+  assert.deepEqual(index, ["apple", "apples", "cat", "probe", "serendipity", "食べる"]);
+  assert.equal((await page.getByTestId("guide-words").innerText()).replace(/\s+/g, " "), "apple 食べる");
+
+  // Typing suggests by prefix, shows the first match at once, and the column carries on.
+  await search.pressSequentially("app");
+  await column.getByRole("option", { name: "apple, in 1 dictionary", selected: true }).waitFor({ timeout: 10_000 });
+  await page.waitForFunction(() => document.querySelector("h1")?.textContent === "【apple】", null, { timeout: 10_000 });
+
+  await search.press("ArrowDown");
+  await page.waitForFunction(() => document.querySelector("h1")?.textContent === "【apples】", null, { timeout: 10_000 });
+  await search.press("ArrowDown");
+  await search.press("Enter");
+  await page.waitForFunction(() => document.querySelector("h1")?.textContent === "【cat】", null, { timeout: 10_000 });
+  assert.equal(await search.inputValue(), "cat");
+  assert.equal(await heading.count(), 1);
+  if (process.env.OPENDICT_E2E_COLUMN_SCREENSHOT) await page.screenshot({ path: process.env.OPENDICT_E2E_COLUMN_SCREENSHOT });
+});
+
+// Runs last: unlocking adds a Dictionary, and with it a headword, to the Library.
+test("a Dictionary that needs a registration code opens once the reader enters it", async () => {
+  const page = browser!.contexts()[0]!.pages()[0]!;
+  await page.getByRole("button", { name: "Library", exact: true }).click();
+  const failure = page.getByRole("listitem").filter({ hasText: "sample-bought.mdx" });
+  assert.match(await failure.innerText(), /needs its registration code/);
+
+  await failure.getByRole("button", { name: /^Enter the registration code for / }).click();
+  await page.getByLabel("E-mail", { exact: true }).fill("reader@example.com");
+  await page.getByLabel("Registration code", { exact: true }).fill("FEDCBA9876543210FEDCBA9876543210");
+  await page.getByRole("button", { name: "Unlock" }).click();
+  await page.getByRole("alert").filter({ hasText: "do not unlock the dictionary" }).waitFor({ timeout: 10_000 });
+  if (process.env.OPENDICT_E2E_SCREENSHOT) {
+    await page.screenshot({ path: process.env.OPENDICT_E2E_SCREENSHOT.replace(/\.png$/, "-registration.png") });
+  }
+
+  await page.getByLabel("Registration code", { exact: true }).fill("0123 4567 89AB CDEF 0123 4567 89AB CDEF");
+  await page.getByRole("button", { name: "Unlock" }).click();
+  await page.getByRole("rowheader", { name: /Sample Bought Dictionary/ }).waitFor({ timeout: 10_000 });
+
+  const search = page.getByRole("combobox", { name: "Type a word" });
+  await search.fill("bargain");
+  await search.press("Enter");
+  await page.frameLocator("iframe").getByText("Something bought for less than it is worth.").waitFor({ timeout: 10_000 });
 });
