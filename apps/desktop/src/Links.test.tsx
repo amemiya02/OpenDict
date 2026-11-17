@@ -30,6 +30,14 @@ beforeEach(() => {
       lookedUp.push(headword);
       return answers[headword] ?? [];
     }
+    if (command === "suggest") {
+      const query = (args as { query: string }).query.trim();
+      const items = Object.keys(answers)
+        .filter((headword) => headword.startsWith(query))
+        .map((headword) => ({ headword, count: answers[headword]!.length }));
+      return { items, lemma: null, near: false, miss: items.length === 0, browse: !query };
+    }
+    if (command === "headwords_after") return [];
     throw new Error(`unexpected command ${command}`);
   });
   vi.spyOn(HTMLMediaElement.prototype, "play").mockImplementation(function (this: HTMLMediaElement) {
@@ -50,8 +58,10 @@ async function lookUpSerendipity() {
       <App />
     </I18nProvider>,
   );
-  await userEvent.type(screen.getByRole("searchbox"), "serendipity{Enter}");
+  await userEvent.type(screen.getByRole("combobox", { name: "Type a word" }), "serendipity{Enter}");
+  await screen.findByRole("heading", { level: 1, name: "【serendipity】" });
   await screen.findByTitle("Entry from Spoken");
+  lookedUp.length = 0; // what typing looked up along the way
 }
 
 function frame(title: string) {
@@ -77,7 +87,8 @@ describe("links inside Entries", () => {
     post({ opendict: "link", href: "entry://serendipitous" }, clickInto("Quiet"));
 
     expect(await screen.findByRole("heading", { level: 1, name: "【serendipitous】" })).toBeTruthy();
-    expect(lookedUp).toEqual(["serendipity", "serendipitous"]);
+    expect(lookedUp).toEqual(["serendipitous"]);
+    expect(screen.getByRole<HTMLInputElement>("combobox", { name: "Type a word" }).value).toBe("serendipitous");
   });
 
   it("ignores link messages that are not a frame's own, or are not links", async () => {
@@ -91,7 +102,7 @@ describe("links inside Entries", () => {
     post({ opendict: "look_up", headword: "serendipitous" }, frame("Quiet").contentWindow);
     post("entry://serendipitous", frame("Quiet").contentWindow);
 
-    expect(lookedUp).toEqual(["serendipity"]);
+    expect(lookedUp).toEqual([]);
   });
 
   it("ignores links a script sends without the reader clicking in its frame", async () => {
@@ -106,7 +117,7 @@ describe("links inside Entries", () => {
     vi.stubGlobal("navigator", { ...navigator, userActivation: { isActive: false, hasBeenActive: true } });
     post({ opendict: "sound", href: "sound://a.mp3" }, frame("Spoken").contentWindow);
 
-    expect(lookedUp).toEqual(["serendipity"]);
+    expect(lookedUp).toEqual([]);
     expect(played).toEqual([]);
   });
 });

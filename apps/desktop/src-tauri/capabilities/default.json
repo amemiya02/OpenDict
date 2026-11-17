@@ -6,6 +6,8 @@
   "permissions": [
     "core:default",
     "allow-look-up",
+    "allow-suggest",
+    "allow-headwords-after",
     "allow-library",
     "allow-add-library-folder",
     "allow-remove-library-folder",

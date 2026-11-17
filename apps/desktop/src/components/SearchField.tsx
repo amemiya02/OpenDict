@@ -1,20 +1,53 @@
-import { useState, type FormEvent, type KeyboardEvent } from "react";
+import type { FormEvent, KeyboardEvent, SyntheticEvent } from "react";
 import { useI18n } from "../i18n";
+import { LIST_ID } from "./HeadwordColumn";
 
-/** The slip of India Paper set into the cover band. Submitting runs a Lookup. */
-export function SearchField({ onSubmit }: { onSubmit: (query: string) => void }) {
+/** An IME is composing: its keys and its text are not the reader's yet. */
+function composing(event: SyntheticEvent) {
+  const native = event.nativeEvent as Partial<globalThis.KeyboardEvent & InputEvent>;
+  return Boolean(native.isComposing) || native.keyCode === 229;
+}
+
+/**
+ * The slip of India Paper set into the cover band. It drives the headword column: what
+ * the reader types asks for suggestions, ↑ and ↓ move through them, and Enter commits.
+ * Nothing happens while an IME is composing; the composed text counts once it is done.
+ */
+export function SearchField({
+  value,
+  activeOption,
+  onChange,
+  onQuery,
+  onMove,
+  onCommit,
+}: {
+  value: string;
+  /** The id of the current suggestion, if any. */
+  activeOption: string | undefined;
+  /** The text changed (also while composing). */
+  onChange: (value: string) => void;
+  /** The reader's query changed (never mid-composition). */
+  onQuery: (query: string) => void;
+  onMove: (by: number) => void;
+  onCommit: () => void;
+}) {
   const { t } = useI18n();
-  const [query, setQuery] = useState("");
 
   function submit(event: FormEvent) {
     event.preventDefault();
-    const trimmed = query.trim();
-    if (trimmed) onSubmit(trimmed);
+    onCommit();
   }
 
-  // Enter that confirms an IME composition must not submit (WebKit reports it as a keydown).
-  function guardComposition(event: KeyboardEvent<HTMLInputElement>) {
-    if (event.key === "Enter" && (event.nativeEvent.isComposing || event.keyCode === 229)) event.preventDefault();
+  function keyDown(event: KeyboardEvent<HTMLInputElement>) {
+    if (composing(event)) {
+      // Enter that confirms an IME composition must not submit (WebKit reports it as a keydown).
+      if (event.key === "Enter") event.preventDefault();
+      return;
+    }
+    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+      event.preventDefault();
+      onMove(event.key === "ArrowDown" ? 1 : -1);
+    }
   }
 
   return (
@@ -34,17 +67,26 @@ export function SearchField({ onSubmit }: { onSubmit: (query: string) => void })
         </svg>
       </button>
       <input
-        type="search"
+        type="text"
+        role="combobox"
         aria-label={t.searchLabel}
+        aria-controls={LIST_ID}
+        aria-expanded="true"
+        aria-autocomplete="list"
+        aria-activedescendant={activeOption}
         placeholder={t.searchPlaceholder}
-        value={query}
-        onChange={(event) => setQuery(event.target.value)}
-        onKeyDown={guardComposition}
+        value={value}
+        onChange={(event) => {
+          onChange(event.target.value);
+          if (!composing(event)) onQuery(event.target.value);
+        }}
+        onCompositionEnd={(event) => onQuery(event.currentTarget.value)}
+        onKeyDown={keyDown}
         autoComplete="off"
         autoCapitalize="off"
         spellCheck={false}
         autoFocus
-        className="h-full min-w-0 flex-1 bg-transparent px-1 font-serif text-search outline-0 placeholder:font-sans placeholder:text-[14px] placeholder:text-field-text-secondary [&::-webkit-search-cancel-button]:hidden"
+        className="h-full min-w-0 flex-1 bg-transparent px-1 font-serif text-search outline-0 placeholder:font-sans placeholder:text-[14px] placeholder:text-field-text-secondary"
       />
     </form>
   );
