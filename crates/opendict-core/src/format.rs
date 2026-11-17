@@ -44,7 +44,8 @@ pub struct MdictFormat;
 
 impl DictionaryFormat for MdictFormat {
     fn recognises(&self, path: &Path) -> bool {
-        path.extension().is_some_and(|ext| ext.eq_ignore_ascii_case("mdx"))
+        path.extension()
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("mdx"))
     }
 
     fn open(&self, path: &Path) -> Result<Box<dyn DictionaryReader>, FormatError> {

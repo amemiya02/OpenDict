@@ -105,9 +105,11 @@ impl Library {
     pub fn look_up(&self, headword: &str) -> Result<Vec<Entry>> {
         let mut entries = Vec::new();
         for dictionary in &self.dictionaries {
-            let records = resolve(dictionary.reader.as_ref(), headword).map_err(|error| Error::Dictionary {
-                dictionary: dictionary.info.title.clone(),
-                reason: error.to_string(),
+            let records = resolve(dictionary.reader.as_ref(), headword).map_err(|error| {
+                Error::Dictionary {
+                    dictionary: dictionary.info.title.clone(),
+                    reason: error.to_string(),
+                }
             })?;
             if !records.is_empty() {
                 entries.push(Entry {
@@ -122,7 +124,10 @@ impl Library {
 }
 
 /// The text records for `headword`, following redirects with cycle protection.
-fn resolve(reader: &dyn DictionaryReader, headword: &str) -> std::result::Result<Vec<String>, crate::FormatError> {
+fn resolve(
+    reader: &dyn DictionaryReader,
+    headword: &str,
+) -> std::result::Result<Vec<String>, crate::FormatError> {
     let mut texts = Vec::new();
     for record in reader.records(headword)? {
         let mut record = record;

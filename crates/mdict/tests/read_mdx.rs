@@ -24,7 +24,10 @@ fn reads_the_header() {
     let header = mdx.header();
 
     assert_eq!(header.title(), "Sample English Dictionary");
-    assert_eq!(header.description(), "Written for <b>tests</b> & nothing else");
+    assert_eq!(
+        header.description(),
+        "Written for <b>tests</b> & nothing else"
+    );
     assert_eq!(header.engine_version(), "2.0");
     assert_eq!(header.encoding(), "UTF-8");
     assert_eq!(header.attribute("Format"), Some("Html"));
@@ -64,9 +67,18 @@ fn looks_up_the_record_for_a_headword_across_record_blocks() {
 
     let mdx = Mdx::open(&path).unwrap();
 
-    assert_eq!(mdx.lookup("serendipity").unwrap(), [Record::Text("<p class=\"def\">a happy accident</p>".into())]);
-    assert_eq!(mdx.lookup("食べる").unwrap(), [Record::Text("<p>to eat</p>".into())]);
-    assert_eq!(mdx.lookup("apple").unwrap(), [Record::Text("<p>a fruit</p>".into())]);
+    assert_eq!(
+        mdx.lookup("serendipity").unwrap(),
+        [Record::Text("<p class=\"def\">a happy accident</p>".into())]
+    );
+    assert_eq!(
+        mdx.lookup("食べる").unwrap(),
+        [Record::Text("<p>to eat</p>".into())]
+    );
+    assert_eq!(
+        mdx.lookup("apple").unwrap(),
+        [Record::Text("<p>a fruit</p>".into())]
+    );
 }
 
 #[test]
@@ -92,7 +104,10 @@ fn keeps_several_records_under_one_headword_together() {
 
     assert_eq!(
         mdx.lookup("bank").unwrap(),
-        [Record::Text("<p>the side of a river</p>".into()), Record::Text("<p>a place for money</p>".into())]
+        [
+            Record::Text("<p>the side of a river</p>".into()),
+            Record::Text("<p>a place for money</p>".into())
+        ]
     );
 }
 
@@ -106,7 +121,10 @@ fn reports_a_redirect_without_following_it() {
 
     let mdx = Mdx::open(&path).unwrap();
 
-    assert_eq!(mdx.lookup("color").unwrap(), [Record::Link("colour".into())]);
+    assert_eq!(
+        mdx.lookup("color").unwrap(),
+        [Record::Link("colour".into())]
+    );
 }
 
 #[test]

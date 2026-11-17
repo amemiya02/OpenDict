@@ -72,8 +72,13 @@ impl Mdx {
         let mut record_starts: Vec<u64> = keys.iter().map(|key| key.record_offset).collect();
         record_starts.sort_unstable();
         record_starts.dedup();
-        if record_starts.last().is_some_and(|&last| last >= records.total) {
-            return Err(Error::Corrupt("a record offset lies past the record section"));
+        if record_starts
+            .last()
+            .is_some_and(|&last| last >= records.total)
+        {
+            return Err(Error::Corrupt(
+                "a record offset lies past the record section",
+            ));
         }
 
         Ok(Mdx {
@@ -100,7 +105,9 @@ impl Mdx {
     /// The records filed under exactly this headword (no case folding or other
     /// normalisation), in file order. Empty when the file does not have the headword.
     pub fn lookup(&self, headword: &str) -> Result<Vec<Record>> {
-        let first = self.sorted.partition_point(|&i| self.keys[i].text.as_str() < headword);
+        let first = self
+            .sorted
+            .partition_point(|&i| self.keys[i].text.as_str() < headword);
         self.sorted[first..]
             .iter()
             .take_while(|&&i| self.keys[i].text == headword)
@@ -110,7 +117,11 @@ impl Mdx {
 
     fn record(&self, start: u64) -> Result<Record> {
         let next = self.record_starts.partition_point(|&s| s <= start);
-        let end = self.record_starts.get(next).copied().unwrap_or(self.records.total);
+        let end = self
+            .record_starts
+            .get(next)
+            .copied()
+            .unwrap_or(self.records.total);
         let bytes = self.record_bytes(start, end)?;
         Ok(decode_record(&bytes))
     }
@@ -118,15 +129,21 @@ impl Mdx {
     /// The bytes of the record stream in `start..end`, decompressing only the blocks that hold them.
     fn record_bytes(&self, start: u64, end: u64) -> Result<Vec<u8>> {
         let blocks = &self.records.blocks;
-        let mut index = blocks.partition_point(|b| b.stream_start <= start).saturating_sub(1);
+        let mut index = blocks
+            .partition_point(|b| b.stream_start <= start)
+            .saturating_sub(1);
         let mut out = Vec::new();
         let mut at = start;
         while at < end {
-            let block = blocks.get(index).ok_or(Error::Corrupt("a record runs past the record section"))?;
+            let block = blocks
+                .get(index)
+                .ok_or(Error::Corrupt("a record runs past the record section"))?;
             let stored = self
                 .map
                 .get(block.file_start..block.file_start + block.stored_len)
-                .ok_or(Error::Corrupt("a record block lies past the end of the file"))?;
+                .ok_or(Error::Corrupt(
+                    "a record block lies past the end of the file",
+                ))?;
             let plain = block::decompress(stored, block.plain_len)?;
             let from = (at - block.stream_start) as usize;
             let to = ((end - block.stream_start) as usize).min(plain.len());
@@ -155,8 +172,14 @@ fn check_supported(header: &Header) -> Result<()> {
         Ok(v) if v < 2.0 => return Err(Error::Unsupported(format!("format version {version}"))),
         _ => return Err(Error::UnsupportedVersion(version.to_owned())),
     }
-    if !matches!(header.encoding().trim().to_ascii_uppercase().as_str(), "" | "UTF-8" | "UTF8") {
-        return Err(Error::Unsupported(format!("encoding {}", header.encoding())));
+    if !matches!(
+        header.encoding().trim().to_ascii_uppercase().as_str(),
+        "" | "UTF-8" | "UTF8"
+    ) {
+        return Err(Error::Unsupported(format!(
+            "encoding {}",
+            header.encoding()
+        )));
     }
     if header.encrypted() != 0 {
         return Err(Error::Unsupported("encryption".to_owned()));
@@ -170,7 +193,9 @@ fn read_key_section(reader: &mut Reader<'_>) -> Result<Vec<Key>> {
     let head = reader.take(40)?;
     let checksum = reader.u32_be()?;
     if adler32(head) != checksum {
-        return Err(Error::Corrupt("the key section header checksum does not match"));
+        return Err(Error::Corrupt(
+            "the key section header checksum does not match",
+        ));
     }
     let mut head = Reader::new(head);
     let block_count = head.size()?;
@@ -198,7 +223,10 @@ fn read_key_section(reader: &mut Reader<'_>) -> Result<Vec<Key>> {
         for _ in 0..entries {
             let record_offset = plain.u64_be()?;
             let text = String::from_utf8_lossy(plain.until_nul()?).into_owned();
-            keys.push(Key { text, record_offset });
+            keys.push(Key {
+                text,
+                record_offset,
+            });
         }
     }
     if keys.len() != entry_count || blocks_seen != blocks_len {
@@ -231,7 +259,9 @@ fn read_record_section(reader: &mut Reader<'_>, key_count: usize) -> Result<Reco
             stream_start,
             plain_len,
         });
-        file_start = file_start.checked_add(stored_len).ok_or(Error::Corrupt("record blocks overflow"))?;
+        file_start = file_start
+            .checked_add(stored_len)
+            .ok_or(Error::Corrupt("record blocks overflow"))?;
         stream_start += plain_len as u64;
     }
     if file_start - reader.position() != blocks_len {

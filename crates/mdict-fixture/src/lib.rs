@@ -206,7 +206,9 @@ impl MdxBuilder {
 /// `[02 00 00 00] [adler32(data) BE] [zlib(data)]`
 fn compressed_block(data: &[u8]) -> Vec<u8> {
     let mut encoder = ZlibEncoder::new(Vec::new(), Compression::default());
-    encoder.write_all(data).expect("writing to a Vec cannot fail");
+    encoder
+        .write_all(data)
+        .expect("writing to a Vec cannot fail");
     let zlib = encoder.finish().expect("writing to a Vec cannot fail");
     let mut out = vec![2, 0, 0, 0];
     out.extend(adler32(data).to_be_bytes());

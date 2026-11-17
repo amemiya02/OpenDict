@@ -44,15 +44,39 @@ fn finds_nothing_for_a_headword_no_dictionary_has() {
 #[test]
 fn every_dictionary_with_the_headword_answers_in_library_order() {
     let folder = tempfile::tempdir().unwrap();
-    put(folder.path(), "b-second.mdx", &MdxBuilder::new().title("Second").entry("apple", "<p>second</p>"));
-    put(folder.path(), "a-first.mdx", &MdxBuilder::new().title("First").entry("apple", "<p>first</p>"));
-    put(folder.path(), "c-other.mdx", &MdxBuilder::new().title("Other").entry("pear", "<p>other</p>"));
+    put(
+        folder.path(),
+        "b-second.mdx",
+        &MdxBuilder::new()
+            .title("Second")
+            .entry("apple", "<p>second</p>"),
+    );
+    put(
+        folder.path(),
+        "a-first.mdx",
+        &MdxBuilder::new()
+            .title("First")
+            .entry("apple", "<p>first</p>"),
+    );
+    put(
+        folder.path(),
+        "c-other.mdx",
+        &MdxBuilder::new()
+            .title("Other")
+            .entry("pear", "<p>other</p>"),
+    );
 
     let library = Library::open(folder.path()).unwrap();
     let entries = library.look_up("apple").unwrap();
 
-    let answered: Vec<_> = entries.iter().map(|e| (e.dictionary_title.as_str(), e.html.as_str())).collect();
-    assert_eq!(answered, [("First", "<p>first</p>"), ("Second", "<p>second</p>")]);
+    let answered: Vec<_> = entries
+        .iter()
+        .map(|e| (e.dictionary_title.as_str(), e.html.as_str()))
+        .collect();
+    assert_eq!(
+        answered,
+        [("First", "<p>first</p>"), ("Second", "<p>second</p>")]
+    );
 }
 
 #[test]
@@ -71,7 +95,10 @@ fn follows_redirects_and_survives_a_redirect_cycle() {
 
     let library = Library::open(folder.path()).unwrap();
 
-    assert_eq!(library.look_up("colr").unwrap()[0].html, "<p>the property of reflecting light</p>");
+    assert_eq!(
+        library.look_up("colr").unwrap()[0].html,
+        "<p>the property of reflecting light</p>"
+    );
     assert_eq!(library.look_up("ping").unwrap(), []);
 }
 
@@ -92,9 +119,16 @@ fn a_dictionary_that_fails_to_open_does_not_stop_the_others() {
 #[test]
 fn names_an_untitled_dictionary_after_its_file() {
     let folder = tempfile::tempdir().unwrap();
-    put(folder.path(), "pocket.mdx", &MdxBuilder::new().title("").entry("apple", "<p>a fruit</p>"));
+    put(
+        folder.path(),
+        "pocket.mdx",
+        &MdxBuilder::new().title("").entry("apple", "<p>a fruit</p>"),
+    );
 
     let library = Library::open(folder.path()).unwrap();
 
-    assert_eq!(library.look_up("apple").unwrap()[0].dictionary_title, "pocket");
+    assert_eq!(
+        library.look_up("apple").unwrap()[0].dictionary_title,
+        "pocket"
+    );
 }

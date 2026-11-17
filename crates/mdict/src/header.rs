@@ -48,7 +48,8 @@ impl Header {
     pub(crate) fn read(reader: &mut Reader<'_>) -> Result<Header> {
         let len = reader
             .u32_be()
-            .map_err(|_| Error::NotMdict("the file is too short for a header"))? as usize;
+            .map_err(|_| Error::NotMdict("the file is too short for a header"))?
+            as usize;
         let text = reader
             .take(len)
             .map_err(|_| Error::NotMdict("the header runs past the end of the file"))?;
@@ -57,13 +58,11 @@ impl Header {
                 .array()
                 .map_err(|_| Error::NotMdict("the header has no checksum"))?,
         );
-        if len % 2 != 0 || adler32(text) != checksum {
+        if !len.is_multiple_of(2) || adler32(text) != checksum {
             return Err(Error::NotMdict("the header checksum does not match"));
         }
-        let units: Vec<u16> = text
-            .chunks_exact(2)
-            .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
-            .collect();
+        let (pairs, _) = text.as_chunks::<2>();
+        let units: Vec<u16> = pairs.iter().map(|&pair| u16::from_le_bytes(pair)).collect();
         let text = String::from_utf16_lossy(&units);
         let text = text.trim_end_matches(['\0', '\r', '\n', ' ']);
         if !text.starts_with("<Dictionary") && !text.starts_with("<Library_Data") {

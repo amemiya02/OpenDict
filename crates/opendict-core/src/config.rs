@@ -17,9 +17,19 @@ impl Config {
     pub fn load(file: &Path) -> Result<Config> {
         let text = match std::fs::read_to_string(file) {
             Ok(text) => text,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Config::default()),
-            Err(error) => return Err(Error::Config { file: file.to_owned(), reason: error.to_string() }),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                return Ok(Config::default());
+            }
+            Err(error) => {
+                return Err(Error::Config {
+                    file: file.to_owned(),
+                    reason: error.to_string(),
+                });
+            }
         };
-        serde_json::from_str(&text).map_err(|error| Error::Config { file: file.to_owned(), reason: error.to_string() })
+        serde_json::from_str(&text).map_err(|error| Error::Config {
+            file: file.to_owned(),
+            reason: error.to_string(),
+        })
     }
 }

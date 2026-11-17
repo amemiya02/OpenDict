@@ -10,7 +10,10 @@ fn reads_the_library_folder_from_the_configuration_file() {
 
     let config = Config::load(&file).unwrap();
 
-    assert_eq!(config.library_folder.as_deref(), Some(std::path::Path::new("D:/Dictionaries")));
+    assert_eq!(
+        config.library_folder.as_deref(),
+        Some(std::path::Path::new("D:/Dictionaries"))
+    );
 }
 
 #[test]
