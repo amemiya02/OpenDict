@@ -35,6 +35,10 @@ struct Inner {
     /// before anything kept in it whenever both are needed.
     data: Mutex<Result<DataDirectory, DataDirectoryView>>,
     library: Mutex<Result<Library, String>>,
+    /// The Entries of the last few Lookups, as the Entry scheme serves them, so their
+    /// frames do not read them from the Dictionary again. Changed only while `library` is
+    /// locked; emptied whenever the Library changes.
+    rendered: Mutex<Rendered>,
     /// What is being indexed right now, for the Library view.
     indexing: Mutex<Option<IndexingView>>,
     /// Whether an indexing thread is running. Changed only while `library` is locked, so
@@ -45,6 +49,38 @@ struct Inner {
     preferences: Mutex<Result<Preferences, String>>,
     history: Mutex<Result<History, String>>,
     word_books: Mutex<Result<WordBooks, String>>,
+}
+
+/// How many Lookups' Entries [`Rendered`] keeps: the main window's and the Mini Window's
+/// latest, with room for a preview or two between a Lookup and its frames loading.
+const RENDERED_LOOKUPS: usize = 4;
+
+/// The Entries of the latest Lookups, newest last, by the headword looked up.
+#[derive(Default)]
+struct Rendered {
+    lookups: std::collections::VecDeque<(String, Vec<opendict_core::Entry>)>,
+}
+
+impl Rendered {
+    fn keep(&mut self, headword: &str, entries: Vec<opendict_core::Entry>) {
+        self.lookups.retain(|(kept, _)| kept != headword);
+        if self.lookups.len() == RENDERED_LOOKUPS {
+            self.lookups.pop_front();
+        }
+        self.lookups.push_back((headword.to_owned(), entries));
+    }
+
+    fn html(&self, dictionary_id: &str, headword: &str) -> Option<String> {
+        let (_, entries) = self.lookups.iter().find(|(kept, _)| kept == headword)?;
+        entries
+            .iter()
+            .find(|entry| entry.dictionary_id == dictionary_id)
+            .map(|entry| entry.html.clone())
+    }
+
+    fn clear(&mut self) {
+        self.lookups.clear();
+    }
 }
 
 /// An Entry as the interface receives it. Its HTML never passes through the interface:
@@ -318,6 +354,7 @@ impl AppState {
                 formats: formats.to_vec(),
                 data: Mutex::new(data),
                 library: Mutex::new(loaded.library),
+                rendered: Mutex::new(Rendered::default()),
                 preferences: Mutex::new(loaded.preferences),
                 history: Mutex::new(loaded.history),
                 word_books: Mutex::new(loaded.word_books),
@@ -385,6 +422,7 @@ impl AppState {
         // Every file is let go first: the Library maps its index files, which could
         // then be neither copied safely nor removed.
         let busy = "the data directory is moving".to_owned();
+        self.rendered().clear();
         *library = Err(busy.clone());
         *preferences = Err(busy.clone());
         *history = Err(busy.clone());
@@ -398,6 +436,13 @@ impl AppState {
         *history = loaded.history;
         *word_books = loaded.word_books;
         changed.map(|()| data_view(&data))
+    }
+
+    fn rendered(&self) -> MutexGuard<'_, Rendered> {
+        self.inner
+            .rendered
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
     fn lock(&self) -> MutexGuard<'_, Result<Library, String>> {
@@ -431,6 +476,7 @@ impl AppState {
     ) -> Result<LibraryView, String> {
         let mut guard = self.lock();
         let library = guard.as_mut().map_err(|problem| problem.clone())?;
+        self.rendered().clear();
         change(library).map_err(|error| error.to_string())?;
         Ok(view(&guard, self.progress()))
     }
@@ -445,18 +491,20 @@ impl AppState {
         let entries = library
             .look_up(headword)
             .map_err(|error| error.to_string())?;
-        Ok(entries
-            .into_iter()
+        let views = entries
+            .iter()
             .map(|entry| EntryView {
                 src: entry_protocol::entry_url(&entry.dictionary_id, headword),
                 allow_network: self.allows_network(&entry.dictionary_id),
                 as_authored: self.as_authored(&entry.dictionary_id),
                 sound: entry.sounds().into_iter().next(),
                 pronunciation: opendict_core::pronunciation(&entry.html),
-                dictionary_id: entry.dictionary_id,
-                dictionary_title: entry.dictionary_title,
+                dictionary_id: entry.dictionary_id.clone(),
+                dictionary_title: entry.dictionary_title.clone(),
             })
-            .collect())
+            .collect();
+        self.rendered().keep(headword, entries);
+        Ok(views)
     }
 
     /// Up to `limit` suggestions for `query`. Without a Library there are none.
@@ -510,6 +558,9 @@ impl AppState {
         dictionary_id: &str,
         headword: &str,
     ) -> Result<Option<String>, String> {
+        if let Some(html) = self.rendered().html(dictionary_id, headword) {
+            return Ok(Some(html));
+        }
         let guard = self.lock();
         let Ok(library) = &*guard else {
             return Ok(None);
@@ -788,6 +839,7 @@ impl AppState {
             let scanned = scan.run();
             let mut guard = self.lock();
             let library = guard.as_mut().map_err(|problem| problem.clone())?;
+            self.rendered().clear();
             if library
                 .finish_scan(scanned)
                 .map_err(|error| error.to_string())?
@@ -818,6 +870,7 @@ impl AppState {
         let library = guard
             .as_mut()
             .map_err(|problem| RegisterError::Failed(problem.clone()))?;
+        self.rendered().clear();
         library
             .register(path, registration)
             .map_err(|error| match error {
@@ -1459,6 +1512,88 @@ mod tests {
         assert_eq!(added.dictionaries.len(), 2);
         index(&state);
         assert_eq!(state.look_up("serendipity").unwrap().len(), 2);
+    }
+
+    /// MDict, counting the records read from `counted.mdx` in [`RECORDS_READ`].
+    struct CountingFormat;
+
+    static RECORDS_READ: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+    struct CountingReader(Box<dyn opendict_core::DictionaryReader>);
+
+    impl opendict_core::DictionaryReader for CountingReader {
+        fn title(&self) -> &str {
+            self.0.title()
+        }
+
+        fn entry_count(&self) -> usize {
+            self.0.entry_count()
+        }
+
+        fn headwords(
+            &self,
+            progress: &mut dyn FnMut(usize) -> ControlFlow<()>,
+        ) -> Result<Option<Vec<(String, opendict_core::Location)>>, opendict_core::FormatError>
+        {
+            self.0.headwords(progress)
+        }
+
+        fn record(
+            &self,
+            location: opendict_core::Location,
+        ) -> Result<opendict_core::RawRecord, opendict_core::FormatError> {
+            RECORDS_READ.fetch_add(1, Ordering::SeqCst);
+            self.0.record(location)
+        }
+    }
+
+    impl opendict_core::DictionaryFormat for CountingFormat {
+        fn recognises(&self, path: &Path) -> bool {
+            opendict_core::MdictFormat.recognises(path)
+        }
+
+        fn open(&self, path: &Path) -> Result<Box<dyn opendict_core::DictionaryReader>, OpenError> {
+            let reader = opendict_core::MdictFormat.open(path)?;
+            Ok(match path.file_name().is_some_and(|n| n == "counted.mdx") {
+                true => Box::new(CountingReader(reader)),
+                false => reader,
+            })
+        }
+    }
+
+    #[test]
+    fn an_entry_just_looked_up_reaches_its_frame_without_being_read_again() {
+        let data = tempfile::tempdir().unwrap();
+        let folder = tempfile::tempdir().unwrap();
+        MdxBuilder::new()
+            .title("Counted")
+            .entry(
+                "serendipity",
+                r#"<p>a happy accident <a href="sound://s.mp3">listen</a> (sample)</p>"#,
+            )
+            .write_to(folder.path().join("counted.mdx"))
+            .unwrap();
+        let state = AppState::load_with(data.path(), None, &[&CountingFormat]);
+        state.add_folder(folder.path()).unwrap();
+        index(&state);
+        let before = RECORDS_READ.load(Ordering::SeqCst);
+
+        let entries = state.look_up("serendipity").unwrap();
+        let html = state
+            .entry_html(&entries[0].dictionary_id, "serendipity")
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(entries[0].sound.as_deref(), Some("s.mp3"));
+        assert!(html.contains("a happy accident"));
+        assert_eq!(RECORDS_READ.load(Ordering::SeqCst) - before, 1);
+        // Another headword is read from the Dictionary as before.
+        assert_eq!(
+            state
+                .entry_html(&entries[0].dictionary_id, "no such word")
+                .unwrap(),
+            None
+        );
     }
 
     #[test]
