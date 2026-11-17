@@ -21,6 +21,13 @@
     "allow-history",
     "allow-record-lookup",
     "allow-clear-history",
+    "allow-create-group",
+    "allow-rename-group",
+    "allow-delete-group",
+    "allow-set-in-group",
+    "allow-move-in-group",
+    "allow-set-current-group",
+    "allow-elsewhere",
     "updater:default",
     "process:allow-restart"
   ]

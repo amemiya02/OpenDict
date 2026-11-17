@@ -63,6 +63,13 @@ pub fn run() {
             commands::history,
             commands::record_lookup,
             commands::clear_history,
+            commands::create_group,
+            commands::rename_group,
+            commands::delete_group,
+            commands::set_in_group,
+            commands::move_in_group,
+            commands::set_current_group,
+            commands::elsewhere,
         ])
         .run(tauri::generate_context!())
         .expect("OpenDict failed to start");

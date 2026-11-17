@@ -18,6 +18,13 @@ fn main() {
         "register_dictionary",
         "index_library",
         "cancel_indexing",
+        "create_group",
+        "rename_group",
+        "delete_group",
+        "set_in_group",
+        "move_in_group",
+        "set_current_group",
+        "elsewhere",
     ]);
     tauri_build::try_build(tauri_build::Attributes::new().app_manifest(manifest))
         .expect("failed to run tauri-build");

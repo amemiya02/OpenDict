@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-elsewhere"
+description = "Enables the elsewhere command without any pre-configured scope."
+commands.allow = ["elsewhere"]
+
+[[permission]]
+identifier = "deny-elsewhere"
+description = "Denies the elsewhere command without any pre-configured scope."
+commands.deny = ["elsewhere"]

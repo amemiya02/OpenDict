@@ -8,7 +8,8 @@ use tauri::{AppHandle, Emitter, State};
 use tauri_plugin_dialog::DialogExt;
 
 use crate::state::{
-    AppState, Direction, EntryView, LibraryView, RegisterError, SuggestionView, SuggestionsView,
+    AppState, Direction, ElsewhereView, EntryView, LibraryView, RegisterError, SuggestionView,
+    SuggestionsView,
 };
 
 /// Unlocks a Dictionary that needs a registration code with the code and e-mail the
@@ -132,6 +133,63 @@ pub async fn move_dictionary(
     direction: Direction,
 ) -> Result<LibraryView, String> {
     state.move_dictionary(&id, direction)
+}
+
+#[tauri::command]
+pub fn create_group(state: State<'_, AppState>, name: String) -> Result<LibraryView, String> {
+    state.create_group(&name)
+}
+
+#[tauri::command]
+pub fn rename_group(
+    state: State<'_, AppState>,
+    id: String,
+    name: String,
+) -> Result<LibraryView, String> {
+    state.rename_group(&id, &name)
+}
+
+#[tauri::command]
+pub fn delete_group(state: State<'_, AppState>, id: String) -> Result<LibraryView, String> {
+    state.delete_group(&id)
+}
+
+#[tauri::command]
+pub fn set_in_group(
+    state: State<'_, AppState>,
+    group: String,
+    dictionary: String,
+    member: bool,
+) -> Result<LibraryView, String> {
+    state.set_in_group(&group, &dictionary, member)
+}
+
+#[tauri::command]
+pub fn move_in_group(
+    state: State<'_, AppState>,
+    group: String,
+    dictionary: String,
+    direction: Direction,
+) -> Result<LibraryView, String> {
+    state.move_in_group(&group, &dictionary, direction)
+}
+
+/// Makes `group` the Current Group; `null` makes Lookups run against the whole Library.
+#[tauri::command]
+pub fn set_current_group(
+    state: State<'_, AppState>,
+    group: Option<String>,
+) -> Result<LibraryView, String> {
+    state.set_current_group(group.as_deref())
+}
+
+/// Another Group that has `query` when the Current Group does not, for the no-match page.
+#[tauri::command]
+pub fn elsewhere(
+    state: State<'_, AppState>,
+    query: String,
+) -> Result<Option<ElsewhereView>, String> {
+    state.elsewhere(&query)
 }
 
 /// The headwords of committed Lookups, newest first.
