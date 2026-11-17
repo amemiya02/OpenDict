@@ -6,8 +6,8 @@ export interface ColumnItem {
   count?: number;
 }
 
-/** What the column lists: suggestions for what the reader typed, or History. */
-export type ColumnList = "suggestions" | "history";
+/** What the column lists: suggestions for what the reader typed, History, or the chosen Word Book. */
+export type ColumnList = "suggestions" | "history" | "wordBook";
 
 /** Height of one index row (DESIGN.md: index-row). Guide words are worked out from it. */
 const ROW = 26;
@@ -26,7 +26,7 @@ export const optionId = (index: number) => `headword-${index}`;
  * rule, an optional note line, the headwords themselves with how many Dictionaries have
  * each, and the column's tabs. The search field drives it from the keyboard; rows can
  * also be clicked. The History tab lists committed Lookups instead, newest first, with a
- * way to clear them.
+ * way to clear them; the Word Book tab lists the chosen Word Book, newest first.
  */
 export function HeadwordColumn({
   items,
@@ -39,6 +39,7 @@ export function HeadwordColumn({
   onShowSuggestions,
   onShowHistory,
   onClearHistory,
+  onShowWordBook,
   onToggleLibrary,
   open = false,
 }: {
@@ -46,13 +47,14 @@ export function HeadwordColumn({
   /** The current row, or -1. Nothing in the column is current while the Library is open. */
   selected: number;
   note: ReactNode;
-  view: "lookup" | "library";
+  view: "lookup" | "library" | "wordBook";
   list?: ColumnList;
   onPick: (index: number) => void;
   onNeedMore: () => void;
   onShowSuggestions: () => void;
   onShowHistory: () => void;
   onClearHistory: () => void;
+  onShowWordBook: () => void;
   onToggleLibrary: () => void;
   /** In a narrow window the column is an overlay, shown over the page only while open. */
   open?: boolean;
@@ -161,7 +163,9 @@ export function HeadwordColumn({
         ))}
       </ul>
       {items.length === 0 ? (
-        <p className="flex-1 px-lg py-3.5 text-text-secondary">{list === "history" ? t.noLookupsYet : t.noMatchingHeadwords}</p>
+        <p className="flex-1 px-lg py-3.5 text-text-secondary">
+          {list === "history" ? t.noLookupsYet : list === "wordBook" ? t.wordCount(0) : t.noMatchingHeadwords}
+        </p>
       ) : null}
       {list === "history" && view === "lookup" && items.length > 0 ? <ClearHistory onClear={onClearHistory} /> : null}
       <div className="flex border-t border-rule">
@@ -170,6 +174,9 @@ export function HeadwordColumn({
         </ColumnTab>
         <ColumnTab pressed={view === "lookup" && list === "history"} onClick={onShowHistory}>
           {t.history}
+        </ColumnTab>
+        <ColumnTab pressed={view !== "library" && list === "wordBook"} onClick={onShowWordBook}>
+          {t.wordBook}
         </ColumnTab>
         <ColumnTab pressed={view === "library"} onClick={onToggleLibrary}>
           {t.library}

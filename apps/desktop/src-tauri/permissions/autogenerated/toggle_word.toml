@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-toggle-word"
+description = "Enables the toggle_word command without any pre-configured scope."
+commands.allow = ["toggle_word"]
+
+[[permission]]
+identifier = "deny-toggle-word"
+description = "Denies the toggle_word command without any pre-configured scope."
+commands.deny = ["toggle_word"]

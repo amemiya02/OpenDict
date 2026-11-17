@@ -232,6 +232,78 @@ export function setZoom(percent: number): Promise<number> {
   return invoke<number>("set_zoom", { percent });
 }
 
+/** A Headword saved in a Word Book. */
+export interface SavedWord {
+  headword: string;
+  /** The Dictionary the reader was reading when they saved it. */
+  dictionaryId: string;
+  dictionaryTitle: string;
+  /** A note or example sentence. */
+  note: string | null;
+  /** When it was saved, in milliseconds since 1970 (UTC). */
+  added: number;
+}
+
+export interface WordBook {
+  /** Stays the same whatever the Word Book is renamed to. */
+  id: number;
+  name: string;
+  /** Newest first. */
+  words: SavedWord[];
+}
+
+export interface WordBooks {
+  /** In the order they were made. */
+  books: WordBook[];
+  /** The Word Book Ctrl/⌘ + D saves into, or null while there are none. */
+  current: number | null;
+}
+
+export type ExportFormat = "csv" | "tsv";
+
+export function getWordBooks(): Promise<WordBooks> {
+  return invoke<WordBooks>("word_books");
+}
+
+/**
+ * Saves the word to the chosen Word Book, or takes it out if it is there. `newBookName`
+ * names the Word Book made for the very first word.
+ */
+export function toggleWord(headword: string, dictionaryId: string, dictionaryTitle: string, newBookName: string): Promise<WordBooks> {
+  return invoke<WordBooks>("toggle_word", { headword, dictionaryId, dictionaryTitle, newBookName });
+}
+
+export function createWordBook(name: string): Promise<WordBooks> {
+  return invoke<WordBooks>("create_word_book", { name });
+}
+
+export function renameWordBook(id: number, name: string): Promise<WordBooks> {
+  return invoke<WordBooks>("rename_word_book", { id, name });
+}
+
+export function deleteWordBook(id: number): Promise<WordBooks> {
+  return invoke<WordBooks>("delete_word_book", { id });
+}
+
+/** Makes the Word Book the one new words go into. */
+export function chooseWordBook(id: number): Promise<WordBooks> {
+  return invoke<WordBooks>("choose_word_book", { id });
+}
+
+export function removeSavedWord(id: number, headword: string): Promise<WordBooks> {
+  return invoke<WordBooks>("remove_saved_word", { id, headword });
+}
+
+/** Sets a saved word's note; an empty note removes it. */
+export function setWordNote(id: number, headword: string, note: string): Promise<WordBooks> {
+  return invoke<WordBooks>("set_word_note", { id, headword, note });
+}
+
+/** Asks where to save with the system dialog and exports there; resolves to the file, or null when cancelled. */
+export function exportWordBook(id: number, format: ExportFormat): Promise<string | null> {
+  return invoke<string | null>("export_word_book", { id, format });
+}
+
 /** The headwords of committed Lookups, newest first. */
 export function getHistory(): Promise<string[]> {
   return invoke<string[]>("history");

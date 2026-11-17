@@ -3,20 +3,20 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::thread::JoinHandle;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 pub use opendict_core::Theme;
 use opendict_core::{
-    Error as CoreError, History, IndexState, Library, Move, OpenError, Preferences, Registration,
-    Suggestion,
+    Error as CoreError, ExportFormat, History, IndexState, Library, Move, OpenError, Preferences,
+    Registration, SavedFrom, Suggestion, WordBookId, WordBooks,
 };
 use serde::{Deserialize, Serialize};
 
 use crate::entry_protocol;
 
 /// What the shell holds between commands: the Library (or why it could not be loaded),
-/// the reader's preferences and History (or why they could not be read), and the
-/// indexing that runs beside them. Cloning shares the same state.
+/// the reader's preferences, History and Word Books (or why they could not be read), and
+/// the indexing that runs beside them. Cloning shares the same state.
 #[derive(Clone)]
 pub struct AppState {
     inner: Arc<Inner>,
@@ -33,6 +33,7 @@ struct Inner {
     worker: Mutex<Option<JoinHandle<()>>>,
     preferences: Mutex<Result<Preferences, String>>,
     history: Mutex<Result<History, String>>,
+    word_books: Mutex<Result<WordBooks, String>>,
 }
 
 /// An Entry as the interface receives it. Its HTML never passes through the interface:
@@ -187,6 +188,35 @@ pub enum RegisterError {
     Failed(String),
 }
 
+/// Every Word Book, and which one new words go into.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WordBooksView {
+    /// In the order they were made.
+    pub books: Vec<WordBookView>,
+    pub current: Option<u64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WordBookView {
+    pub id: u64,
+    pub name: String,
+    /// Newest first.
+    pub words: Vec<SavedWordView>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SavedWordView {
+    pub headword: String,
+    pub dictionary_id: String,
+    pub dictionary_title: String,
+    pub note: Option<String>,
+    /// Milliseconds since 1970-01-01 UTC.
+    pub added: u64,
+}
+
 /// A step in Library order, as the interface sends it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -214,11 +244,13 @@ impl AppState {
         };
         let preferences = Preferences::load(&data_dir.join("preferences.json"));
         let history = History::load(&data_dir.join("history.json"));
+        let word_books = WordBooks::load(&data_dir.join("word-books.json"));
         AppState {
             inner: Arc::new(Inner {
                 library: Mutex::new(library.map_err(|error| error.to_string())),
                 preferences: Mutex::new(preferences.map_err(|error| error.to_string())),
                 history: Mutex::new(history.map_err(|error| error.to_string())),
+                word_books: Mutex::new(word_books.map_err(|error| error.to_string())),
                 indexing: Mutex::new(None),
                 indexing_running: AtomicBool::new(false),
                 cancel: AtomicBool::new(false),
@@ -471,6 +503,108 @@ impl AppState {
         history.clear().map_err(|e| e.to_string())
     }
 
+    /// Applies `change` to the Word Books and returns them as they are afterwards. A
+    /// Word Books file that could not be read is reported, never overwritten.
+    fn change_word_books(
+        &self,
+        change: impl FnOnce(&mut WordBooks) -> opendict_core::Result<()>,
+    ) -> Result<WordBooksView, String> {
+        let mut guard = self
+            .inner
+            .word_books
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let books = guard.as_mut().map_err(|problem| problem.clone())?;
+        change(books).map_err(|error| error.to_string())?;
+        Ok(word_books_view(books))
+    }
+
+    pub fn word_books(&self) -> Result<WordBooksView, String> {
+        self.change_word_books(|_| Ok(()))
+    }
+
+    /// Saves `headword` to the chosen Word Book, or takes it out if it is there. With no
+    /// Word Book yet, one called `new_book_name` is made for it.
+    pub fn toggle_word(
+        &self,
+        headword: &str,
+        dictionary_id: &str,
+        dictionary_title: &str,
+        new_book_name: &str,
+    ) -> Result<WordBooksView, String> {
+        self.change_word_books(|books| {
+            let book = match books.current() {
+                Some(book) => book.id,
+                None => books.create(new_book_name)?,
+            };
+            let saved_from = SavedFrom {
+                dictionary_id: dictionary_id.to_owned(),
+                dictionary_title: dictionary_title.to_owned(),
+            };
+            books
+                .toggle(book, headword, saved_from, SystemTime::now())
+                .map(|_| ())
+        })
+    }
+
+    pub fn create_word_book(&self, name: &str) -> Result<WordBooksView, String> {
+        self.change_word_books(|books| books.create(name).map(|_| ()))
+    }
+
+    pub fn rename_word_book(&self, id: u64, name: &str) -> Result<WordBooksView, String> {
+        self.change_word_books(|books| books.rename(WordBookId(id), name))
+    }
+
+    pub fn delete_word_book(&self, id: u64) -> Result<WordBooksView, String> {
+        self.change_word_books(|books| books.delete(WordBookId(id)))
+    }
+
+    pub fn choose_word_book(&self, id: u64) -> Result<WordBooksView, String> {
+        self.change_word_books(|books| books.choose(WordBookId(id)))
+    }
+
+    pub fn remove_saved_word(&self, id: u64, headword: &str) -> Result<WordBooksView, String> {
+        self.change_word_books(|books| books.remove(WordBookId(id), headword))
+    }
+
+    pub fn set_word_note(
+        &self,
+        id: u64,
+        headword: &str,
+        note: &str,
+    ) -> Result<WordBooksView, String> {
+        self.change_word_books(|books| books.set_note(WordBookId(id), headword, note))
+    }
+
+    /// Writes the Word Book to `file` as CSV or TSV.
+    pub fn export_word_book(
+        &self,
+        id: u64,
+        format: ExportFormat,
+        file: &Path,
+    ) -> Result<(), String> {
+        let guard = self
+            .inner
+            .word_books
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let books = guard.as_ref().map_err(|problem| problem.clone())?;
+        books
+            .export(WordBookId(id), format, file)
+            .map_err(|error| error.to_string())
+    }
+
+    /// The Word Book's name, to suggest a name for the file it is exported to.
+    pub fn word_book_name(&self, id: u64) -> Option<String> {
+        let guard = self
+            .inner
+            .word_books
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let books = guard.as_ref().ok()?;
+        books.book(WordBookId(id)).map(|book| book.name.clone())
+    }
+
     pub fn library(&self) -> LibraryView {
         view(&self.lock(), self.progress())
     }
@@ -676,6 +810,33 @@ fn view(library: &Result<Library, String>, indexing: Option<IndexingView>) -> Li
             .collect(),
         indexing,
         problem: None,
+    }
+}
+
+fn word_books_view(books: &WordBooks) -> WordBooksView {
+    WordBooksView {
+        books: books
+            .books()
+            .iter()
+            .map(|book| WordBookView {
+                id: book.id.0,
+                name: book.name.clone(),
+                words: book
+                    .words
+                    .iter()
+                    .map(|word| SavedWordView {
+                        headword: word.headword.clone(),
+                        dictionary_id: word.saved_from.dictionary_id.clone(),
+                        dictionary_title: word.saved_from.dictionary_title.clone(),
+                        note: word.note.clone(),
+                        added: word.added.duration_since(UNIX_EPOCH).map_or(0, |since| {
+                            u64::try_from(since.as_millis()).unwrap_or(u64::MAX)
+                        }),
+                    })
+                    .collect(),
+            })
+            .collect(),
+        current: books.current().map(|book| book.id.0),
     }
 }
 
@@ -1017,6 +1178,118 @@ mod tests {
         assert!(state.history().is_err());
         assert!(state.record_lookup("serendipity").is_err());
         assert_eq!(state.look_up("serendipity").unwrap().len(), 1);
+    }
+
+    #[test]
+    fn a_saved_word_is_kept_in_the_data_directory_with_where_it_came_from() {
+        let data = tempfile::tempdir().unwrap();
+        let state = AppState::load(&data.path().join("library.json"), None, data.path());
+
+        let books = state
+            .toggle_word(
+                "serendipity",
+                "0123",
+                "Sample English Dictionary",
+                "Word Book",
+            )
+            .unwrap();
+
+        let book = &books.books[0];
+        assert_eq!(books.current, Some(book.id));
+        assert_eq!(book.name, "Word Book", "the first word makes a Word Book");
+        let word = serde_json::to_value(&book.words[0]).unwrap();
+        assert_eq!(word["headword"], "serendipity");
+        assert_eq!(word["dictionaryId"], "0123");
+        assert_eq!(word["dictionaryTitle"], "Sample English Dictionary");
+        assert_eq!(word["note"], json!(null));
+        assert!(
+            word["added"].as_u64().unwrap() > 1_700_000_000_000,
+            "milliseconds since 1970"
+        );
+        let restarted = AppState::load(&data.path().join("library.json"), None, data.path());
+        assert_eq!(restarted.word_books().unwrap(), books);
+
+        let books = state
+            .toggle_word(
+                "serendipity",
+                "0123",
+                "Sample English Dictionary",
+                "Word Book",
+            )
+            .unwrap();
+        assert!(
+            books.books[0].words.is_empty(),
+            "saving it again removes it"
+        );
+    }
+
+    #[test]
+    fn word_books_are_managed_and_exported_through_the_state() {
+        let data = tempfile::tempdir().unwrap();
+        let state = AppState::load(&data.path().join("library.json"), None, data.path());
+        let first = state.create_word_book("Novel").unwrap().current.unwrap();
+        let second = state.create_word_book("Paper").unwrap().current.unwrap();
+        state.choose_word_book(first).unwrap();
+        state
+            .toggle_word("banter", "0123", "Sample", "unused")
+            .unwrap();
+        state
+            .toggle_word("apple", "0123", "Sample", "unused")
+            .unwrap();
+        state
+            .set_word_note(first, "banter", "at breakfast")
+            .unwrap();
+        state.remove_saved_word(first, "apple").unwrap();
+        state.rename_word_book(first, "Middlemarch").unwrap();
+        let books = state.delete_word_book(second).unwrap();
+
+        assert_eq!(books.books.len(), 1);
+        assert_eq!(books.books[0].name, "Middlemarch");
+        assert_eq!(
+            books.books[0].words[0].note.as_deref(),
+            Some("at breakfast")
+        );
+        let file = data.path().join("Middlemarch.tsv");
+        state
+            .export_word_book(first, ExportFormat::Tsv, &file)
+            .unwrap();
+        let text = std::fs::read_to_string(&file).unwrap();
+        assert!(
+            text.starts_with("Headword\tNote\tDictionary\tAdded\nbanter\tat breakfast\tSample\t")
+        );
+    }
+
+    #[test]
+    fn a_damaged_word_books_file_is_reported_without_stopping_lookups() {
+        let data = tempfile::tempdir().unwrap();
+        std::fs::write(data.path().join("word-books.json"), "{ broken").unwrap();
+        let folder = library_folder();
+
+        let state = AppState::load(
+            &data.path().join("library.json"),
+            Some(folder.path().to_owned()),
+            data.path(),
+        );
+
+        assert!(state.word_books().is_err());
+        assert!(
+            state
+                .toggle_word("serendipity", "a", "A", "Word Book")
+                .is_err()
+        );
+        assert_eq!(state.look_up("serendipity").unwrap().len(), 1);
+    }
+
+    #[test]
+    fn the_interface_sends_export_formats_as_words() {
+        assert_eq!(
+            serde_json::from_value::<ExportFormat>(json!("csv")).unwrap(),
+            ExportFormat::Csv
+        );
+        assert_eq!(
+            serde_json::from_value::<ExportFormat>(json!("tsv")).unwrap(),
+            ExportFormat::Tsv
+        );
     }
 
     #[test]

@@ -14,8 +14,12 @@ pub use state::{AppState, EntryView, LibraryView};
 pub const LIBRARY_FOLDER_ENV: &str = "OPENDICT_LIBRARY_FOLDER";
 
 /// Environment variable that overrides the data directory, where the Library file,
-/// preferences and History are kept (used by tests and development).
+/// preferences, History and Word Books are kept (used by tests and development).
 pub const DATA_DIR_ENV: &str = "OPENDICT_DATA_DIR";
+
+/// Environment variable naming a folder that Word Books are exported into without asking
+/// the reader where (used by tests).
+pub const EXPORT_DIR_ENV: &str = "OPENDICT_EXPORT_DIR";
 
 pub fn run() {
     tauri::Builder::default()
@@ -74,6 +78,15 @@ pub fn run() {
             commands::set_all_as_authored,
             commands::set_text_size,
             commands::set_zoom,
+            commands::word_books,
+            commands::toggle_word,
+            commands::create_word_book,
+            commands::rename_word_book,
+            commands::delete_word_book,
+            commands::choose_word_book,
+            commands::remove_saved_word,
+            commands::set_word_note,
+            commands::export_word_book,
             commands::history,
             commands::record_lookup,
             commands::clear_history,

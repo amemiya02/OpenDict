@@ -51,6 +51,8 @@ function fakeShell(stored: Partial<Appearance> = {}, authored: string[] = []) {
         return { platform: "windows", material: null };
     }
     if (command.startsWith("plugin:")) return null; // the updater, which has nothing to offer
+    // Only changes to the reading preferences are recorded; other commands are not this test's business.
+    if (!command.startsWith("set_")) throw new Error(`not answered here: ${command}`);
     changes.push({ command, args });
     switch (command) {
       case "set_theme":
