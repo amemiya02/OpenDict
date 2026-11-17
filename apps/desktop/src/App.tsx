@@ -1,8 +1,19 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { EntryFrame } from "./components/EntryFrame";
+import { EmptyLibrary, LibraryPage, OutlineButton, type LibraryActions } from "./components/LibraryPage";
 import { SearchField } from "./components/SearchField";
 import { useI18n } from "./i18n";
-import { libraryStatus, lookUp, type Entry, type LibraryStatus } from "./lib/ipc";
+import {
+  addLibraryFolder,
+  getLibrary,
+  lookUp,
+  moveDictionary,
+  removeLibraryFolder,
+  rescanLibrary,
+  setDictionaryEnabled,
+  type Entry,
+  type Library,
+} from "./lib/ipc";
 
 type PageState =
   | { kind: "idle" }
@@ -10,17 +21,30 @@ type PageState =
   | { kind: "missing"; query: string }
   | { kind: "failed"; reason: string };
 
+type View = "lookup" | "library";
+
 /** The main window: cover band, page and status line. */
 export function App() {
   const { t } = useI18n();
   const [page, setPage] = useState<PageState>({ kind: "idle" });
-  const [status, setStatus] = useState<LibraryStatus | null>(null);
+  const [view, setView] = useState<View>("lookup");
+  const [library, setLibrary] = useState<Library | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
+  const pageRef = useRef<HTMLElement>(null);
 
   useEffect(() => {
-    libraryStatus().then(setStatus, (error: unknown) => setPage({ kind: "failed", reason: String(error) }));
+    getLibrary().then(setLibrary, (error: unknown) => setPage({ kind: "failed", reason: String(error) }));
   }, []);
 
+  // Moving between the page and the Library puts the reader at the top of the new view.
+  useEffect(() => {
+    pageRef.current?.scrollTo?.({ top: 0 });
+    if (view === "library") pageRef.current?.querySelector<HTMLElement>("h1")?.focus();
+  }, [view]);
+
   async function runLookup(query: string) {
+    setView("lookup");
     try {
       const entries = await lookUp(query);
       setPage(entries.length > 0 ? { kind: "found", headword: query, entries } : { kind: "missing", query });
@@ -29,29 +53,80 @@ export function App() {
     }
   }
 
+  /** Runs one Library command; the shell answers with the Library as it now is. */
+  async function change(command: () => Promise<Library | null>, after?: (library: Library) => void) {
+    setBusy(true);
+    setNotice(null);
+    try {
+      const updated = await command();
+      if (updated) {
+        setLibrary(updated);
+        after?.(updated);
+      }
+    } catch (error) {
+      setNotice(t.libraryActionFailed(String(error)));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const actions: LibraryActions = {
+    addFolder: () => change(addLibraryFolder, () => setView("library")),
+    removeFolder: (path) => change(() => removeLibraryFolder(path)),
+    rescan: () => change(rescanLibrary),
+    setEnabled: (id, enabled) => change(() => setDictionaryEnabled(id, enabled)),
+    move: (id, direction) => change(() => moveDictionary(id, direction)),
+  };
+
+  const enabledCount = library?.dictionaries.filter((d) => d.enabled).length ?? 0;
+
   return (
     <div className="grid h-full grid-rows-[48px_minmax(0,1fr)_26px]">
       <header className="flex items-center bg-cover text-on-cover select-none">
-        <div className="flex w-[264px] flex-none items-center pr-3.5 pl-lg max-[860px]:w-[200px] max-[620px]:w-auto">
+        <div className="flex w-[264px] flex-none items-center gap-sm pr-3.5 pl-lg max-[860px]:w-[200px] max-[620px]:w-auto">
           <span className="font-serif text-[17px] font-bold">{t.appName}</span>
+          <button
+            type="button"
+            aria-pressed={view === "library"}
+            onClick={() => setView(view === "library" ? "lookup" : "library")}
+            className="ml-auto h-7 rounded-sharp px-2.5 text-[12px] text-on-cover-muted hover:bg-cover-edge hover:text-on-cover aria-pressed:bg-cover-edge aria-pressed:text-on-cover"
+          >
+            {t.library}
+          </button>
         </div>
         <div className="flex min-w-0 flex-1 pr-lg pl-xl max-[860px]:pl-xs">
           <SearchField onSubmit={runLookup} />
         </div>
       </header>
 
-      <main aria-label={t.pageLabel} className="min-h-0 overflow-y-auto pt-[18px] pr-[30px] pb-12 pl-xl">
-        <PageContent page={page} status={status} />
+      <main ref={pageRef} aria-label={t.pageLabel} className="min-h-0 overflow-y-auto pt-[18px] pr-[30px] pb-12 pl-xl">
+        {view === "library" && library ? (
+          <LibraryPage library={library} busy={busy} notice={notice} actions={actions} />
+        ) : (
+          <PageContent page={page} library={library} busy={busy} notice={notice} onAddFolder={actions.addFolder} />
+        )}
       </main>
 
       <footer className="flex items-center gap-[18px] overflow-hidden border-t border-rule px-xl text-label whitespace-nowrap text-text-secondary tabular-nums select-none">
-        <span>{status?.kind === "ready" ? t.libraryCount(status.dictionaryCount) : null}</span>
+        <span>{library && !library.problem ? t.libraryCount(enabledCount) : null}</span>
       </footer>
     </div>
   );
 }
 
-function PageContent({ page, status }: { page: PageState; status: LibraryStatus | null }) {
+function PageContent({
+  page,
+  library,
+  busy,
+  notice,
+  onAddFolder,
+}: {
+  page: PageState;
+  library: Library | null;
+  busy: boolean;
+  notice: string | null;
+  onAddFolder: () => void;
+}) {
   const { t } = useI18n();
   switch (page.kind) {
     case "found":
@@ -76,16 +151,23 @@ function PageContent({ page, status }: { page: PageState; status: LibraryStatus 
     case "failed":
       return <Lead>{t.lookupFailed(page.reason)}</Lead>;
     case "idle":
-      if (status?.kind === "unconfigured") {
+      if (library?.problem) return <Lead>{t.libraryUnavailable(library.problem)}</Lead>;
+      if (library && library.dictionaries.length === 0) {
         return (
-          <Lead>
-            {t.noLibraryFolder}
-            <span className="block pt-2.5 text-[12px] text-text-secondary">{t.noLibraryFolderHow(status.configFile)}</span>
-          </Lead>
+          <EmptyLibrary
+            action={
+              <span className="flex items-center gap-sm">
+                <OutlineButton onClick={onAddFolder} disabled={busy}>
+                  {t.addFolder}
+                </OutlineButton>
+                <span role="status" className="text-label text-text-secondary">
+                  {busy ? t.working : notice}
+                </span>
+              </span>
+            }
+          />
         );
       }
-      if (status?.kind === "unavailable") return <Lead>{t.libraryUnavailable(status.reason)}</Lead>;
-      if (status?.kind === "ready" && status.dictionaryCount === 0) return <Lead>{t.libraryEmpty(status.folder)}</Lead>;
       return <Lead muted>{t.startHint}</Lead>;
   }
 }
