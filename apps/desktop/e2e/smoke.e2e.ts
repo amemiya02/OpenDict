@@ -156,7 +156,7 @@ test("the headword column suggests as the reader types and the keyboard browses 
   // An empty field shows the headword index to browse, guide words above it.
   await search.click();
   await search.fill("");
-  await column.getByRole("option").first().waitFor({ timeout: 10_000 });
+  await column.getByRole("option", { name: "apple, in 1 dictionary" }).waitFor({ timeout: 10_000 });
   const index = await column.getByRole("option").evaluateAll((options) => options.map((o) => (o as HTMLElement).dataset.headword));
   assert.deepEqual(index, ["apple", "apples", "serendipity", "食べる"]);
   assert.equal((await page.getByTestId("guide-words").innerText()).replace(/\s+/g, " "), "apple 食べる");
