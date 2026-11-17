@@ -1,6 +1,13 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useI18n } from "../i18n";
-import type { Suggestion } from "../lib/ipc";
+/** One row: a headword and, for suggestions, how many Dictionaries have it. */
+export interface ColumnItem {
+  headword: string;
+  count?: number;
+}
+
+/** What the column lists: suggestions for what the reader typed, or the chosen Word Book. */
+export type ColumnList = "suggestions" | "wordBook";
 
 /** Height of one index row (DESIGN.md: index-row). Guide words are worked out from it. */
 const ROW = 26;
@@ -17,26 +24,30 @@ export const optionId = (index: number) => `headword-${index}`;
  * The headword column: guide words (the first and last headwords in view) over a double
  * rule, an optional note line, the headwords themselves with how many Dictionaries have
  * each, and the column's tabs. The search field drives it from the keyboard; rows can
- * also be clicked.
+ * also be clicked. The Word Book tab lists the chosen Word Book instead, newest first.
  */
 export function HeadwordColumn({
   items,
   selected,
   note,
   view,
+  list = "suggestions",
   onPick,
   onNeedMore,
   onShowSuggestions,
+  onShowWordBook,
   onToggleLibrary,
 }: {
-  items: Suggestion[];
+  items: ColumnItem[];
   /** The current row, or -1. Nothing in the column is current while the Library is open. */
   selected: number;
   note: string | null;
-  view: "lookup" | "library";
+  view: "lookup" | "library" | "wordBook";
+  list?: ColumnList;
   onPick: (index: number) => void;
   onNeedMore: () => void;
   onShowSuggestions: () => void;
+  onShowWordBook: () => void;
   onToggleLibrary: () => void;
 }) {
   const { t } = useI18n();
@@ -85,7 +96,7 @@ export function HeadwordColumn({
   }, [first]);
 
   const lastIndex = items.length - 1;
-  const guide: [Suggestion, Suggestion] | null =
+  const guide: [ColumnItem, ColumnItem] | null =
     items.length > 0
       ? [items[Math.min(inView?.[0] ?? 0, lastIndex)]!, items[Math.min(inView?.[1] ?? lastIndex, lastIndex)]!]
       : null;
@@ -123,7 +134,7 @@ export function HeadwordColumn({
             id={optionId(index)}
             role="option"
             aria-selected={index === current}
-            aria-label={`${item.headword}, ${t.answered(item.count)}`}
+            aria-label={item.count === undefined ? item.headword : `${item.headword}, ${t.answered(item.count)}`}
             data-headword={item.headword}
             lang={KANA.test(item.headword) ? "ja" : undefined}
             onClick={() => onPick(index)}
@@ -131,14 +142,21 @@ export function HeadwordColumn({
           >
             {index === current ? <i className="size-1.5 flex-none bg-here" aria-hidden="true" /> : null}
             <span className="truncate">{item.headword}</span>
-            <small className="ml-auto font-sans text-[11px] font-normal text-text-secondary tabular-nums">{item.count}</small>
+            {item.count === undefined ? null : (
+              <small className="ml-auto font-sans text-[11px] font-normal text-text-secondary tabular-nums">{item.count}</small>
+            )}
           </li>
         ))}
       </ul>
-      {items.length === 0 ? <p className="flex-1 px-lg py-3.5 text-text-secondary">{t.noMatchingHeadwords}</p> : null}
+      {items.length === 0 ? (
+        <p className="flex-1 px-lg py-3.5 text-text-secondary">{list === "wordBook" ? t.wordCount(0) : t.noMatchingHeadwords}</p>
+      ) : null}
       <div className="flex border-t border-rule">
-        <ColumnTab pressed={view === "lookup"} onClick={onShowSuggestions}>
+        <ColumnTab pressed={view === "lookup" && list === "suggestions"} onClick={onShowSuggestions}>
           {t.suggestions}
+        </ColumnTab>
+        <ColumnTab pressed={view !== "library" && list === "wordBook"} onClick={onShowWordBook}>
+          {t.wordBook}
         </ColumnTab>
         <ColumnTab pressed={view === "library"} onClick={onToggleLibrary}>
           {t.library}

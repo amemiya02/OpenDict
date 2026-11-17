@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { mockIPC } from "@tauri-apps/api/mocks";
 import { App } from "./App";
@@ -171,5 +171,115 @@ describe("Word Books", () => {
     await lookUp("serendipity");
 
     await screen.findByRole("button", { name: "In Word Book", pressed: true });
+  });
+
+  it("the Word Book tab lists the chosen Word Book in the column, newest first, and a click looks a word up", async () => {
+    fakeShell([{ id: 4, name: "Reading", words: [saved("serendipity"), saved("apple")] }]);
+    renderApp();
+
+    await userEvent.click(await screen.findByRole("button", { name: "Word Book" }));
+
+    const column = screen.getByRole("listbox", { name: "Headwords" });
+    expect(within(column).getAllByRole("option").map((o) => o.dataset.headword)).toEqual(["serendipity", "apple"]);
+    expect(screen.getByRole("button", { name: "Word Book", pressed: true })).toBeTruthy();
+    await screen.findByRole("heading", { level: 1, name: "【Reading】" });
+
+    await userEvent.click(within(column).getByRole("option", { name: "apple" }));
+
+    await screen.findByRole("heading", { level: 1, name: "【apple】" });
+    expect(within(column).getByRole("option", { name: "apple", selected: true })).toBeTruthy();
+  });
+
+  it("the reader chooses which of several Word Books Ctrl+D saves into", async () => {
+    const { state } = fakeShell([
+      { id: 1, name: "Novel", words: [] },
+      { id: 2, name: "Paper", words: [] },
+    ]);
+    renderApp();
+    await userEvent.click(await screen.findByRole("button", { name: "Word Book" }));
+    await screen.findByRole("heading", { level: 1, name: "【Novel】" });
+
+    await userEvent.selectOptions(screen.getByRole("combobox", { name: "Saving to" }), "Paper");
+    await screen.findByRole("heading", { level: 1, name: "【Paper】" });
+    await userEvent.type(screen.getByRole("combobox", { name: "Type a word" }), "banter{Enter}");
+    await screen.findByRole("heading", { level: 1, name: "【banter】" });
+    await userEvent.keyboard("{Control>}d{/Control}");
+
+    await screen.findByRole("button", { name: "In Word Book", pressed: true });
+    expect(screen.getByRole("status").textContent).toBe("Saved “banter” to Paper.");
+    expect(state.books.map((b) => [b.name, b.words.map((w) => w.headword)])).toEqual([
+      ["Novel", []],
+      ["Paper", ["banter"]],
+    ]);
+  });
+
+  it("makes, renames and deletes Word Books", async () => {
+    const { state } = fakeShell([{ id: 1, name: "Novel", words: [saved("banter")] }]);
+    renderApp();
+    await userEvent.click(await screen.findByRole("button", { name: "Word Book" }));
+
+    await userEvent.click(await screen.findByRole("button", { name: "New Word Book…" }));
+    await userEvent.type(screen.getByRole("textbox", { name: "Name" }), "Paper reading{Enter}");
+    await screen.findByRole("heading", { level: 1, name: "【Paper reading】" });
+
+    await userEvent.click(screen.getByRole("button", { name: "Rename…" }));
+    const name = screen.getByRole("textbox", { name: "Name" });
+    expect((name as HTMLInputElement).value).toBe("Paper reading");
+    await userEvent.clear(name);
+    await userEvent.type(name, "Papers{Enter}");
+    await screen.findByRole("heading", { level: 1, name: "【Papers】" });
+
+    await userEvent.selectOptions(screen.getByRole("combobox", { name: "Saving to" }), "Novel");
+    await userEvent.click(await screen.findByRole("button", { name: "Delete…" }));
+    expect(screen.getByText("Delete “Novel” and its 1 word?")).toBeTruthy();
+    await userEvent.click(screen.getByRole("button", { name: "Keep" }));
+    expect(state.books).toHaveLength(2);
+    await userEvent.click(screen.getByRole("button", { name: "Delete…" }));
+    await userEvent.click(screen.getByRole("button", { name: "Delete" }));
+
+    await screen.findByRole("heading", { level: 1, name: "【Papers】" });
+    expect(state.books.map((b) => b.name)).toEqual(["Papers"]);
+  });
+
+  it("keeps a note or example sentence with a saved word, and removes words", async () => {
+    const { state } = fakeShell([{ id: 1, name: "Novel", words: [saved("banter"), saved("apple")] }]);
+    renderApp();
+    await userEvent.click(await screen.findByRole("button", { name: "Word Book" }));
+
+    await userEvent.type(await screen.findByRole("textbox", { name: "Note for banter" }), "Some banter at breakfast{Enter}");
+    await waitFor(() => expect(state.books[0]!.words[0]!.note).toBe("Some banter at breakfast"));
+
+    await userEvent.click(screen.getByRole("button", { name: "Remove apple" }));
+
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Remove apple" })).toBeNull());
+    expect(state.books[0]!.words.map((w) => w.headword)).toEqual(["banter"]);
+    expect(within(screen.getByRole("listbox", { name: "Headwords" })).getAllByRole("option").map((o) => o.dataset.headword)).toEqual(["banter"]);
+    expect((screen.getByRole("textbox", { name: "Note for banter" }) as HTMLInputElement).value).toBe("Some banter at breakfast");
+  });
+
+  it("exports a Word Book to CSV or TSV and says where", async () => {
+    const { calls } = fakeShell([{ id: 7, name: "Novel", words: [saved("banter")] }]);
+    renderApp();
+    await userEvent.click(await screen.findByRole("button", { name: "Word Book" }));
+
+    await userEvent.click(await screen.findByRole("button", { name: "Export CSV…" }));
+    await screen.findByText(String.raw`Exported to C:\Users\reader\Documents\Novel.csv`);
+    await userEvent.click(screen.getByRole("button", { name: "Export TSV…" }));
+    await screen.findByText(String.raw`Exported to C:\Users\reader\Documents\Novel.tsv`);
+
+    expect(calls.filter((c) => c.command === "export_word_book").map((c) => c.args)).toEqual([
+      { id: 7, format: "csv" },
+      { id: 7, format: "tsv" },
+    ]);
+  });
+
+  it("without any Word Book, the view offers to make one", async () => {
+    fakeShell();
+    renderApp();
+    await userEvent.click(await screen.findByRole("button", { name: "Word Book" }));
+
+    await screen.findByText(/No Word Books yet\./);
+    expect(screen.queryByRole("button", { name: "Export CSV…" })).toBeNull();
+    expect(screen.getByRole("button", { name: "New Word Book…" })).toBeTruthy();
   });
 });

@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { EntryFrame } from "./components/EntryFrame";
-import { HeadwordColumn, optionId } from "./components/HeadwordColumn";
+import { HeadwordColumn, optionId, type ColumnItem, type ColumnList } from "./components/HeadwordColumn";
 import { sectionId, ThumbIndex } from "./components/ThumbIndex";
 import { EmptyLibrary, LibraryPage, OutlineButton, type LibraryActions } from "./components/LibraryPage";
 import { SearchField } from "./components/SearchField";
 import { UpdateNotice } from "./components/UpdateNotice";
+import { WordBookPage, type WordBookActions } from "./components/WordBookPage";
 import { useI18n } from "./i18n";
 import {
   addLibraryFolder,
@@ -16,7 +17,14 @@ import {
   rescanLibrary,
   setAllowNetwork,
   setDictionaryEnabled,
+  chooseWordBook,
+  createWordBook,
+  deleteWordBook,
+  exportWordBook,
   getWordBooks,
+  removeSavedWord,
+  renameWordBook,
+  setWordNote,
   toggleWord,
   type Entry,
   type Library,
@@ -32,7 +40,7 @@ type PageState =
   | { kind: "missing"; query: string }
   | { kind: "failed"; reason: string };
 
-type View = "lookup" | "library";
+type View = "lookup" | "library" | "wordBook";
 
 /** The main window: cover band, headword column, page and status line. */
 export function App() {
@@ -40,12 +48,15 @@ export function App() {
   const [query, setQuery] = useState("");
   const [page, setPage] = useState<PageState>({ kind: "idle" });
   const [view, setView] = useState<View>("lookup");
+  const [list, setList] = useState<ColumnList>("suggestions");
   const [library, setLibrary] = useState<Library | null>(null);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [wordBooks, setWordBooks] = useState<WordBooks | null>(null);
   /** What the status line says about the last Word Book change. */
   const [said, setSaid] = useState<string | null>(null);
+  /** What the Word Book view says about the last change made there. */
+  const [bookNotice, setBookNotice] = useState<string | null>(null);
   const pageRef = useRef<HTMLElement>(null);
   const column = useHeadwordColumn();
   const { refresh } = column;
@@ -73,7 +84,7 @@ export function App() {
   // Moving between the page and the Library puts the reader at the top of the new view.
   useEffect(() => {
     pageRef.current?.scrollTo?.({ top: 0 });
-    if (view === "library") pageRef.current?.querySelector<HTMLElement>("h1")?.focus();
+    if (view !== "lookup") pageRef.current?.querySelector<HTMLElement>("h1")?.focus();
   }, [view]);
 
   function setPageNow(next: PageState) {
@@ -96,6 +107,7 @@ export function App() {
 
   /** The reader's query changed: new suggestions, and the first match on the page at once. */
   async function changeQuery(text: string) {
+    setList("suggestions");
     try {
       const answer = await column.refresh(text);
       if (!answer) return;
@@ -113,6 +125,13 @@ export function App() {
   }
 
   async function move(by: number) {
+    if (list === "wordBook") {
+      const words = currentBook?.words ?? [];
+      const at = page.kind === "found" ? words.findIndex((w) => w.headword === page.headword) : -1;
+      const next = words[Math.min(Math.max(at + by, 0), words.length - 1)];
+      if (next) commit(next.headword);
+      return;
+    }
     const headword = await column.move(by).catch(() => null);
     if (headword) void show(headword);
   }
@@ -135,6 +154,11 @@ export function App() {
   }
 
   function pick(index: number) {
+    if (list === "wordBook") {
+      const word = currentBook?.words[index];
+      if (word) commit(word.headword);
+      return;
+    }
     const headword = column.select(index);
     if (headword) commit(headword);
   }
@@ -156,6 +180,47 @@ export function App() {
     } catch (error) {
       setSaid(t.wordBookActionFailed(String(error)));
     }
+  }
+
+  /** Runs one Word Book command; the shell answers with the Word Books as they now are. */
+  async function changeBooks(command: () => Promise<WordBooks>) {
+    setBusy(true);
+    setBookNotice(null);
+    try {
+      setWordBooks(await command());
+    } catch (error) {
+      setBookNotice(t.wordBookActionFailed(String(error)));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const bookActions: WordBookActions = {
+    choose: (id) => void changeBooks(() => chooseWordBook(id)),
+    create: (name) => void changeBooks(() => createWordBook(name)),
+    rename: (id, name) => void changeBooks(() => renameWordBook(id, name)),
+    delete: (id) => void changeBooks(() => deleteWordBook(id)),
+    removeWord: (id, headword) => void changeBooks(() => removeSavedWord(id, headword)),
+    setNote: (id, headword, note) => void changeBooks(() => setWordNote(id, headword, note)),
+    export: async (id, format) => {
+      setBusy(true);
+      setBookNotice(null);
+      try {
+        const file = await exportWordBook(id, format);
+        if (file) setBookNotice(t.exported(file));
+      } catch (error) {
+        setBookNotice(t.wordBookActionFailed(String(error)));
+      } finally {
+        setBusy(false);
+      }
+    },
+    lookUp: (headword) => commit(headword),
+  };
+
+  function showWordBook() {
+    setList("wordBook");
+    setView("wordBook");
+    setBookNotice(null);
   }
 
   const shortcut = useRef(toggleSave);
@@ -219,7 +284,11 @@ export function App() {
 
   const enabledCount = library?.dictionaries.filter((d) => d.enabled).length ?? 0;
   const asked = page.kind === "found" ? Math.max(enabledCount, page.entries.length) : enabledCount;
-  const { items, selected, miss } = column.state;
+  const { items: suggestions, selected: suggested, miss } = column.state;
+  const bookWords: ColumnItem[] = (currentBook?.words ?? []).map((word) => ({ headword: word.headword }));
+  const items: ColumnItem[] = list === "wordBook" ? bookWords : suggestions;
+  const selected =
+    list === "wordBook" ? (page.kind === "found" ? bookWords.findIndex((w) => w.headword === page.headword) : -1) : suggested;
 
   return (
     <div className="grid h-full grid-cols-[264px_minmax(0,1fr)] grid-rows-[48px_minmax(0,1fr)_26px] max-[860px]:grid-cols-[200px_minmax(0,1fr)]">
@@ -242,11 +311,16 @@ export function App() {
       <HeadwordColumn
         items={items}
         selected={selected}
-        note={miss && items.length > 0 ? t.missNote : null}
+        note={list === "suggestions" && miss && items.length > 0 ? t.missNote : null}
         view={view}
+        list={list}
         onPick={pick}
         onNeedMore={() => void column.loadMore().catch(() => {})}
-        onShowSuggestions={() => setView("lookup")}
+        onShowSuggestions={() => {
+          setList("suggestions");
+          setView("lookup");
+        }}
+        onShowWordBook={showWordBook}
         onToggleLibrary={() => setView(view === "library" ? "lookup" : "library")}
       />
 
@@ -254,6 +328,8 @@ export function App() {
         <main ref={pageRef} aria-label={t.pageLabel} className="min-h-0 overflow-y-auto pt-[18px] pr-[30px] pb-12 pl-xl">
           {view === "library" && library ? (
             <LibraryPage library={library} busy={busy} notice={notice} actions={actions} />
+          ) : view === "wordBook" ? (
+            <WordBookPage wordBooks={wordBooks ?? { books: [], current: null }} busy={busy} notice={bookNotice} actions={bookActions} />
           ) : (
             <PageContent
               page={page}
