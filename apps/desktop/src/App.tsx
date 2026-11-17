@@ -7,10 +7,13 @@ import { UpdateNotice } from "./components/UpdateNotice";
 import { useI18n } from "./i18n";
 import {
   addLibraryFolder,
+  cancelIndexing,
   getLibrary,
+  indexLibrary,
   lookUp,
   moveDictionary,
   registerDictionary,
+  onLibraryChanged,
   removeLibraryFolder,
   rescanLibrary,
   setAllowNetwork,
@@ -55,6 +58,20 @@ export function App() {
       },
       (error: unknown) => setPage({ kind: "failed", reason: String(error) }),
     );
+    // Indexing runs in the shell's background and reports the Library as it goes. When
+    // another Dictionary's index is ready, the column has more to offer.
+    let ready = -1;
+    const unlisten = onLibraryChanged((changed) => {
+      setLibrary(changed);
+      const nowReady = changed.dictionaries.filter((d) => d.index.state === "ready").length;
+      if (nowReady !== ready) {
+        ready = nowReady;
+        refresh(typed.current).catch(() => {});
+      }
+    });
+    return () => {
+      unlisten.then((stop) => stop(), () => {});
+    };
   }, [refresh]);
 
   // Moving between the page and the Library puts the reader at the top of the new view.
@@ -166,6 +183,10 @@ export function App() {
       } finally {
         setBusy(false);
       }
+    },
+    index: () => change(indexLibrary),
+    cancelIndexing: () => {
+      cancelIndexing().catch((error: unknown) => setNotice(t.libraryActionFailed(String(error))));
     },
   };
 

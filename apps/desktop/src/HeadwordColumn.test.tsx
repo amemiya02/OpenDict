@@ -20,8 +20,9 @@ function fakeShell(index: Suggestion[]) {
   };
   const library = {
     folders: [{ path: "/library", dictionaryCount: 1, problem: null }],
-    dictionaries: [{ id: "a", title: "A", path: "/library/a.mdx", entryCount: index.length, size: 1, enabled: true }],
+    dictionaries: [{ id: "a", title: "A", path: "/library/a.mdx", entryCount: index.length, size: 1, enabled: true, index: { state: "ready" } }],
     failures: [],
+    indexing: null,
     problem: null,
   };
   mockIPC((command, payload) => {
@@ -50,7 +51,7 @@ function fakeShell(index: Suggestion[]) {
       default:
         throw new Error(`unexpected command ${command}`);
     }
-  });
+  }, { shouldMockEvents: true });
   return calls;
 }
 

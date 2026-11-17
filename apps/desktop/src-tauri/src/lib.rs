@@ -41,7 +41,9 @@ pub fn run() {
                 None => app.path().app_data_dir()?,
             };
             let library_file = data_dir.join("library.json");
-            app.manage(AppState::load(&library_file, override_folder, &data_dir));
+            let state = AppState::load(&library_file, override_folder, &data_dir);
+            commands::start_indexing(app.handle(), &state);
+            app.manage(state);
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -55,6 +57,8 @@ pub fn run() {
             commands::set_dictionary_enabled,
             commands::move_dictionary,
             commands::register_dictionary,
+            commands::index_library,
+            commands::cancel_indexing,
             commands::set_allow_network,
         ])
         .run(tauri::generate_context!())
