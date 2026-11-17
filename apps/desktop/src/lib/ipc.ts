@@ -14,6 +14,27 @@ export interface Entry {
   allowNetwork: boolean;
 }
 
+/** One headword in the headword column. */
+export interface Suggestion {
+  headword: string;
+  /** How many enabled Dictionaries file the headword. */
+  count: number;
+}
+
+/** What the headword column offers for a query (the shape settled by design/prototype/core.js). */
+export interface Suggestions {
+  /** In index order: the matches, then the headwords that follow them. */
+  items: Suggestion[];
+  /** The query was an inflected form of `to`. */
+  lemma: { from: string; to: string } | null;
+  /** No exact or prefix match; the items are close spellings. */
+  near: boolean;
+  /** Nothing matched; the items are the headwords after where the query would stand. */
+  miss: boolean;
+  /** The query was empty; the items are the headword index from its start. */
+  browse: boolean;
+}
+
 export interface LibraryFolder {
   path: string;
   dictionaryCount: number;
@@ -73,6 +94,15 @@ export interface Library {
 
 export function lookUp(headword: string): Promise<Entry[]> {
   return invoke<Entry[]>("look_up", { headword });
+}
+
+export function suggest(query: string, limit: number): Promise<Suggestions> {
+  return invoke<Suggestions>("suggest", { query, limit });
+}
+
+/** The headword column continued: up to `limit` headwords after `headword` in index order. */
+export function headwordsAfter(headword: string, limit: number): Promise<Suggestion[]> {
+  return invoke<Suggestion[]>("headwords_after", { headword, limit });
 }
 
 export function getLibrary(): Promise<Library> {

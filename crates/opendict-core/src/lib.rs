@@ -18,5 +18,8 @@ pub use format::{
 };
 pub use index::{HeadwordIndex, IndexError, IndexedHeadword, Start, index_key};
 pub use indexing::{BuiltIndex, IndexJob, IndexOutcome, IndexResult, IndexState};
-pub use library::{DictionaryInfo, Entry, Library, LibraryFolder, Move, OpenFailure};
+pub use library::{
+    DictionaryInfo, Entry, Lemma, Library, LibraryFolder, Move, OpenFailure, Suggestion,
+    Suggestions,
+};
 pub use preferences::Preferences;
