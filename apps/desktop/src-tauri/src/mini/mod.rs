@@ -3,3 +3,4 @@
 
 pub mod placement;
 pub mod settings;
+pub mod selection;
