@@ -176,8 +176,24 @@ struct MdictReader {
     mdx: opendict_mdict::LazyMdx,
     /// `name.mdd`, `name.1.mdd`, `name.2.mdd`, … in that order.
     resource_files: Vec<opendict_mdict::Mdd>,
-    /// The folder the MDX is in; stylesheets and scripts beside it belong to the Dictionary.
+    /// The folder the MDX is in; loose files there may belong to the Dictionary.
     folder: PathBuf,
+    /// Which of the loose files in `folder` belong to this Dictionary.
+    loose: LooseFiles,
+}
+
+/// Which loose files (not in an MDD) belong to a Dictionary.
+///
+/// A Dictionary alone in its folder owns that folder: every file in it and in its
+/// subfolders, except a subfolder that holds a Dictionary of its own. A Dictionary that
+/// shares its folder with another owns only the files and the subfolder named after it:
+/// for `oald.mdx`, `oald.css`, `oald.night.css` and `oald/...`. So one Dictionary can
+/// never load another's stylesheets or scripts.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum LooseFiles {
+    Folder,
+    /// The MDX's file stem, lower-cased.
+    Named(String),
 }
 
 impl MdictReader {
@@ -188,10 +204,23 @@ impl MdictReader {
         path: &Path,
         registration: Option<&opendict_mdict::Registration>,
     ) -> MdictReader {
+        let folder = path.parent().map(Path::to_owned).unwrap_or_default();
+        let shares_folder = std::fs::read_dir(&folder).is_ok_and(|entries| {
+            entries.flatten().any(|entry| {
+                is_mdx(&entry.path()) && Some(entry.file_name().as_os_str()) != path.file_name()
+            })
+        });
+        let loose = if shares_folder {
+            let stem = path.file_stem().unwrap_or_default();
+            LooseFiles::Named(stem.to_string_lossy().to_lowercase())
+        } else {
+            LooseFiles::Folder
+        };
         MdictReader {
             mdx,
             resource_files: open_resource_files(path, registration),
-            folder: path.parent().map(Path::to_owned).unwrap_or_default(),
+            folder,
+            loose,
         }
     }
 }
@@ -258,7 +287,7 @@ impl DictionaryReader for MdictReader {
         let Some(relative) = contained_path(path) else {
             return Ok(None);
         };
-        if is_loose_resource(&relative) {
+        if is_loose_resource(&relative) && self.owns_loose_file(&relative) {
             match std::fs::read(self.folder.join(&relative)) {
                 Ok(bytes) => return Ok(Some(bytes)),
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
@@ -273,6 +302,49 @@ impl DictionaryReader for MdictReader {
         }
         Ok(None)
     }
+}
+
+impl MdictReader {
+    /// Whether the loose file at `relative` (beneath the MDX's folder) belongs to this
+    /// Dictionary, by the rule on [`LooseFiles`].
+    fn owns_loose_file(&self, relative: &Path) -> bool {
+        if let LooseFiles::Named(stem) = &self.loose {
+            let first = relative
+                .iter()
+                .next()
+                .map(|part| part.to_string_lossy().to_lowercase())
+                .unwrap_or_default();
+            let beside = relative.components().count() == 1;
+            let named = if beside {
+                first
+                    .strip_prefix(stem.as_str())
+                    .is_some_and(|rest| rest.starts_with('.'))
+            } else {
+                first == *stem
+            };
+            if !named {
+                return false;
+            }
+        }
+        // No folder on the way down may hold a Dictionary of its own.
+        let mut folder = self.folder.clone();
+        let mut ancestors: Vec<_> = relative.iter().collect();
+        ancestors.pop();
+        ancestors.into_iter().all(|part| {
+            folder.push(part);
+            !holds_mdx(&folder)
+        })
+    }
+}
+
+fn is_mdx(path: &Path) -> bool {
+    MdictFormat.recognises(path) && path.is_file()
+}
+
+/// Whether `folder` directly holds an MDX file.
+fn holds_mdx(folder: &Path) -> bool {
+    std::fs::read_dir(folder)
+        .is_ok_and(|entries| entries.flatten().any(|entry| is_mdx(&entry.path())))
 }
 
 /// The MDD files that go with the MDX at `path`. One that cannot be read is skipped: the

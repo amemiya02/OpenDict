@@ -7,7 +7,7 @@ OpenDict is a local-first dictionary reader: it lets a person look words up acro
 ### The user's dictionaries
 
 **Dictionary** (词典):
-One dictionary file together with the resource and style files that accompany it, treated as a single unit.
+One dictionary file together with the resource and style files that accompany it, treated as a single unit. A file accompanies it when it is named after it (`oald.mdd`, `oald.css`, a subfolder `oald/`), or, when it is the only dictionary file in its folder, when it lies in that folder or in a subfolder that holds no other dictionary file.
 _Avoid_: Book, dict file, MDX
 
 **Library** (词库):

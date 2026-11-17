@@ -56,6 +56,28 @@ fn a_dictionary_is_its_mdx_with_its_mdd_files_and_the_styles_and_scripts_beside_
 }
 
 #[test]
+fn dictionaries_sharing_a_folder_have_only_the_styles_and_scripts_named_after_them() {
+    let data = tempfile::tempdir().unwrap();
+    let folder = tempfile::tempdir().unwrap();
+    put(folder.path(), "oxford.mdx", &dictionary("Oxford"));
+    put(folder.path(), "cambridge.mdx", &dictionary("Cambridge"));
+    let css = touch(folder.path(), "oxford.css", b"p{}");
+    let night = touch(folder.path(), "Oxford.night.css", b"p{}");
+    touch(folder.path(), "cambridge.css", b"p{}");
+    touch(folder.path(), "jquery.js", b"0;");
+
+    let library = library_of(folder.path(), data.path());
+    let oxford = library
+        .dictionaries()
+        .find(|d| d.title == "Oxford")
+        .unwrap();
+
+    let mut companions = oxford.companions.clone();
+    companions.sort();
+    assert_eq!(companions, [night, css]);
+}
+
+#[test]
 fn shows_the_entry_count_and_the_size_of_all_its_files() {
     let data = tempfile::tempdir().unwrap();
     let folder = tempfile::tempdir().unwrap();

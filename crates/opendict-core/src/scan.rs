@@ -9,16 +9,21 @@ pub(crate) struct Unit {
     pub main: PathBuf,
     /// The MDD resource files: `name.mdd`, then `name.1.mdd`, `name.2.mdd`, ...
     pub resources: Vec<PathBuf>,
-    /// The stylesheets and scripts beside the main file.
+    /// The stylesheets and scripts beside the main file that belong to it: all of them
+    /// when it is alone in its folder, else those named after it (`name.css`,
+    /// `name.night.css`), the rule `MdictReader` serves loose files by.
     pub companions: Vec<PathBuf>,
 }
 
 impl Unit {
-    /// Gathers the files that belong with `main` from the files of its folder.
-    pub fn gather(main: &Path, files: &[PathBuf]) -> Unit {
-        let siblings = files
+    /// Gathers the files that belong with `main` from the files of its folder;
+    /// `is_main` tells which files are the main file of a Dictionary.
+    pub fn gather(main: &Path, files: &[PathBuf], is_main: impl Fn(&Path) -> bool) -> Unit {
+        let siblings: Vec<&PathBuf> = files
             .iter()
-            .filter(|file| file.parent() == main.parent() && *file != main);
+            .filter(|file| file.parent() == main.parent() && *file != main)
+            .collect();
+        let shares_folder = siblings.iter().any(|file| is_main(file));
         let stem = main
             .file_stem()
             .map(|stem| stem.to_string_lossy().to_lowercase())
@@ -33,7 +38,12 @@ impl Unit {
                 .unwrap_or_default();
             if let Some(part) = resource_part(&name, &stem) {
                 resources.push((part, file.clone()));
-            } else if name.ends_with(".css") || name.ends_with(".js") {
+            } else if (name.ends_with(".css") || name.ends_with(".js"))
+                && (!shares_folder
+                    || name
+                        .strip_prefix(&stem)
+                        .is_some_and(|rest| rest.starts_with('.')))
+            {
                 companions.push(file.clone());
             }
         }

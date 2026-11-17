@@ -376,7 +376,9 @@ impl Library {
                     continue;
                 };
                 count += 1;
-                let unit = Unit::gather(path, &files);
+                let unit = Unit::gather(path, &files, |file| {
+                    self.formats.iter().any(|format| format.recognises(file))
+                });
                 let id = match scan::identity(path) {
                     Ok(id) => id,
                     Err(error) => {

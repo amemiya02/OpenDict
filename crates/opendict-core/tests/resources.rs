@@ -150,6 +150,127 @@ fn never_serves_files_outside_the_dictionary_or_other_dictionaries() {
     );
 }
 
+/// The id of the Dictionary titled `title`.
+fn id_of(library: &Library, title: &str) -> String {
+    library
+        .dictionaries()
+        .find(|d| d.title == title)
+        .unwrap()
+        .id
+        .clone()
+}
+
+#[test]
+fn dictionaries_sharing_a_folder_get_only_the_loose_files_named_after_them() {
+    let folder = tempfile::tempdir().unwrap();
+    write(folder.path(), "illustrated.mdx", &dictionary().build());
+    write(
+        folder.path(),
+        "other.mdx",
+        &MdxBuilder::new()
+            .title("Other")
+            .entry("dog", "<p>dog</p>")
+            .build(),
+    );
+    write(folder.path(), "illustrated.css", b"illustrated's style");
+    write(
+        folder.path(),
+        "Illustrated.Night.css",
+        b"illustrated's night",
+    );
+    write(
+        folder.path(),
+        "illustrated/fold.js",
+        b"illustrated's script",
+    );
+    write(folder.path(), "other.css", b"other's style");
+    write(folder.path(), "other/fold.js", b"other's script");
+    write(folder.path(), "jquery.js", b"whose is it?");
+    write(folder.path(), "img/cat.png", PICTURE);
+
+    let library = Library::open(folder.path()).unwrap();
+    let illustrated = id_of(&library, "Illustrated");
+    let other = id_of(&library, "Other");
+
+    let served = |id: &str, path: &str| library.resource(id, path).unwrap();
+    assert_eq!(
+        served(&illustrated, "illustrated.css").as_deref(),
+        Some(&b"illustrated's style"[..])
+    );
+    assert_eq!(
+        served(&illustrated, "Illustrated.Night.css").as_deref(),
+        Some(&b"illustrated's night"[..])
+    );
+    assert_eq!(
+        served(&illustrated, "illustrated/fold.js").as_deref(),
+        Some(&b"illustrated's script"[..])
+    );
+    assert_eq!(
+        served(&other, "other.css").as_deref(),
+        Some(&b"other's style"[..])
+    );
+    for path in [
+        "other.css",
+        "other/fold.js",
+        "jquery.js",
+        "img/cat.png",
+        "illustratedx.css",
+    ] {
+        assert_eq!(served(&illustrated, path), None, "{path}");
+    }
+    for path in ["illustrated.css", "illustrated/fold.js", "jquery.js"] {
+        assert_eq!(served(&other, path), None, "{path}");
+    }
+}
+
+#[test]
+fn a_dictionary_alone_in_its_folder_gets_its_subfolders_but_not_one_holding_another_dictionary() {
+    let folder = tempfile::tempdir().unwrap();
+    write(folder.path(), "illustrated.mdx", &dictionary().build());
+    write(folder.path(), "img/cat.png", PICTURE);
+    write(folder.path(), "jquery.js", b"0;");
+    write(
+        folder.path(),
+        "nested/deeper/other.mdx",
+        &MdxBuilder::new()
+            .title("Other")
+            .entry("dog", "<p>dog</p>")
+            .build(),
+    );
+    write(folder.path(), "nested/deeper/other.css", b"other's style");
+    write(folder.path(), "nested/deeper/img/dog.png", PICTURE);
+
+    let library = Library::open(folder.path()).unwrap();
+    let illustrated = id_of(&library, "Illustrated");
+    let other = id_of(&library, "Other");
+
+    assert_eq!(
+        library
+            .resource(&illustrated, "img/cat.png")
+            .unwrap()
+            .as_deref(),
+        Some(PICTURE)
+    );
+    assert_eq!(
+        library
+            .resource(&illustrated, "jquery.js")
+            .unwrap()
+            .as_deref(),
+        Some(&b"0;"[..])
+    );
+    for path in ["nested/deeper/other.css", "nested/deeper/img/dog.png"] {
+        assert_eq!(
+            library.resource(&illustrated, path).unwrap(),
+            None,
+            "{path}"
+        );
+    }
+    assert_eq!(
+        library.resource(&other, "img/dog.png").unwrap().as_deref(),
+        Some(PICTURE)
+    );
+}
+
 #[test]
 fn an_unknown_dictionary_has_no_resources() {
     let folder = tempfile::tempdir().unwrap();
