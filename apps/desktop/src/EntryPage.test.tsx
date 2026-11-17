@@ -23,7 +23,7 @@ const library: Library = {
 };
 
 function entry(id: string, title: string, pronunciation: string | null = null): Entry {
-  return { dictionaryId: id, dictionaryTitle: title, src: `http://odentry.localhost/${id}/?headword=serendipity`, allowNetwork: false, pronunciation };
+  return { dictionaryId: id, dictionaryTitle: title, src: `http://odentry.localhost/${id}/?headword=serendipity`, allowNetwork: false, pronunciation, asAuthored: false };
 }
 
 /** "serendipity" is in two of the three enabled Dictionaries. */
