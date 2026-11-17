@@ -130,9 +130,11 @@ before(async () => {
   // out at another size to reproduce it. The size used is printed either way.
   const viewport = /^(\d+)x(\d+)$/.exec(process.env.OPENDICT_E2E_VIEWPORT ?? "");
   if (viewport) await page.setViewportSize({ width: Number(viewport[1]), height: Number(viewport[2]) });
-  console.log("Main window viewport:", await page.evaluate(() => `${innerWidth}x${innerHeight} @${devicePixelRatio}x`));
-  // The status line fills in once the Library has been opened.
+  // The status line fills in once the Library has been opened. (On a slow runner the
+  // webview may still be navigating to the app here; waitForFunction rides that out.)
   await page.waitForFunction(() => Boolean(document.querySelector("footer")?.textContent?.trim()), null, { timeout: 30_000 });
+  const size = await page.evaluate(() => `${innerWidth}x${innerHeight} @${devicePixelRatio}x`).catch((error) => `unknown (${error})`);
+  console.log("Main window viewport:", size);
 });
 
 after(async () => {
