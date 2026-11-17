@@ -776,8 +776,29 @@ test("the global shortcut looks the selection up in the Mini Window, and Esc clo
   await search.selectText();
   const clipboardBefore = clipboardText();
 
+  // Where the selected word is on screen, in physical pixels.
+  const selection = await page.evaluate(async () => {
+    const invoke = (window as unknown as { __TAURI_INTERNALS__: { invoke: (cmd: string, args: object) => Promise<{ x: number; y: number }> } })
+      .__TAURI_INTERNALS__.invoke;
+    const origin = await invoke("plugin:window|inner_position", { label: "main" });
+    const box = document.querySelector('[role="combobox"]')!.getBoundingClientRect();
+    const scale = window.devicePixelRatio;
+    return { left: origin.x + box.left * scale, right: origin.x + box.right * scale, bottom: origin.y + box.bottom * scale, scale };
+  });
+
   pressKeys(VK.CONTROL, VK.SHIFT, VK.F9);
   await waitUntil("the Mini Window shows", shown);
+  // It opens just below the selection (found with UI Automation), not wherever the pointer is.
+  const opened = await page.evaluate(() =>
+    (window as unknown as { __TAURI_INTERNALS__: { invoke: (cmd: string, args: object) => Promise<{ x: number; y: number }> } }).__TAURI_INTERNALS__.invoke(
+      "plugin:window|outer_position",
+      { label: "mini" },
+    ),
+  );
+  assert.ok(
+    opened.x >= selection.left - 2 && opened.x <= selection.right && opened.y >= selection.bottom - 12 * selection.scale && opened.y <= selection.bottom + 12 * selection.scale,
+    `the Mini Window at ${JSON.stringify(opened)} is beside the selection ${JSON.stringify(selection)}`,
+  );
   await mini.getByRole("heading", { level: 1, name: "【serendipity】" }).waitFor({ timeout: 10_000 });
   assert.equal(await mini.getByRole("searchbox", { name: "Type a word" }).inputValue(), "serendipity");
   const frame = mini.getByRole("region", { name: "Sample English Dictionary", exact: true }).locator("iframe");

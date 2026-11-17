@@ -9,6 +9,8 @@ pub mod placement;
 pub mod selection;
 pub mod settings;
 
+#[cfg(target_os = "windows")]
+mod uia;
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 mod unix;
 #[cfg(target_os = "windows")]
@@ -251,13 +253,21 @@ fn summon_selection<R: Runtime>(app: &AppHandle<R>) {
     }
     let focus = Focus::now();
     let text = selected_text();
+    // Where the selection is, while the application in front still shows it.
+    let anchor = text.as_ref().and_then(|_| selection_bounds());
     mini.restored.store(clipboard_count(), Ordering::SeqCst);
     mini.capturing.store(false, Ordering::SeqCst);
-    summon(app, text.unwrap_or_default(), focus);
+    summon(app, text.unwrap_or_default(), focus, anchor);
 }
 
-/// Opens the Mini Window beside the pointer and looks `text` up there.
-fn summon<R: Runtime>(app: &AppHandle<R>, text: String, focus: Option<Focus>) {
+/// Opens the Mini Window beside the selection whose bounds on screen are `anchor`, or
+/// beside the pointer when they are not known, and looks `text` up there.
+fn summon<R: Runtime>(
+    app: &AppHandle<R>,
+    text: String,
+    focus: Option<Focus>,
+    anchor: Option<Area>,
+) {
     let Some(window) = app.get_webview_window(MINI) else {
         return;
     };
@@ -266,7 +276,14 @@ fn summon<R: Runtime>(app: &AppHandle<R>, text: String, focus: Option<Focus>) {
     if !window.is_focused().unwrap_or(false) {
         *lock(&mini.focus) = focus;
     }
-    if let Some(position) = position_near_pointer(app, &window) {
+    let position = anchor
+        .and_then(|selection| position_beside(app, &window, Anchor::Selection(selection)))
+        .or_else(|| {
+            let pointer = app.cursor_position().ok()?;
+            let pointer = (pointer.x.round() as i32, pointer.y.round() as i32);
+            position_beside(app, &window, Anchor::Pointer(pointer))
+        });
+    if let Some(position) = position {
         let _ = window.set_position(position);
     }
     let summons = Summons {
@@ -279,13 +296,30 @@ fn summon<R: Runtime>(app: &AppHandle<R>, text: String, focus: Option<Focus>) {
     let _ = window.set_focus();
 }
 
-/// Where the Mini Window goes for the pointer where it is now, on the screen it is on.
-fn position_near_pointer<R: Runtime>(
+/// What the Mini Window opens beside.
+#[derive(Debug, Clone, Copy)]
+enum Anchor {
+    /// The selection's bounds on screen.
+    Selection(Area),
+    /// The pointer, standing for a selection whose bounds are not known.
+    Pointer((i32, i32)),
+}
+
+/// Where the Mini Window goes beside `anchor`, on the screen the anchor is on; `None`
+/// when that is on no screen.
+fn position_beside<R: Runtime>(
     app: &AppHandle<R>,
     window: &tauri::WebviewWindow<R>,
+    anchor: Anchor,
 ) -> Option<PhysicalPosition<i32>> {
-    let pointer = app.cursor_position().ok()?;
-    let monitor = app.monitor_from_point(pointer.x, pointer.y).ok()??;
+    let (x, y) = match anchor {
+        Anchor::Selection(area) => (
+            area.x + area.width as i32 / 2,
+            area.y + area.height as i32 / 2,
+        ),
+        Anchor::Pointer(point) => point,
+    };
+    let monitor = app.monitor_from_point(f64::from(x), f64::from(y)).ok()??;
     let area = monitor.work_area();
     let size = window.outer_size().ok()?;
     // The window takes the scale of the screen it moves to.
@@ -294,17 +328,20 @@ fn position_near_pointer<R: Runtime>(
         (f64::from(size.width) * ratio).round() as u32,
         (f64::from(size.height) * ratio).round() as u32,
     );
-    let (x, y) = placement::place(
-        (pointer.x.round() as i32, pointer.y.round() as i32),
-        size,
-        Area {
-            x: area.position.x,
-            y: area.position.y,
-            width: area.size.width,
-            height: area.size.height,
-        },
-        monitor.scale_factor(),
-    );
+    let work_area = Area {
+        x: area.position.x,
+        y: area.position.y,
+        width: area.size.width,
+        height: area.size.height,
+    };
+    let (x, y) = match anchor {
+        Anchor::Selection(selection) => {
+            placement::beside_selection(selection, size, work_area, monitor.scale_factor())
+        }
+        Anchor::Pointer(pointer) => {
+            placement::place(pointer, size, work_area, monitor.scale_factor())
+        }
+    };
     Some(PhysicalPosition::new(x, y))
 }
 
@@ -374,7 +411,7 @@ fn watch_clipboard<R: Runtime>(app: AppHandle<R>) {
                 continue;
             }
             if let Some(text) = clipboard_text().as_deref().and_then(selection::query_from) {
-                summon(&app, text, Focus::now());
+                summon(&app, text, Focus::now(), None);
             }
         }
     });
@@ -420,6 +457,19 @@ impl Focus {
     /// The window manager gives focus to the window under the Mini Window.
     #[cfg(target_os = "linux")]
     fn give_back<R: Runtime>(self, _app: &AppHandle<R>) {}
+}
+
+/// The bounds on screen of the selection in the application in front (UI Automation, or
+/// its caret).
+#[cfg(target_os = "windows")]
+fn selection_bounds() -> Option<Area> {
+    uia::selection_bounds()
+}
+
+/// Not known on macOS and Linux: the Mini Window opens by the pointer.
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn selection_bounds() -> Option<Area> {
+    None
 }
 
 #[cfg(target_os = "windows")]

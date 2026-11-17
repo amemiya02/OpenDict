@@ -15,43 +15,85 @@ pub struct Area {
 /// the pointer is on, or above it, or beside the pointer, whichever keeps it fully on
 /// screen. `scale` is the screen's scale factor.
 pub fn place(pointer: (i32, i32), size: (u32, u32), work_area: Area, scale: f64) -> (i32, i32) {
+    let point = Area {
+        x: pointer.0,
+        y: pointer.1,
+        width: 0,
+        height: 0,
+    };
+    around(point, Gaps::POINTER, size, work_area, scale)
+}
+
+/// The top-left corner for a Mini Window of `size` beside the selection, whose bounds on
+/// screen are `selection`: just below it, starting where it starts, or just above it, or
+/// beside it, whichever keeps the window fully on screen inside `work_area`.
+pub fn beside_selection(
+    selection: Area,
+    size: (u32, u32),
+    work_area: Area,
+    scale: f64,
+) -> (i32, i32) {
+    around(selection, Gaps::SELECTION, size, work_area, scale)
+}
+
+/// Logical pixels between what the window opens beside and the window.
+struct Gaps {
+    /// From the foot of the anchor down to the window's top.
+    below: f64,
+    /// From the window's foot up to the top of the anchor.
+    above: f64,
+    /// How far left of the anchor the window starts, below or above it.
+    indent: f64,
+    /// Between the anchor and the window beside it.
+    beside: f64,
+}
+
+impl Gaps {
+    /// The pointer stands somewhere on the line: clear the line, and the pointer itself.
+    const POINTER: Gaps = Gaps {
+        below: 24.0,
+        above: 12.0,
+        indent: 12.0,
+        beside: 16.0,
+    };
+    /// The selection's bounds are known: open close to them.
+    const SELECTION: Gaps = Gaps {
+        below: 6.0,
+        above: 6.0,
+        indent: 0.0,
+        beside: 16.0,
+    };
+}
+
+fn around(anchor: Area, gaps: Gaps, size: (u32, u32), work_area: Area, scale: f64) -> (i32, i32) {
     let gap = |logical: f64| (logical * scale).round() as i32;
-    let (px, py) = pointer;
     let (width, height) = (size.0 as i32, size.1 as i32);
     let (left_edge, top_edge) = (work_area.x, work_area.y);
     let right_edge = work_area.x + work_area.width as i32;
     let bottom_edge = work_area.y + work_area.height as i32;
+    let anchor_right = anchor.x + anchor.width as i32;
+    let anchor_bottom = anchor.y + anchor.height as i32;
 
-    // Clear of the line the pointer is on (and of the pointer itself).
-    let below = py + gap(BELOW);
-    let above = py - gap(ABOVE) - height;
+    let below = anchor_bottom + gap(gaps.below);
+    let above = anchor.y - gap(gaps.above) - height;
     let (left, top) = if below + height <= bottom_edge {
-        (px - gap(INDENT), below)
+        (anchor.x - gap(gaps.indent), below)
     } else if above >= top_edge {
-        (px - gap(INDENT), above)
+        (anchor.x - gap(gaps.indent), above)
     } else {
-        let right = px + gap(BESIDE);
+        let right = anchor_right + gap(gaps.beside);
         let left = if right + width <= right_edge {
             right
         } else {
-            px - gap(BESIDE) - width
+            anchor.x - gap(gaps.beside) - width
         };
-        (left, py - height / 2)
+        (left, anchor.y + anchor.height as i32 / 2 - height / 2)
     };
     (
         within(left, left_edge, right_edge - width),
         within(top, top_edge, bottom_edge - height),
     )
 }
-
-/// Logical pixels from the pointer down to the window's top when it opens below the line.
-const BELOW: f64 = 24.0;
-/// Logical pixels from the window's foot up to the pointer when it opens above the line.
-const ABOVE: f64 = 12.0;
-/// Logical pixels the window starts left of the pointer, below or above the line.
-const INDENT: f64 = 12.0;
-/// Logical pixels between the pointer and the window when it opens beside the pointer.
-const BESIDE: f64 = 16.0;
 
 /// `value` moved into `low..=high`; `low` wins when the range is empty (a window larger
 /// than the screen starts at the screen's corner).
@@ -115,6 +157,68 @@ mod tests {
     #[test]
     fn gaps_grow_with_the_scale_factor() {
         assert_eq!(place((600, 50), (816, 936), SCREEN, 2.0), (576, 98));
+    }
+
+    /// A selected word: 120 by 20 pixels.
+    fn word(x: i32, y: i32) -> Area {
+        Area {
+            x,
+            y,
+            width: 120,
+            height: 20,
+        }
+    }
+
+    #[test]
+    fn it_opens_just_below_the_selection_starting_where_it_starts() {
+        assert_eq!(
+            beside_selection(word(500, 300), SIZE, SCREEN, 1.0),
+            (500, 326)
+        );
+    }
+
+    #[test]
+    fn near_the_foot_of_the_screen_it_opens_just_above_the_selection() {
+        assert_eq!(
+            beside_selection(word(500, 800), SIZE, SCREEN, 1.0),
+            (500, 326)
+        );
+    }
+
+    #[test]
+    fn with_room_neither_below_nor_above_it_opens_beside_the_selection() {
+        let short = Area {
+            height: 700,
+            ..SCREEN
+        };
+        assert_eq!(
+            beside_selection(word(600, 340), SIZE, short, 1.0),
+            (736, 116)
+        );
+        assert_eq!(
+            beside_selection(word(1700, 340), SIZE, short, 1.0),
+            (1276, 116)
+        );
+    }
+
+    #[test]
+    fn beside_a_selection_it_never_leaves_the_screen_sideways() {
+        assert_eq!(
+            beside_selection(word(1800, 300), SIZE, SCREEN, 1.0),
+            (1512, 326)
+        );
+    }
+
+    #[test]
+    fn a_selection_taller_than_the_screen_leaves_the_window_on_screen() {
+        let tall = Area {
+            x: 100,
+            y: -50,
+            width: 300,
+            height: 2000,
+        };
+        let (x, y) = beside_selection(tall, SIZE, SCREEN, 1.0);
+        assert!((0..=1920 - 408).contains(&x) && (0..=1040 - 468).contains(&y));
     }
 
     #[test]
