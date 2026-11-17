@@ -303,6 +303,61 @@ test("a Dictionary reaches the network only once the reader allows it from its s
   await frame.waitForFunction(() => (document.getElementById("remote") as HTMLImageElement | null)?.complete, null, { timeout: 5_000 });
 });
 
+test("the thumb index jumps between the Dictionaries on the page and follows the scrolling", async () => {
+  await lookUp("thumb");
+  const rail = page.getByRole("navigation", { name: "Jump to dictionary" });
+  const notches = rail.getByRole("link");
+  const titles = ["Sample English Dictionary", "Sample Illustrated Dictionary", "サンプル国語辞典"];
+  assert.deepEqual(
+    await notches.evaluateAll((links) => links.map((link) => link.querySelector("span")?.textContent)),
+    titles,
+    "one notch per answering Dictionary, in page order",
+  );
+  const head = page.getByRole("heading", { level: 1 }).locator("..");
+  assert.match(await head.innerText(), /【thumb】\s*\/θʌm\/\s*in 3 of 6 dictionaries/, "the page head: headword, pronunciation, answers");
+  for (const title of titles) await entryFrame(title);
+  // Every frame has sized itself to its Entry, each taller than the window.
+  await page.waitForFunction(
+    () => [...document.querySelectorAll("main iframe")].every((frame) => frame.clientHeight > document.querySelector("main")!.clientHeight),
+    null,
+    { timeout: 10_000 },
+  );
+  /** Waits until the section's head is at the top of the scrolling page, give or take its margin. */
+  const reaches = (title: string) =>
+    page
+      .waitForFunction(
+        (title) => {
+          const main = document.querySelector("main")!;
+          const section = document.querySelector(`section[aria-label="${title}"]`)!;
+          return Math.abs(section.getBoundingClientRect().top - main.getBoundingClientRect().top) <= 16;
+        },
+        title,
+        { timeout: 5_000 },
+      )
+      .catch(async (error: unknown) => {
+        const at = await page.evaluate(() => document.querySelector("main")!.scrollTop);
+        throw new Error(`${title} did not reach the top of the page (scrolled to ${at})`, { cause: error });
+      });
+  const current = (title: string) => rail.getByRole("link", { name: title, exact: false }).and(rail.locator('[aria-current="true"]')).waitFor({ timeout: 5_000 });
+  await current(titles[0]!);
+
+  await notches.nth(1).click();
+  await reaches(titles[1]!);
+  await current(titles[1]!);
+  assert.equal(await page.evaluate(() => document.activeElement?.getAttribute("aria-label")), titles[1], "focus moves to the section");
+
+  await page.keyboard.press("Alt+3");
+  await reaches(titles[2]!);
+  await current(titles[2]!);
+  if (process.env.OPENDICT_E2E_THUMB_SCREENSHOT) await page.screenshot({ path: process.env.OPENDICT_E2E_THUMB_SCREENSHOT });
+
+  // Scrolling by hand back to the top: the first notch is current again.
+  await page.locator("main").hover();
+  await page.mouse.wheel(0, -100_000);
+  await page.waitForFunction(() => document.querySelector("main")!.scrollTop === 0, null, { timeout: 5_000 });
+  await current(titles[0]!);
+});
+
 test("the Library view lists the Dictionaries, and a disabled one stops answering", async () => {
   const page = browser!.contexts()[0]!.pages()[0]!;
   const libraryButton = page.getByRole("button", { name: "Library", exact: true });
@@ -349,7 +404,7 @@ test("the headword column suggests as the reader types and the keyboard browses 
   await search.fill("");
   await column.getByRole("option", { name: "apple, in 1 dictionary" }).waitFor({ timeout: 10_000 });
   const index = await column.getByRole("option").evaluateAll((options) => options.map((o) => (o as HTMLElement).dataset.headword));
-  assert.deepEqual(index, ["apple", "apples", "cat", "happy accident", "probe", "serendipities", "serendipitous", "serendipity", "食べる"]);
+  assert.deepEqual(index, ["apple", "apples", "cat", "happy accident", "probe", "serendipities", "serendipitous", "serendipity", "thumb", "食べる"]);
   assert.equal((await page.getByTestId("guide-words").innerText()).replace(/\s+/g, " "), "apple 食べる");
 
   // Typing suggests by prefix, shows the first match at once, and the column carries on.

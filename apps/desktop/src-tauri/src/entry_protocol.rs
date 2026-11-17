@@ -375,8 +375,8 @@ mod tests {
         let meow = f.state.look_up("meow").unwrap();
         let cat = f.state.look_up("cat").unwrap();
 
-        assert_eq!(meow[0].pronunciation.as_deref(), Some("meow.mp3"));
-        assert_eq!(cat[0].pronunciation, None);
+        assert_eq!(meow[0].sound.as_deref(), Some("meow.mp3"));
+        assert_eq!(cat[0].sound, None);
     }
 
     #[test]

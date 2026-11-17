@@ -39,6 +39,13 @@ fn main() -> std::io::Result<()> {
         )
         .link("happy accident", "serendipities")
         .link("serendipities", "serendipity")
+        .entry(
+            "thumb",
+            &long_entry(
+                "<p><b>thumb</b> /θʌm/ <i>noun</i></p>",
+                "The short thick first digit of the hand. (sample)",
+            ),
+        )
         .write_to(folder.join("sample-english.mdx"))?;
     MddBuilder::new()
         .resource("\\serendipity.wav", &sample_tone())
@@ -49,6 +56,13 @@ fn main() -> std::io::Result<()> {
         .entry(
             "食べる",
             "<p><b>たべる【食べる】</b></p><p>食物を口に入れ、かんで飲み込む。（見本）</p>",
+        )
+        .entry(
+            "thumb",
+            &long_entry(
+                "<p><b>サム【thumb】</b></p>",
+                "手の親指。つめ見出しのこと。（見本）",
+            ),
         )
         .write_to(folder.join("sample-japanese.mdx"))?;
 
@@ -73,6 +87,13 @@ fn main() -> std::io::Result<()> {
             "cat",
             r#"<link rel="stylesheet" href="sample-illustrated.css"><p class="hw">cat <span class="pos">noun</span></p><img class="pic" src="img/cat.png" alt="a sample picture"><p>A small furry animal kept as a pet. (sample)</p>"#,
         )
+        .entry(
+            "thumb",
+            &long_entry(
+                r#"<link rel="stylesheet" href="sample-illustrated.css"><p class="hw">thumb <span class="pos">noun</span></p>"#,
+                "A notch cut into the fore-edge of a dictionary. (sample)",
+            ),
+        )
         .write_to(folder.join("sample-illustrated.mdx"))?;
     std::fs::write(
         folder.join("sample-illustrated.css"),
@@ -84,6 +105,13 @@ fn main() -> std::io::Result<()> {
 
     println!("{}", folder.display());
     Ok(())
+}
+
+/// An Entry taller than a window: `head`, then `sense` as forty numbered senses.
+/// "thumb" has one in every sample Dictionary, so the thumb index has a page to move about.
+fn long_entry(head: &str, sense: &str) -> String {
+    let senses: String = (1..=40).map(|n| format!("<li>{sense} {n}</li>")).collect();
+    format!("{head}<ol>{senses}</ol>")
 }
 
 /// A plain teal PNG, `width` x `height` pixels: a sample picture written for OpenDict.

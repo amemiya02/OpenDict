@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { EntryFrame } from "./components/EntryFrame";
 import { HeadwordColumn, optionId } from "./components/HeadwordColumn";
+import { sectionId, ThumbIndex } from "./components/ThumbIndex";
 import { EmptyLibrary, LibraryPage, OutlineButton, type LibraryActions } from "./components/LibraryPage";
 import { SearchField } from "./components/SearchField";
 import { UpdateNotice } from "./components/UpdateNotice";
@@ -208,6 +209,7 @@ export function App() {
   };
 
   const enabledCount = library?.dictionaries.filter((d) => d.enabled).length ?? 0;
+  const asked = page.kind === "found" ? Math.max(enabledCount, page.entries.length) : enabledCount;
   const { items, selected, miss, near, lemma } = column.state;
   const note = lemma ? (
     <>
@@ -248,21 +250,36 @@ export function App() {
         onToggleLibrary={() => setView(view === "library" ? "lookup" : "library")}
       />
 
-      <main ref={pageRef} aria-label={t.pageLabel} className="min-h-0 overflow-y-auto pt-[18px] pr-[30px] pb-12 pl-xl">
-        {view === "library" && library ? (
-          <LibraryPage library={library} busy={busy} notice={notice} actions={actions} />
-        ) : (
-          <PageContent
-            page={page}
-            library={library}
-            busy={busy}
-            notice={notice}
-            onAddFolder={actions.addFolder}
-            onLookUp={followLink}
-            onSearch={search}
-          />
-        )}
-      </main>
+      <div className="grid min-h-0 grid-cols-[minmax(0,1fr)_auto]">
+        <main ref={pageRef} aria-label={t.pageLabel} className="min-h-0 overflow-y-auto pt-[18px] pr-[30px] pb-12 pl-xl">
+          {view === "library" && library ? (
+            <LibraryPage library={library} busy={busy} notice={notice} actions={actions} />
+          ) : (
+            <PageContent
+              page={page}
+              asked={asked}
+              library={library}
+              busy={busy}
+              notice={notice}
+              onAddFolder={actions.addFolder}
+              onLookUp={followLink}
+              onSearch={search}
+            />
+          )}
+        </main>
+        {view === "lookup" ? (
+          <div className="w-[168px] min-h-0 overflow-hidden max-[1100px]:w-[46px]">
+            {page.kind === "found" ? (
+              <ThumbIndex
+                key={page.headword}
+                notches={page.entries.map((e) => ({ dictionaryId: e.dictionaryId, title: e.dictionaryTitle }))}
+                unanswered={asked - page.entries.length}
+                page={pageRef}
+              />
+            ) : null}
+          </div>
+        ) : null}
+      </div>
 
       <footer className="flex items-center gap-[18px] overflow-hidden border-t border-rule px-xl text-label whitespace-nowrap text-text-secondary tabular-nums select-none">
         <span>{library && !library.problem ? t.libraryCount(enabledCount) : null}</span>
@@ -274,6 +291,7 @@ export function App() {
 
 function PageContent({
   page,
+  asked,
   library,
   busy,
   notice,
@@ -282,6 +300,8 @@ function PageContent({
   onSearch,
 }: {
   page: PageState;
+  /** How many Dictionaries the Lookup ran against. */
+  asked: number;
   library: Library | null;
   busy: boolean;
   notice: string | null;
@@ -292,7 +312,15 @@ function PageContent({
   const { t } = useI18n();
   switch (page.kind) {
     case "found":
-      return <EntryPage key={page.headword} headword={page.headword} entries={page.entries} onLookUp={onLookUp} />;
+      return (
+        <EntryPage
+          key={page.headword}
+          headword={page.headword}
+          entries={page.entries}
+          asked={asked}
+          onLookUp={onLookUp}
+        />
+      );
     case "missing":
       return <NoMatch query={page.query} next={page.next} onSearch={onSearch} />;
     case "failed":
@@ -320,27 +348,40 @@ function PageContent({
 }
 
 /**
- * The page head and one section per answering Dictionary. An `entry://` link in any Entry
- * looks its headword up; a `sound://` link plays from its own Dictionary.
+ * The page head and one section per answering Dictionary. `asked` is how many Dictionaries
+ * the Lookup ran against. An `entry://` link in any Entry looks its headword up; a
+ * `sound://` link plays from its own Dictionary.
  */
 function EntryPage({
   headword,
   entries: initial,
+  asked,
   onLookUp,
 }: {
   headword: string;
   entries: Entry[];
+  asked: number;
   onLookUp: (headword: string) => void;
 }) {
   const { t } = useI18n();
   const [entries, setEntries] = useState(initial);
-  const pronunciation = firstPronunciation(entries);
+  const pronunciation = entries.find((entry) => entry.pronunciation)?.pronunciation;
+  const sound = firstSound(entries);
+  const [folded, setFolded] = useState<ReadonlySet<string>>(new Set());
+
+  function toggleFold(dictionaryId: string) {
+    setFolded((current) => {
+      const next = new Set(current);
+      if (!next.delete(dictionaryId)) next.add(dictionaryId);
+      return next;
+    });
+  }
 
   // Alt+P: the Pronounce action, wherever focus is in the app (not inside an Entry frame,
   // whose keys stay its own).
   useEffect(() => {
-    if (pronunciation === null) return;
-    const url = pronunciation;
+    if (sound === null) return;
+    const url = sound;
     function onKeyDown(event: KeyboardEvent) {
       if (!event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
       if (event.code !== "KeyP" && event.key.toLowerCase() !== "p") return;
@@ -349,7 +390,7 @@ function EntryPage({
     }
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [pronunciation]);
+  }, [sound]);
 
   async function toggleNetwork(entry: Entry) {
     const allow = !entry.allowNetwork;
@@ -365,37 +406,52 @@ function EntryPage({
     <article>
       <div className="flex flex-wrap items-baseline gap-x-md gap-y-xs border-b-[3px] border-double border-rule pb-2.5">
         <h1 className="-ml-3.5 font-serif text-display font-bold [overflow-wrap:anywhere]">【{headword}】</h1>
-        <span className="text-[12px] text-text-secondary">{t.answered(entries.length)}</span>
-        {pronunciation !== null && (
+        {pronunciation ? <span className="font-serif text-[16px] text-text-secondary">{pronunciation}</span> : null}
+        <span className="text-[12px] text-text-secondary">{t.answeredOf(entries.length, asked)}</span>
+        {sound !== null && (
           <div className="ml-auto flex gap-1.5 self-center">
-            <PronounceButton onClick={() => playSound(pronunciation)} />
+            <PronounceButton onClick={() => playSound(sound)} />
           </div>
         )}
       </div>
-      {entries.map((entry) => (
-        <section key={entry.dictionaryId} aria-label={entry.dictionaryTitle} className="border-rule [&+&]:border-t">
-          <div className="flex h-9 items-center gap-sm">
-            <h2 className="-ml-[7px] min-w-0 flex-1 truncate text-title font-bold">【{entry.dictionaryTitle}】</h2>
-            <NetworkSwitch allowed={entry.allowNetwork} onToggle={() => void toggleNetwork(entry)} />
-          </div>
-          {/* A new frame when the switch changes, so the document reloads under its new policy. */}
-          <EntryFrame
-            key={String(entry.allowNetwork)}
-            dictionaryTitle={entry.dictionaryTitle}
-            src={entry.src}
-            onLink={onLookUp}
-            onSound={playSound}
-          />
-        </section>
-      ))}
+      {entries.map((entry) => {
+        const open = !folded.has(entry.dictionaryId);
+        const body = `${sectionId(entry.dictionaryId)}-body`;
+        return (
+          <section
+            key={entry.dictionaryId}
+            id={sectionId(entry.dictionaryId)}
+            tabIndex={-1}
+            aria-label={entry.dictionaryTitle}
+            className="scroll-mt-3 border-rule outline-offset-4 [&+&]:border-t"
+          >
+            <div className="flex h-9 items-center gap-sm">
+              <h2 className="-ml-[7px] min-w-0 flex-1 truncate text-title font-bold">【{entry.dictionaryTitle}】</h2>
+              <NetworkSwitch allowed={entry.allowNetwork} onToggle={() => void toggleNetwork(entry)} />
+              <FoldButton open={open} controls={body} onToggle={() => toggleFold(entry.dictionaryId)} />
+            </div>
+            {/* Folded, the Entry stays loaded out of sight, so unfolding shows it as it was. */}
+            <div id={body} hidden={!open} className="pb-3.5">
+              {/* A new frame when the switch changes, so the document reloads under its new policy. */}
+              <EntryFrame
+                key={String(entry.allowNetwork)}
+                dictionaryTitle={entry.dictionaryTitle}
+                src={entry.src}
+                onLink={onLookUp}
+                onSound={playSound}
+              />
+            </div>
+          </section>
+        );
+      })}
     </article>
   );
 }
 
 /** The URL of the first audio the Entries offer, in page order, or null. */
-function firstPronunciation(entries: Entry[]): string | null {
+function firstSound(entries: Entry[]): string | null {
   for (const entry of entries) {
-    const url = entry.pronunciation ? soundUrl(entry.src, entry.pronunciation) : null;
+    const url = entry.sound ? soundUrl(entry.src, entry.sound) : null;
     if (url !== null) return url;
   }
   return null;
@@ -482,6 +538,29 @@ function NetworkSwitch({ allowed, onToggle }: { allowed: boolean; onToggle: () =
       <svg className="size-4 fill-none stroke-current stroke-[1.2]" viewBox="0 0 16 16" aria-hidden="true">
         <circle cx="8" cy="8" r="5.5" />
         <path d="M2.5 8h11M8 2.5c-1.8 1.6-2.6 3.4-2.6 5.5s.8 3.9 2.6 5.5c1.8-1.6 2.6-3.4 2.6-5.5S9.8 4.1 8 2.5Z" />
+      </svg>
+    </button>
+  );
+}
+
+/** The chevron at the right of a section header: points down while the Entry shows. */
+function FoldButton({ open, controls, onToggle }: { open: boolean; controls: string; onToggle: () => void }) {
+  const { t } = useI18n();
+  return (
+    <button
+      type="button"
+      aria-expanded={open}
+      aria-controls={controls}
+      aria-label={open ? t.collapse : t.expand}
+      onClick={onToggle}
+      className="grid size-6.5 flex-none place-items-center rounded-sharp text-text-secondary hover:bg-shade hover:text-text"
+    >
+      <svg
+        className={`size-4 fill-none stroke-current stroke-[1.2] motion-safe:transition-[rotate] motion-safe:duration-180 motion-safe:ease-out-expo ${open ? "" : "-rotate-90"}`}
+        viewBox="0 0 16 16"
+        aria-hidden="true"
+      >
+        <path d="M4 6l4 4 4-4" />
       </svg>
     </button>
   );

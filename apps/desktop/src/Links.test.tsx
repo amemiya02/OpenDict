@@ -7,8 +7,8 @@ import { I18nProvider } from "./i18n";
 
 const base = (key: string) => `http://odentry.localhost/${key}/`;
 
-function entry(title: string, key: string, headword: string, pronunciation: string | null) {
-  return { dictionaryId: `${title}.mdx`, dictionaryTitle: title, src: `${base(key)}?headword=${headword}`, allowNetwork: false, pronunciation };
+function entry(title: string, key: string, headword: string, sound: string | null) {
+  return { dictionaryId: `${title}.mdx`, dictionaryTitle: title, src: `${base(key)}?headword=${headword}`, allowNetwork: false, sound, pronunciation: null };
 }
 
 const answers: Record<string, ReturnType<typeof entry>[]> = {

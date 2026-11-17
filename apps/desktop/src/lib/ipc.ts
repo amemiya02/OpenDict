@@ -13,6 +13,8 @@ export interface Entry {
   /** Whether the reader allowed this Dictionary network access. */
   allowNetwork: boolean;
   /** The first audio the Entry offers (the path of its first `sound://` link), for Pronounce. */
+  sound: string | null;
+  /** How the headword is said, as this Entry gives it, if it shows that plainly (plain text). */
   pronunciation: string | null;
 }
 

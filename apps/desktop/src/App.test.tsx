@@ -10,6 +10,7 @@ const sample = {
   dictionaryTitle: "Sample Dictionary",
   src: "http://odentry.localhost/73616d706c652e6d6478/?headword=serendipity",
   allowNetwork: false,
+  sound: null,
   pronunciation: null,
 };
 

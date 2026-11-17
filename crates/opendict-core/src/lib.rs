@@ -15,6 +15,7 @@ mod near;
 mod normalization;
 mod pattern;
 mod preferences;
+mod pronunciation;
 mod registrations;
 mod scan;
 
@@ -31,3 +32,4 @@ pub use library::{
     Suggestions,
 };
 pub use preferences::Preferences;
+pub use pronunciation::pronunciation;
