@@ -8,6 +8,7 @@ mod error;
 mod format;
 mod index;
 mod indexing;
+mod lemma;
 mod library;
 mod preferences;
 mod registrations;
@@ -20,6 +21,7 @@ pub use format::{
 };
 pub use index::{HeadwordIndex, IndexError, IndexedHeadword, Start, index_key};
 pub use indexing::{BuiltIndex, IndexJob, IndexOutcome, IndexResult, IndexState};
+pub use lemma::{BaseForm, base_forms};
 pub use library::{
     DictionaryInfo, Entry, Lemma, Library, LibraryFolder, Move, OpenFailure, Suggestion,
     Suggestions,

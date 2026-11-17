@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { useI18n } from "../i18n";
 import type { Suggestion } from "../lib/ipc";
 
@@ -32,7 +32,7 @@ export function HeadwordColumn({
   items: Suggestion[];
   /** The current row, or -1. Nothing in the column is current while the Library is open. */
   selected: number;
-  note: string | null;
+  note: ReactNode;
   view: "lookup" | "library";
   onPick: (index: number) => void;
   onNeedMore: () => void;

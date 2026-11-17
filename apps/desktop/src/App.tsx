@@ -191,7 +191,14 @@ export function App() {
   };
 
   const enabledCount = library?.dictionaries.filter((d) => d.enabled).length ?? 0;
-  const { items, selected, miss } = column.state;
+  const { items, selected, miss, lemma } = column.state;
+  const note = lemma ? (
+    <>
+      {t.lemmatized} <b>{lemma.from}</b> → <b>{lemma.to}</b>
+    </>
+  ) : miss && items.length > 0 ? (
+    t.missNote
+  ) : null;
 
   return (
     <div className="grid h-full grid-cols-[264px_minmax(0,1fr)] grid-rows-[48px_minmax(0,1fr)_26px] max-[860px]:grid-cols-[200px_minmax(0,1fr)]">
@@ -214,7 +221,7 @@ export function App() {
       <HeadwordColumn
         items={items}
         selected={selected}
-        note={miss && items.length > 0 ? t.missNote : null}
+        note={note}
         view={view}
         onPick={pick}
         onNeedMore={() => void column.loadMore().catch(() => {})}

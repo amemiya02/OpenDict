@@ -874,6 +874,10 @@ mod tests {
             })
         );
         assert_eq!(
+            serde_json::to_value(state.suggest("serendipities", 50).unwrap()).unwrap()["lemma"],
+            json!({ "from": "serendipities", "to": "serendipity" })
+        );
+        assert_eq!(
             serde_json::to_value(state.headwords_after("apple", 50).unwrap()).unwrap(),
             json!([{ "headword": "serendipity", "count": 1 }])
         );

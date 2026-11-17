@@ -66,6 +66,7 @@ export const zhCN = {
   suggestions: "联想",
   noMatchingHeadwords: "没有匹配的词头",
   missNote: "没有匹配。词头表里接下来的词：",
+  lemmatized: "形态还原",
   startHint: "输入词头。↑ ↓ 选词，Enter 查词。",
   lookupFailed: (reason: string) => `查词失败：${reason}`,
   allowNetwork: "允许访问网络",
