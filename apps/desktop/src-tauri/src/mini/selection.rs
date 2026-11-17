@@ -1,5 +1,9 @@
 //! Reading the text the reader has selected in another application: simulate a copy,
 //! read what it put on the clipboard, and put back what was there before.
+//!
+//! Windows and macOS capture this way. Linux reads X11's PRIMARY selection directly
+//! (unix.rs) and uses only `query_from`; the rest stays compiled there for its tests.
+#![cfg_attr(all(target_os = "linux", not(test)), allow(dead_code))]
 
 use std::time::Duration;
 

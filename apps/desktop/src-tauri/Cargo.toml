@@ -20,7 +20,10 @@ opendict-core.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 percent-encoding = "2"
-tauri = { version = "2", features = [] }
+# `macos-private-api`: vibrancy shows through a transparent window, which macOS only
+# allows with private API. tauri-build checks the feature against `app.macOSPrivateApi`
+# in tauri.conf.json, so both are set on every platform (a no-op off macOS).
+tauri = { version = "2", features = ["macos-private-api"] }
 tauri-plugin-dialog = "2"
 tauri-plugin-process = "2"
 # Mica and vibrancy, applied directly so the app knows whether they took (Tauri uses it too).
@@ -56,9 +59,7 @@ windows-sys = { version = "0.61", features = [
     "Win32_UI_WindowsAndMessaging",
 ] }
 
-# Vibrancy shows through a transparent window, which macOS only allows with private API.
 [target.'cfg(target_os = "macos")'.dependencies]
-tauri = { version = "2", features = [] }
 # Selection capture on macOS: a simulated ⌘C (needs the Accessibility permission).
 enigo = "0.6"
 

@@ -104,7 +104,12 @@ before(async () => {
     try {
       browser = await chromium.connectOverCDP(`http://127.0.0.1:${port}`);
     } catch (error) {
-      if (Date.now() > deadline) throw error;
+      if (app.exitCode !== null || app.signalCode !== null) {
+        throw new Error(`the app at ${appPath} exited before its webview opened (code ${app.exitCode}, signal ${app.signalCode})`, { cause: error });
+      }
+      if (Date.now() > deadline) {
+        throw new Error(`the app at ${appPath} is running but its webview opened no debugging port ${port} within 60 s`, { cause: error });
+      }
       await new Promise((r) => setTimeout(r, 500));
     }
   }
