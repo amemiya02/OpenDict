@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { emit } from "@tauri-apps/api/event";
 import { mockIPC } from "@tauri-apps/api/mocks";
+import { act } from "react";
 import { App } from "./App";
 import { I18nProvider, type Locale } from "./i18n";
 import type { Dictionary, Library } from "./lib/ipc";
@@ -13,6 +15,7 @@ const english: Dictionary = {
   entryCount: 4120,
   size: 38 * 1024 * 1024,
   enabled: true,
+  index: { state: "ready" },
 };
 const japanese: Dictionary = {
   id: "ja02",
@@ -21,13 +24,15 @@ const japanese: Dictionary = {
   entryCount: 2740,
   size: 54 * 1024 * 1024,
   enabled: true,
+  index: { state: "ready" },
 };
 
-const empty: Library = { folders: [], dictionaries: [], failures: [], problem: null };
+const empty: Library = { folders: [], dictionaries: [], failures: [], indexing: null, problem: null };
 const stocked: Library = {
   folders: [{ path: "D:\\Dictionaries", dictionaryCount: 3, problem: null }],
   dictionaries: [english, japanese],
   failures: [{ path: "D:\\Dictionaries\\notes.mdx", reason: { kind: "notADictionary" } }],
+  indexing: null,
   problem: null,
 };
 
@@ -48,6 +53,10 @@ function fakeShell(initial: Library, { picked = stocked }: { picked?: Library | 
         return picked;
       case "rescan_library":
         return library;
+      case "index_library":
+        return library;
+      case "cancel_indexing":
+        return null;
       case "remove_library_folder":
         library = empty;
         return library;
@@ -67,7 +76,7 @@ function fakeShell(initial: Library, { picked = stocked }: { picked?: Library | 
       }
     }
     throw new Error(`unexpected command ${command}`);
-  });
+  }, { shouldMockEvents: true });
   return calls;
 }
 
@@ -161,6 +170,44 @@ describe("Library view", () => {
 
     const failure = await screen.findByText("D:\\Dictionaries\\notes.mdx");
     expect(failure.closest("li")?.textContent).toContain("辞書ファイルではありません");
+  });
+
+  it("shows indexing progress as the shell reports it, and cancels it", async () => {
+    const calls = fakeShell(stocked);
+    renderApp();
+    await openLibrary();
+
+    const indexing: Library = {
+      ...stocked,
+      dictionaries: [english, { ...japanese, index: { state: "pending" } }],
+      indexing: { dictionaryId: "ja02", title: "サンプル国語辞典", done: 685, total: 2740, waiting: 0 },
+    };
+    await act(() => emit("library", indexing));
+
+    const progress = await screen.findByRole("progressbar", { name: "Indexing サンプル国語辞典" });
+    expect(progress.getAttribute("value")).toBe("685");
+    expect(progress.getAttribute("max")).toBe("2740");
+    expect(screen.getByText(/25%/)).toBeTruthy();
+    await userEvent.click(screen.getByRole("button", { name: "Stop indexing" }));
+    expect(calls.at(-1)?.command).toBe("cancel_indexing");
+  });
+
+  it("says which Dictionaries are not indexed and offers to index them", async () => {
+    const calls = fakeShell({
+      ...stocked,
+      dictionaries: [
+        { ...english, index: { state: "failed", detail: "the file is damaged" } },
+        { ...japanese, index: { state: "pending" } },
+      ],
+    });
+    renderApp();
+    await openLibrary();
+
+    const rows = within(screen.getByRole("table")).getAllByRole("row").slice(1);
+    expect(rows[0]!.textContent).toContain("Could not be indexed: the file is damaged");
+    expect(rows[1]!.textContent).toContain("Not indexed yet");
+    await userEvent.click(screen.getByRole("button", { name: "Index now" }));
+    expect(calls.at(-1)?.command).toBe("index_library");
   });
 
   it("a cancelled folder dialog changes nothing", async () => {

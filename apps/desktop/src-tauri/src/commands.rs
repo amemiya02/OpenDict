@@ -4,7 +4,7 @@
 
 use std::path::PathBuf;
 
-use tauri::{AppHandle, State};
+use tauri::{AppHandle, Emitter, State};
 use tauri_plugin_dialog::DialogExt;
 
 use crate::state::{AppState, Direction, EntryView, LibraryView};
@@ -31,7 +31,9 @@ pub async fn add_library_folder(
         return Ok(None);
     };
     let folder = folder.into_path().map_err(|error| error.to_string())?;
-    state.add_folder(&folder).map(Some)
+    let view = state.add_folder(&folder)?;
+    start_indexing(&app, &state);
+    Ok(Some(view))
 }
 
 #[tauri::command]
@@ -43,8 +45,38 @@ pub async fn remove_library_folder(
 }
 
 #[tauri::command]
-pub async fn rescan_library(state: State<'_, AppState>) -> Result<LibraryView, String> {
-    state.rescan()
+pub async fn rescan_library(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<LibraryView, String> {
+    let view = state.rescan()?;
+    start_indexing(&app, &state);
+    Ok(view)
+}
+
+/// Indexes the Dictionaries still waiting for their index (after a cancel, say).
+#[tauri::command]
+pub fn index_library(app: AppHandle, state: State<'_, AppState>) -> LibraryView {
+    start_indexing(&app, &state);
+    state.library()
+}
+
+/// Stops indexing; the Dictionaries not yet indexed wait until it is started again.
+#[tauri::command]
+pub fn cancel_indexing(state: State<'_, AppState>) {
+    state.cancel_indexing();
+}
+
+/// The event that carries the Library view to the interface while indexing runs.
+pub const LIBRARY_EVENT: &str = "library";
+
+/// Starts indexing in the background, passing each change of the Library view on to
+/// the interface as a [`LIBRARY_EVENT`].
+pub fn start_indexing(app: &AppHandle, state: &AppState) {
+    let app = app.clone();
+    state.start_indexing(move |view| {
+        let _ = app.emit(LIBRARY_EVENT, view);
+    });
 }
 
 #[tauri::command]

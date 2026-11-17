@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 import { useI18n } from "../i18n";
 import { formatCount, formatSize, markOf } from "../lib/format";
-import type { Dictionary, FailureReason, Library } from "../lib/ipc";
+import type { Dictionary, FailureReason, Indexing, Library } from "../lib/ipc";
 import type { Catalogue } from "../i18n/en";
 
 export interface LibraryActions {
@@ -10,6 +10,9 @@ export interface LibraryActions {
   rescan: () => void;
   setEnabled: (id: string, enabled: boolean) => void;
   move: (id: string, direction: "up" | "down") => void;
+  /** Indexes the Dictionaries still waiting for their index. */
+  index: () => void;
+  cancelIndexing: () => void;
 }
 
 /**
@@ -30,6 +33,7 @@ export function LibraryPage({
 }) {
   const { t } = useI18n();
   const empty = library.dictionaries.length === 0 && library.failures.length === 0;
+  const waiting = library.dictionaries.filter((d) => d.index.state === "pending").length;
 
   return (
     <article aria-busy={busy}>
@@ -51,6 +55,17 @@ export function LibraryPage({
           {busy ? t.working : notice}
         </span>
       </div>
+
+      {library.indexing ? (
+        <IndexingProgress indexing={library.indexing} onCancel={actions.cancelIndexing} />
+      ) : waiting > 0 ? (
+        <div className="flex flex-wrap items-center gap-x-3.5 gap-y-1.5 pt-3 text-label text-text-secondary">
+          <span>{t.notIndexedCount(waiting)}</span>
+          <OutlineButton onClick={actions.index} disabled={busy}>
+            {t.indexNow}
+          </OutlineButton>
+        </div>
+      ) : null}
 
       {empty ? <EmptyLibrary /> : null}
 
@@ -177,6 +192,7 @@ function DictionaryTable({
                 {markOf(dictionary.title)}
               </b>
               {dictionary.title}
+              <IndexNote dictionary={dictionary} />
             </th>
             <td className={`${cell} pr-[18px] text-right`}>{formatCount(dictionary.entryCount, locale)}</td>
             <td className={`${cell} pr-[18px] text-right`}>{formatSize(dictionary.size, locale)}</td>
@@ -184,6 +200,40 @@ function DictionaryTable({
         ))}
       </tbody>
     </table>
+  );
+}
+
+/** Indexing in progress: which Dictionary, how far, and a way to stop. */
+function IndexingProgress({ indexing, onCancel }: { indexing: Indexing; onCancel: () => void }) {
+  const { t, locale } = useI18n();
+  const share = indexing.total > 0 ? Math.min(indexing.done / indexing.total, 1) : 0;
+  const label = t.indexingLabel(indexing.title);
+  return (
+    <div className="flex max-w-[860px] flex-wrap items-center gap-x-3.5 gap-y-1.5 pt-3 text-label text-text-secondary">
+      <span className="min-w-0 truncate">
+        {label} · {new Intl.NumberFormat(locale, { style: "percent" }).format(share)}
+        {indexing.waiting > 0 ? ` · ${t.indexingWaiting(indexing.waiting)}` : null}
+      </span>
+      <progress
+        aria-label={label}
+        value={indexing.done}
+        max={Math.max(indexing.total, 1)}
+        className="h-1 w-40 flex-none accent-[var(--ink)]"
+      />
+      <OutlineButton onClick={onCancel}>{t.stopIndexing}</OutlineButton>
+    </div>
+  );
+}
+
+/** A Dictionary that does not answer yet because its index is not built, and why. */
+function IndexNote({ dictionary }: { dictionary: Dictionary }) {
+  const { t } = useI18n();
+  const index = dictionary.index;
+  if (index.state === "ready") return null;
+  return (
+    <span className="ml-2.5 text-[12px] font-normal text-text-secondary">
+      {index.state === "pending" ? t.notIndexed : t.indexFailed(index.detail)}
+    </span>
   );
 }
 

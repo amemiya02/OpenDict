@@ -16,13 +16,14 @@ function fakeShell() {
     if (command === "library")
       return {
         folders: [{ path: "/library", dictionaryCount: 1, problem: null }],
-        dictionaries: [{ id: "sample", title: "Sample Dictionary", path: "/library/sample.mdx", entryCount: 1, size: 2048, enabled: true }],
+        dictionaries: [{ id: "sample", title: "Sample Dictionary", path: "/library/sample.mdx", entryCount: 1, size: 2048, enabled: true, index: { state: "ready" } }],
+        indexing: null,
         failures: [],
         problem: null,
       };
     if (command === "look_up") return (args as { headword: string }).headword === "serendipity" ? [sample] : [];
     throw new Error(`unexpected command ${command}`);
-  });
+  }, { shouldMockEvents: true });
 }
 
 describe("main window", () => {

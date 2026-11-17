@@ -17,7 +17,9 @@ pub fn run() {
         .setup(|app| {
             let library_file = app.path().app_data_dir()?.join("library.json");
             let override_folder = std::env::var_os(LIBRARY_FOLDER_ENV).map(Into::into);
-            app.manage(AppState::load(&library_file, override_folder));
+            let state = AppState::load(&library_file, override_folder);
+            commands::start_indexing(app.handle(), &state);
+            app.manage(state);
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -28,6 +30,8 @@ pub fn run() {
             commands::rescan_library,
             commands::set_dictionary_enabled,
             commands::move_dictionary,
+            commands::index_library,
+            commands::cancel_indexing,
         ])
         .run(tauri::generate_context!())
         .expect("OpenDict failed to start");

@@ -5,9 +5,12 @@ import { SearchField } from "./components/SearchField";
 import { useI18n } from "./i18n";
 import {
   addLibraryFolder,
+  cancelIndexing,
   getLibrary,
+  indexLibrary,
   lookUp,
   moveDictionary,
+  onLibraryChanged,
   removeLibraryFolder,
   rescanLibrary,
   setDictionaryEnabled,
@@ -35,6 +38,11 @@ export function App() {
 
   useEffect(() => {
     getLibrary().then(setLibrary, (error: unknown) => setPage({ kind: "failed", reason: String(error) }));
+    // Indexing runs in the shell's background and reports the Library as it goes.
+    const unlisten = onLibraryChanged(setLibrary);
+    return () => {
+      unlisten.then((stop) => stop(), () => {});
+    };
   }, []);
 
   // Moving between the page and the Library puts the reader at the top of the new view.
@@ -76,6 +84,10 @@ export function App() {
     rescan: () => change(rescanLibrary),
     setEnabled: (id, enabled) => change(() => setDictionaryEnabled(id, enabled)),
     move: (id, direction) => change(() => moveDictionary(id, direction)),
+    index: () => change(indexLibrary),
+    cancelIndexing: () => {
+      cancelIndexing().catch((error: unknown) => setNotice(t.libraryActionFailed(String(error))));
+    },
   };
 
   const enabledCount = library?.dictionaries.filter((d) => d.enabled).length ?? 0;
