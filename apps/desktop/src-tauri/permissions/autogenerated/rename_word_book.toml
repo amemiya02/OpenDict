@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-rename-word-book"
+description = "Enables the rename_word_book command without any pre-configured scope."
+commands.allow = ["rename_word_book"]
+
+[[permission]]
+identifier = "deny-rename-word-book"
+description = "Denies the rename_word_book command without any pre-configured scope."
+commands.deny = ["rename_word_book"]

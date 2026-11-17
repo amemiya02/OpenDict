@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-remove-saved-word"
+description = "Enables the remove_saved_word command without any pre-configured scope."
+commands.allow = ["remove_saved_word"]
+
+[[permission]]
+identifier = "deny-remove-saved-word"
+description = "Denies the remove_saved_word command without any pre-configured scope."
+commands.deny = ["remove_saved_word"]

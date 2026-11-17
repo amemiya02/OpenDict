@@ -3,6 +3,7 @@
 mod commands;
 mod entry_protocol;
 mod state;
+mod window;
 
 use tauri::Manager;
 
@@ -13,8 +14,12 @@ pub use state::{AppState, EntryView, LibraryView};
 pub const LIBRARY_FOLDER_ENV: &str = "OPENDICT_LIBRARY_FOLDER";
 
 /// Environment variable that overrides the data directory, where the Library file,
-/// preferences and History are kept (used by tests and development).
+/// preferences, History and Word Books are kept (used by tests and development).
 pub const DATA_DIR_ENV: &str = "OPENDICT_DATA_DIR";
+
+/// Environment variable naming a folder that Word Books are exported into without asking
+/// the reader where (used by tests).
+pub const EXPORT_DIR_ENV: &str = "OPENDICT_EXPORT_DIR";
 
 pub fn run() {
     tauri::Builder::default()
@@ -42,8 +47,15 @@ pub fn run() {
             };
             let library_file = data_dir.join("library.json");
             let state = AppState::load(&library_file, override_folder, &data_dir);
+            let appearance = state.appearance();
             commands::start_indexing(app.handle(), &state);
             app.manage(state);
+            let chrome = window::build_main(app)?;
+            app.manage(chrome);
+            // The reader's theme and zoom from the last session, as soon as the window is
+            // there: its frame and Mica follow the theme too.
+            commands::apply_theme(app.handle(), appearance.theme);
+            commands::apply_zoom(app.handle(), appearance.zoom);
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -60,6 +72,21 @@ pub fn run() {
             commands::index_library,
             commands::cancel_indexing,
             commands::set_allow_network,
+            commands::appearance,
+            commands::set_theme,
+            commands::set_as_authored,
+            commands::set_all_as_authored,
+            commands::set_text_size,
+            commands::set_zoom,
+            commands::word_books,
+            commands::toggle_word,
+            commands::create_word_book,
+            commands::rename_word_book,
+            commands::delete_word_book,
+            commands::choose_word_book,
+            commands::remove_saved_word,
+            commands::set_word_note,
+            commands::export_word_book,
             commands::history,
             commands::record_lookup,
             commands::clear_history,
@@ -70,6 +97,7 @@ pub fn run() {
             commands::move_in_group,
             commands::set_current_group,
             commands::elsewhere,
+            window::window_chrome,
         ])
         .run(tauri::generate_context!())
         .expect("OpenDict failed to start");

@@ -4,12 +4,15 @@
 
 use std::path::PathBuf;
 
-use tauri::{AppHandle, Emitter, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_dialog::DialogExt;
 
+use opendict_core::ExportFormat;
+
+use crate::EXPORT_DIR_ENV;
 use crate::state::{
-    AppState, Direction, ElsewhereView, EntryView, LibraryView, RegisterError, SuggestionView,
-    SuggestionsView,
+    AppState, AppearanceView, Direction, ElsewhereView, EntryView, LibraryView, RegisterError,
+    SuggestionView, SuggestionsView, Theme, WordBooksView,
 };
 
 /// Unlocks a Dictionary that needs a registration code with the code and e-mail the
@@ -217,4 +220,185 @@ pub fn set_allow_network(
     allow: bool,
 ) -> Result<(), String> {
     state.set_allow_network(&dictionary_id, allow)
+}
+
+#[tauri::command]
+pub fn appearance(state: State<'_, AppState>) -> AppearanceView {
+    state.appearance()
+}
+
+/// Remembers the theme and gives it to the windows, so their native frames and the
+/// interface's `prefers-color-scheme` follow it.
+#[tauri::command]
+pub fn set_theme(app: AppHandle, state: State<'_, AppState>, theme: Theme) -> Result<(), String> {
+    state.set_theme(theme)?;
+    apply_theme(&app, theme);
+    Ok(())
+}
+
+#[tauri::command]
+pub fn set_as_authored(
+    state: State<'_, AppState>,
+    dictionary_id: String,
+    as_authored: bool,
+) -> Result<(), String> {
+    state.set_as_authored(&dictionary_id, as_authored)
+}
+
+#[tauri::command]
+pub fn set_all_as_authored(state: State<'_, AppState>, as_authored: bool) -> Result<(), String> {
+    state.set_all_as_authored(as_authored)
+}
+
+/// Remembers the base text size of Entries; returns it as set, within limits.
+#[tauri::command]
+pub fn set_text_size(state: State<'_, AppState>, size: u32) -> Result<u32, String> {
+    state.set_text_size(size)
+}
+
+/// Remembers the page zoom and zooms the windows; returns it as set, within limits.
+#[tauri::command]
+pub fn set_zoom(app: AppHandle, state: State<'_, AppState>, percent: u32) -> Result<u32, String> {
+    let zoom = state.set_zoom(percent)?;
+    apply_zoom(&app, zoom);
+    Ok(zoom)
+}
+
+/// Gives the windows the reader's theme; `System` lets them follow the operating system.
+/// Each window takes it itself, so its native frame and material (Mica) match the page and
+/// its webview's `prefers-color-scheme` follows.
+pub fn apply_theme(app: &AppHandle, theme: Theme) {
+    let theme = match theme {
+        Theme::System => None,
+        Theme::Light => Some(tauri::Theme::Light),
+        Theme::Dark => Some(tauri::Theme::Dark),
+    };
+    app.set_theme(theme);
+    for window in app.webview_windows().values() {
+        let _ = window.set_theme(theme);
+    }
+}
+
+/// Zooms every window's page, Entry frames included, to `percent`.
+pub fn apply_zoom(app: &AppHandle, percent: u32) {
+    for window in app.webview_windows().values() {
+        // A platform without page zoom keeps the page at its own size.
+        let _ = window.set_zoom(f64::from(percent) / 100.0);
+    }
+}
+
+#[tauri::command]
+pub fn word_books(state: State<'_, AppState>) -> Result<WordBooksView, String> {
+    state.word_books()
+}
+
+/// Saves the word to the chosen Word Book, or takes it out (Ctrl/⌘ + D). `new_book_name`,
+/// in the reader's language, names the Word Book made for the first word.
+#[tauri::command]
+pub fn toggle_word(
+    state: State<'_, AppState>,
+    headword: String,
+    dictionary_id: String,
+    dictionary_title: String,
+    new_book_name: String,
+) -> Result<WordBooksView, String> {
+    state.toggle_word(&headword, &dictionary_id, &dictionary_title, &new_book_name)
+}
+
+#[tauri::command]
+pub fn create_word_book(state: State<'_, AppState>, name: String) -> Result<WordBooksView, String> {
+    state.create_word_book(&name)
+}
+
+#[tauri::command]
+pub fn rename_word_book(
+    state: State<'_, AppState>,
+    id: u64,
+    name: String,
+) -> Result<WordBooksView, String> {
+    state.rename_word_book(id, &name)
+}
+
+#[tauri::command]
+pub fn delete_word_book(state: State<'_, AppState>, id: u64) -> Result<WordBooksView, String> {
+    state.delete_word_book(id)
+}
+
+#[tauri::command]
+pub fn choose_word_book(state: State<'_, AppState>, id: u64) -> Result<WordBooksView, String> {
+    state.choose_word_book(id)
+}
+
+#[tauri::command]
+pub fn remove_saved_word(
+    state: State<'_, AppState>,
+    id: u64,
+    headword: String,
+) -> Result<WordBooksView, String> {
+    state.remove_saved_word(id, &headword)
+}
+
+#[tauri::command]
+pub fn set_word_note(
+    state: State<'_, AppState>,
+    id: u64,
+    headword: String,
+    note: String,
+) -> Result<WordBooksView, String> {
+    state.set_word_note(id, &headword, &note)
+}
+
+/// Asks the reader where to save the Word Book with the system dialog, then exports it
+/// there. Returns the file, or `None` when the reader cancels. With `OPENDICT_EXPORT_DIR`
+/// set (tests), the file goes into that folder without asking.
+#[tauri::command]
+pub async fn export_word_book(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    id: u64,
+    format: ExportFormat,
+) -> Result<Option<PathBuf>, String> {
+    let name = state
+        .word_book_name(id)
+        .ok_or_else(|| format!("there is no Word Book {id}"))?;
+    let extension = match format {
+        ExportFormat::Csv => "csv",
+        ExportFormat::Tsv => "tsv",
+    };
+    let file_name = format!("{}.{extension}", file_name(&name));
+    let file = match std::env::var_os(EXPORT_DIR_ENV) {
+        Some(folder) => PathBuf::from(folder).join(file_name),
+        None => {
+            let Some(file) = app
+                .dialog()
+                .file()
+                .set_file_name(&file_name)
+                .add_filter(extension.to_uppercase(), &[extension])
+                .blocking_save_file()
+            else {
+                return Ok(None);
+            };
+            file.into_path().map_err(|error| error.to_string())?
+        }
+    };
+    state.export_word_book(id, format, &file)?;
+    Ok(Some(file))
+}
+
+/// The Word Book's name with the characters file systems refuse replaced.
+fn file_name(name: &str) -> String {
+    let safe: String = name
+        .chars()
+        .map(|c| match c {
+            '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*' => '_',
+            c if c.is_control() => '_',
+            c => c,
+        })
+        .collect();
+    let safe = safe.trim().trim_end_matches('.');
+    if safe.is_empty() {
+        "Word Book".to_owned()
+    } else {
+        safe.to_owned()
+    }
 }

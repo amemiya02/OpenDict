@@ -10,8 +10,8 @@
 
 import { spawn, execFileSync, type ChildProcess } from "node:child_process";
 import { createServer, type Server } from "node:http";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { release, tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { after, before, test } from "node:test";
 import assert from "node:assert/strict";
@@ -56,6 +56,8 @@ before(async () => {
       ...process.env,
       OPENDICT_LIBRARY_FOLDER: library,
       OPENDICT_DATA_DIR: join(scratch, "data"),
+      // Word Books export here instead of asking where with the system dialog.
+      OPENDICT_EXPORT_DIR: join(scratch, "exports"),
       // A WebView2 browser of our own: instances sharing a user data folder share one
       // browser process, and with it the debugging port of whichever started first.
       WEBVIEW2_USER_DATA_FOLDER: join(scratch, "webview"),
@@ -290,7 +292,7 @@ test("a Dictionary reaches the network only once the reader allows it from its s
   await new Promise((r) => setTimeout(r, 1000));
   assert.ok(!sinkRequests.some((url) => url.startsWith("/allowed.png")), "blocked by default");
 
-  const networkSwitch = page.getByRole("region", { name: "Networked Probe", exact: true }).locator("button[aria-pressed]");
+  const networkSwitch = page.getByRole("region", { name: "Networked Probe", exact: true }).getByRole("button", { name: "Allow network access" });
   assert.equal(await networkSwitch.getAttribute("aria-pressed"), "false");
   await networkSwitch.click();
 
@@ -422,6 +424,102 @@ test("the headword column suggests as the reader types and the keyboard browses 
   if (process.env.OPENDICT_E2E_COLUMN_SCREENSHOT) await page.screenshot({ path: process.env.OPENDICT_E2E_COLUMN_SCREENSHOT });
 });
 
+test("in the dark theme Entries are recoloured unless shown as authored; text size and zoom adjust; all are kept", async () => {
+  const openReading = async () => {
+    await page.getByRole("button", { name: "Library", exact: true }).click();
+    const reading = page.getByRole("region", { name: "Reading" });
+    await reading.waitFor({ timeout: 10_000 });
+    return reading;
+  };
+  const invoke = <T>(command: string, args: Record<string, unknown> = {}) =>
+    page.evaluate(
+      ([command, args]) =>
+        (window as unknown as { __TAURI_INTERNALS__: { invoke: (cmd: string, args: unknown) => Promise<unknown> } }).__TAURI_INTERNALS__.invoke(command, args),
+      [command, args] as const,
+    ) as Promise<T>;
+  const frameFilter = () =>
+    page.evaluate(() => getComputedStyle(document.querySelector('section[aria-label="Sample English Dictionary"] iframe')!).filter);
+
+  let reading = await openReading();
+  await reading.getByRole("radio", { name: "Dark" }).check();
+  await page.waitForFunction(() => document.documentElement.dataset.theme === "dark");
+  assert.equal(await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue("--paper").trim()), "#111a30", "bookcloth navy");
+  // The shell gave the window the theme as well, so its native frame (and Mica) match the page.
+  assert.equal(await invoke("plugin:window|theme", { label: "main" }), "dark");
+  await reading.getByRole("button", { name: "Larger text" }).click();
+  await reading.getByRole("button", { name: "Larger text" }).click();
+  await reading.getByText("18 px").waitFor({ timeout: 5_000 });
+  if (process.env.OPENDICT_E2E_SCREENSHOT) await page.screenshot({ path: process.env.OPENDICT_E2E_SCREENSHOT.replace(/\.png$/, "-reading-dark.png") });
+
+  await lookUp("serendipity");
+  const frame = await entryFrame("Sample English Dictionary");
+  assert.match(await frameFilter(), /invert/, "recoloured by default");
+  // From outside: the Entry document keeps its own colours, and takes the reader's text size.
+  assert.equal(await frame.evaluate(() => getComputedStyle(document.documentElement).fontSize), "18px");
+  if (process.env.OPENDICT_E2E_SCREENSHOT) await page.screenshot({ path: process.env.OPENDICT_E2E_SCREENSHOT.replace(/\.png$/, "-dark.png") });
+
+  const section = page.getByRole("region", { name: "Sample English Dictionary", exact: true });
+  await section.getByRole("button", { name: "Show as authored" }).click();
+  await page.waitForFunction(
+    () => getComputedStyle(document.querySelector('section[aria-label="Sample English Dictionary"] iframe')!).filter === "none",
+    null,
+    { timeout: 5_000 },
+  );
+  if (process.env.OPENDICT_E2E_SCREENSHOT) await page.screenshot({ path: process.env.OPENDICT_E2E_SCREENSHOT.replace(/\.png$/, "-as-authored.png") });
+
+  // Page zoom: the whole window, Entry frames included.
+  const ratio = await page.evaluate(() => devicePixelRatio);
+  await page.getByRole("main").click({ position: { x: 5, y: 5 } });
+  await page.keyboard.press("Control+Equal");
+  await page.waitForFunction((before) => Math.abs(devicePixelRatio / before - 1.1) < 0.02, ratio, { timeout: 5_000 });
+
+  // Everything is kept in the reader's preferences.
+  assert.deepEqual(await invoke("appearance"), { theme: "dark", allAsAuthored: false, textSize: 18, zoom: 110 });
+  const entries = await invoke<{ dictionaryTitle: string; asAuthored: boolean }[]>("look_up", { headword: "serendipity" });
+  assert.equal(entries.find((e) => e.dictionaryTitle === "Sample English Dictionary")?.asAuthored, true);
+
+  // Back as it was, for the tests after this one.
+  await page.keyboard.press("Control+Digit0");
+  await page.waitForFunction((before) => Math.abs(devicePixelRatio - before) < 0.01, ratio, { timeout: 5_000 });
+  await section.getByRole("button", { name: "Show as authored" }).click();
+  reading = await openReading();
+  await reading.getByRole("button", { name: "Smaller text" }).click();
+  await reading.getByRole("button", { name: "Smaller text" }).click();
+  await reading.getByRole("radio", { name: "Light" }).check();
+  await page.waitForFunction(() => document.documentElement.dataset.theme === "light");
+  if (process.env.OPENDICT_E2E_SCREENSHOT) await page.screenshot({ path: process.env.OPENDICT_E2E_SCREENSHOT.replace(/\.png$/, "-reading-light.png") });
+  await reading.getByRole("radio", { name: "Follow system" }).check();
+  assert.deepEqual(await invoke("appearance"), { theme: "system", allAsAuthored: false, textSize: 16, zoom: 100 });
+  await lookUp("serendipity"); // back on the page
+});
+
+test("a word saved with Ctrl+D goes into the Word Book, keeps a note and exports to CSV", async () => {
+  await lookUp("serendipity");
+  await page.getByRole("button", { name: "Add to Word Book", pressed: false }).waitFor({ timeout: 10_000 });
+
+  await page.keyboard.press("Control+d");
+  await page.getByRole("button", { name: "In Word Book", pressed: true }).waitFor({ timeout: 10_000 });
+  const screenshot = process.env.OPENDICT_E2E_WORDBOOK_SCREENSHOT;
+  if (screenshot) await page.screenshot({ path: screenshot.replace(/\.png$/, "-page.png") });
+
+  await page.getByRole("button", { name: "Word Book", exact: true }).click();
+  await page.getByRole("heading", { level: 1, name: "【Word Book】" }).waitFor({ timeout: 10_000 });
+  const column = page.getByRole("listbox", { name: "Headwords" });
+  assert.deepEqual(await column.getByRole("option").evaluateAll((options) => options.map((o) => (o as HTMLElement).dataset.headword)), ["serendipity"]);
+  const note = page.getByRole("textbox", { name: "Note for serendipity" });
+  await note.fill("Finding a book I was not looking for, in a shop.");
+  await note.press("Enter");
+  if (screenshot) await page.screenshot({ path: screenshot });
+
+  await page.getByRole("button", { name: "Export CSV…" }).click();
+  const file = join(scratch, "exports", "Word Book.csv");
+  await page.getByText(`Exported to ${file}`).waitFor({ timeout: 10_000 });
+  const [header, row, ...rest] = readFileSync(file, "utf8").split("\n");
+  assert.equal(header, "Headword,Note,Dictionary,Added");
+  assert.match(row!, /^serendipity,"Finding a book I was not looking for, in a shop\.",Sample English Dictionary,\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$/);
+  assert.deepEqual(rest, [""]);
+});
+
 test("History lists committed Lookups, and Back and Forward retrace them", async () => {
   const search = page.getByRole("combobox", { name: "Type a word" });
   const column = page.getByRole("listbox", { name: "Headwords" });
@@ -480,6 +578,89 @@ test("a Group made in the Library is switched from the cover band, and a miss po
   await offer.click();
   await onPage("serendipity");
   assert.equal(await switcher.inputValue(), "");
+});
+
+test("the window has the system's own title bar controls, Mica on Windows 11, and stays usable when narrow", async () => {
+  // The system draws the title bar and its controls; on Windows 11 Mica shows through the column.
+  const decorated = await page.evaluate(() =>
+    (window as unknown as { __TAURI_INTERNALS__: { invoke: (cmd: string, args: object) => Promise<boolean> } }).__TAURI_INTERNALS__.invoke(
+      "plugin:window|is_decorated",
+      { label: "main" },
+    ),
+  );
+  assert.equal(decorated, true, "native window controls");
+  const windows11 = Number(release().split(".")[2]) >= 22000;
+  const material = await page.evaluate(() => document.documentElement.dataset.material ?? null);
+  assert.equal(material, windows11 ? "mica" : null, "Mica exactly where Windows has it");
+  if (windows11) {
+    const grounds = await page.evaluate(() => ({
+      body: getComputedStyle(document.body).backgroundColor,
+      column: getComputedStyle(document.querySelector("aside")!).backgroundColor,
+      main: getComputedStyle(document.querySelector("main")!.parentElement!).backgroundColor,
+    }));
+    assert.equal(grounds.body, "rgba(0, 0, 0, 0)", "the window is clear for Mica");
+    assert.match(grounds.column, /color\(srgb [\d. ]+ \/ 0\.65\)|rgba\(.*0\.65\)/, `the column lets Mica through (${grounds.column})`);
+    assert.doesNotMatch(grounds.main, /rgba\(0, 0, 0, 0\)|\/ 0\)/, "the page stays solid");
+  }
+
+  await page.getByRole("button", { name: "Suggestions", exact: true }).click();
+  await lookUp("thumb");
+  const cdp = await page.context().newCDPSession(page);
+  const narrow = async (width: number) => {
+    await cdp.send("Emulation.setDeviceMetricsOverride", { width, height: 700, deviceScaleFactor: 0, mobile: false });
+    await page.waitForFunction((width) => window.innerWidth === width, width);
+  };
+  const box = (selector: string) =>
+    page.evaluate((selector) => {
+      const element = document.querySelector(selector);
+      if (!element) return null;
+      const { x, width } = element.getBoundingClientRect();
+      return { x, width, display: getComputedStyle(element).display, position: getComputedStyle(element).position };
+    }, selector);
+  const column = page.getByRole("complementary", { name: "Headword column" });
+  const toggle = page.getByRole("button", { name: "Show or hide the headword column" });
+  try {
+    await narrow(1000);
+    assert.equal((await box('nav[aria-label="Jump to dictionary"]'))?.width, 46, "at 1100px and below the thumb index is notches only");
+    assert.equal((await box('nav[aria-label="Jump to dictionary"] a span'))?.display, "none", "no captions");
+    assert.equal((await box("aside"))?.width, 264);
+    assert.equal(await toggle.isVisible(), false, "no toggle while the column fits");
+
+    await narrow(800);
+    assert.equal((await box("aside"))?.width, 200, "at 860px and below the column narrows");
+
+    await narrow(600);
+    assert.equal(await column.isVisible(), false, "at 620px and below the column leaves the page");
+    assert.equal(await toggle.isVisible(), true, "a toggle in the cover band brings it back");
+    assert.ok(((await box("main")) ?? { width: 0 }).width > 500, "the page takes the width");
+    for (const name of ["Back", "Forward"]) {
+      const button = page.getByRole("button", { name, exact: true });
+      if ((await button.count()) > 0) assert.equal(await button.isVisible(), true, `${name} stays`);
+    }
+
+    await toggle.click();
+    await column.waitFor({ state: "visible" });
+    const overlay = await box("aside");
+    assert.equal(overlay?.position, "fixed", "the column lies over the page");
+    assert.equal(overlay?.x, 0);
+    if (process.env.OPENDICT_E2E_NARROW_SCREENSHOT) await page.screenshot({ path: process.env.OPENDICT_E2E_NARROW_SCREENSHOT });
+    const other = column.getByRole("option").filter({ hasNotText: "thumb" }).first();
+    const word = await other.getAttribute("data-headword");
+    await other.click();
+    await page.getByRole("heading", { level: 1, name: `【${word}】` }).waitFor({ timeout: 10_000 });
+    await column.waitFor({ state: "hidden" });
+
+    // Typing brings the column up over the page; Esc puts it away.
+    const search = page.getByRole("combobox", { name: "Type a word" });
+    await search.click();
+    await search.fill("ser");
+    await column.waitFor({ state: "visible" });
+    await search.press("Escape");
+    await column.waitFor({ state: "hidden" });
+  } finally {
+    await cdp.send("Emulation.clearDeviceMetricsOverride");
+    await cdp.detach();
+  }
 });
 
 // Runs last: unlocking adds a Dictionary, and with it a headword, to the Library.

@@ -1,13 +1,15 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { EntryFrame } from "./components/EntryFrame";
 import { GroupSwitcher } from "./components/GroupSwitcher";
-import { HeadwordColumn, optionId, type ColumnList } from "./components/HeadwordColumn";
+import { COLUMN_ID, HeadwordColumn, optionId, type ColumnItem, type ColumnList } from "./components/HeadwordColumn";
 import { NavButtons } from "./components/NavButtons";
 import { RecentLookups } from "./components/RecentLookups";
 import { sectionId, ThumbIndex } from "./components/ThumbIndex";
 import { EmptyLibrary, LibraryPage, OutlineButton, type LibraryActions } from "./components/LibraryPage";
+import { ReadingSettings } from "./components/ReadingSettings";
 import { SearchField } from "./components/SearchField";
 import { UpdateNotice } from "./components/UpdateNotice";
+import { WordBookPage, type WordBookActions } from "./components/WordBookPage";
 import { useI18n } from "./i18n";
 import { soundUrl } from "./lib/entryLinks";
 import { playSound } from "./lib/sound";
@@ -31,16 +33,31 @@ import {
   renameGroup,
   rescanLibrary,
   setAllowNetwork,
+  setAsAuthored,
   setCurrentGroup,
   setDictionaryEnabled,
   setInGroup,
+  chooseWordBook,
+  createWordBook,
+  deleteWordBook,
+  exportWordBook,
+  getWordBooks,
+  removeSavedWord,
+  renameWordBook,
+  setWordNote,
+  toggleWord,
+  windowChrome,
   type Elsewhere,
   type Entry,
   type Group,
   type Library,
   type RegisterError,
+  type WindowChrome,
   type Suggestion,
+  type WordBooks,
 } from "./lib/ipc";
+import { useAppearance, type Scheme } from "./lib/useAppearance";
+import { MOD, withMod } from "./lib/platform";
 import { canStep, emptyTrail, step, visit } from "./lib/trail";
 import { useHeadwordColumn } from "./lib/useHeadwordColumn";
 import { wildcardHint } from "./lib/wildcard";
@@ -53,7 +70,7 @@ type PageState =
   | { kind: "missing"; query: string; next: Suggestion[] }
   | { kind: "failed"; reason: string };
 
-type View = "lookup" | "library";
+type View = "lookup" | "library" | "wordBook";
 
 /** The main window: cover band, headword column, page and status line. */
 export function App() {
@@ -61,18 +78,34 @@ export function App() {
   const [query, setQuery] = useState("");
   const [page, setPage] = useState<PageState>({ kind: "idle" });
   const [view, setView] = useState<View>("lookup");
+  const [list, setList] = useState<ColumnList>("suggestions");
   const [library, setLibrary] = useState<Library | null>(null);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
+  const [wordBooks, setWordBooks] = useState<WordBooks | null>(null);
+  /** What the status line says about the last Word Book change. */
+  const [said, setSaid] = useState<string | null>(null);
+  /** What the Word Book view says about the last change made there. */
+  const [bookNotice, setBookNotice] = useState<string | null>(null);
   /** Committed Lookups, newest first. */
   const [history, setHistory] = useState<string[]>([]);
-  const [list, setList] = useState<ColumnList>("suggestions");
   /** The words visited in this window, for Back and Forward. */
   const [trail, setTrail] = useState(emptyTrail);
   /** Where the word on the page stands in History, or -1. */
   const historySelected = page.kind === "found" ? history.indexOf(page.headword) : -1;
+  const [platform, setPlatform] = useState<WindowChrome["platform"] | null>(null);
+  /** Narrow windows: the reader opened the headword column with the toggle in the cover band. */
+  const [columnOpen, setColumnOpen] = useState(false);
+  /** Narrow windows: the reader is typing, so the column shows over the page until a word is chosen. */
+  const [typing, setTyping] = useState(false);
+  /** The Word Book Ctrl/⌘ + D saves into, and where the word on the page stands in it, or -1. */
+  const currentBook = wordBooks?.books.find((book) => book.id === wordBooks.current) ?? null;
+  const savedHere = (headword: string) => currentBook?.words.some((word) => word.headword === headword) ?? false;
+  const wordBookSelected =
+    page.kind === "found" && currentBook ? currentBook.words.findIndex((word) => word.headword === page.headword) : -1;
   const pageRef = useRef<HTMLElement>(null);
   const column = useHeadwordColumn();
+  const appearance = useAppearance();
   const { refresh } = column;
   /** Counts page requests, so only the latest one lands. */
   const pageRequests = useRef(0);
@@ -111,13 +144,31 @@ export function App() {
   }, [refresh]);
 
   useEffect(() => {
+    // Without readable Word Books the rest of the app still works; saving reports why not.
+    getWordBooks().then((books) => setWordBooks(Array.isArray(books?.books) ? books : null), () => {});
     getHistory().then((words) => setHistory(asWords(words)), () => {});
+  }, []);
+
+  // The shell says what it built the window with: the styles leave room for the title bar
+  // controls and let the system material show through (see styles.css).
+  useEffect(() => {
+    windowChrome().then(
+      (chrome: WindowChrome | null) => {
+        if (!chrome) return; // a fake shell that answers nothing
+        const root = document.documentElement;
+        root.dataset.platform = chrome.platform;
+        if (chrome.material) root.dataset.material = chrome.material;
+        else delete root.dataset.material;
+        setPlatform(chrome.platform);
+      },
+      () => {}, // no shell (or an old one): plain solid window
+    );
   }, []);
 
   // Moving between the page and the Library puts the reader at the top of the new view.
   useEffect(() => {
     pageRef.current?.scrollTo?.({ top: 0 });
-    if (view === "library") pageRef.current?.querySelector<HTMLElement>("h1")?.focus();
+    if (view !== "lookup") pageRef.current?.querySelector<HTMLElement>("h1")?.focus();
   }, [view]);
 
   function setPageNow(next: PageState) {
@@ -149,6 +200,7 @@ export function App() {
   /** The reader's query changed: new suggestions, and the first match on the page at once. */
   async function changeQuery(text: string) {
     setList("suggestions");
+    setTyping(true);
     try {
       const answer = await column.refresh(text);
       if (!answer) return;
@@ -174,6 +226,15 @@ export function App() {
       void show(headword);
       return;
     }
+    if (list === "wordBook") {
+      const words = currentBook?.words ?? [];
+      if (words.length === 0) return;
+      const next = wordBookSelected < 0 ? (by > 0 ? 0 : words.length - 1) : wordBookSelected + by;
+      const headword = words[Math.max(0, Math.min(next, words.length - 1))]!.headword;
+      type(headword);
+      void show(headword);
+      return;
+    }
     const headword = await column.move(by).catch(() => null);
     if (headword) void show(headword);
   }
@@ -189,11 +250,18 @@ export function App() {
    * the latest step for Back and Forward.
    */
   async function commit(headword: string) {
+    putColumnAway();
     type(headword);
     await show(headword, () => {
       setTrail((now) => visit(now, headword));
       recordLookup(headword).then((words) => setHistory(asWords(words)), () => {});
     });
+  }
+
+  /** A narrow window's column overlay goes once a word is chosen. */
+  function putColumnAway() {
+    setTyping(false);
+    setColumnOpen(false);
   }
 
   /** An `entry://` link in an Entry: the linked headword, as if the reader had typed and chosen it. */
@@ -209,14 +277,25 @@ export function App() {
   }
 
   function commitCurrent() {
-    const { items, selected } = column.state;
-    const current = list === "history" ? history[historySelected] : items[selected]?.headword;
-    const headword = current ?? query.trim();
+    const { items, selected, query: answered } = column.state;
+    // Until the shell answers the latest text, the suggestions belong to an earlier query:
+    // Enter then takes what was typed, not the earlier query's current headword.
+    const fresh = answered === typed.current;
+    const current =
+      list === "history"
+        ? history[historySelected]
+        : list === "wordBook"
+          ? currentBook?.words[wordBookSelected]?.headword
+          : fresh
+            ? items[selected]?.headword
+            : undefined;
+    const headword = current ?? typed.current.trim();
     if (headword) void commit(headword);
   }
 
   function pick(index: number) {
-    const headword = list === "history" ? history[index] : column.select(index);
+    const headword =
+      list === "history" ? history[index] : list === "wordBook" ? currentBook?.words[index]?.headword : column.select(index);
     if (headword) void commit(headword);
   }
 
@@ -285,6 +364,81 @@ export function App() {
     );
   }
 
+  /** Saves the word on the page to the chosen Word Book, or takes it out (Ctrl/⌘ + D). */
+  async function toggleSave() {
+    if (view !== "lookup" || page.kind !== "found") return;
+    const { headword, entries } = page;
+    const from = entries[0]!;
+    try {
+      const updated = await toggleWord(headword, from.dictionaryId, from.dictionaryTitle, t.newWordBookName);
+      setWordBooks(updated);
+      const book = updated.books.find((b) => b.id === updated.current);
+      const now = book?.words.some((word) => word.headword === headword) ?? false;
+      if (book) setSaid(now ? t.savedTo(headword, book.name) : t.removedFrom(headword, book.name));
+    } catch (error) {
+      setSaid(t.wordBookActionFailed(String(error)));
+    }
+  }
+
+  /** Runs one Word Book command; the shell answers with the Word Books as they now are. */
+  async function changeBooks(command: () => Promise<WordBooks>) {
+    setBusy(true);
+    setBookNotice(null);
+    try {
+      setWordBooks(await command());
+    } catch (error) {
+      setBookNotice(t.wordBookActionFailed(String(error)));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const bookActions: WordBookActions = {
+    choose: (id) => void changeBooks(() => chooseWordBook(id)),
+    create: (name) => void changeBooks(() => createWordBook(name)),
+    rename: (id, name) => void changeBooks(() => renameWordBook(id, name)),
+    delete: (id) => void changeBooks(() => deleteWordBook(id)),
+    removeWord: (id, headword) => void changeBooks(() => removeSavedWord(id, headword)),
+    setNote: (id, headword, note) => void changeBooks(() => setWordNote(id, headword, note)),
+    export: async (id, format) => {
+      setBusy(true);
+      setBookNotice(null);
+      try {
+        const file = await exportWordBook(id, format);
+        if (file) setBookNotice(t.exported(file));
+      } catch (error) {
+        setBookNotice(t.wordBookActionFailed(String(error)));
+      } finally {
+        setBusy(false);
+      }
+    },
+    lookUp: (headword) => void commit(headword),
+  };
+
+  function showWordBook() {
+    // In a narrow window the overlay gives way to the Word Book view, as for the Library.
+    setColumnOpen(false);
+    setList("wordBook");
+    setView("wordBook");
+    setBookNotice(null);
+  }
+
+  const shortcut = useRef(toggleSave);
+  useEffect(() => {
+    shortcut.current = toggleSave;
+  });
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (withMod(event) && event.key.toLowerCase() === "d" && !event.isComposing) {
+        // Ctrl+D would otherwise bookmark the page in WebView2.
+        event.preventDefault();
+        void shortcut.current();
+      }
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, []);
+
   /** Runs one Library command; the shell answers with the Library as it now is. */
   async function change(command: () => Promise<Library | null>, after?: (library: Library) => void) {
     setBusy(true);
@@ -303,6 +457,46 @@ export function App() {
       setBusy(false);
     }
   }
+
+  /** Changes one Entry on the page, if it is still there. */
+  function updateEntry(dictionaryId: string, change: Partial<Entry>) {
+    setPage((current) =>
+      current.kind === "found"
+        ? { ...current, entries: current.entries.map((e) => (e.dictionaryId === dictionaryId ? { ...e, ...change } : e)) }
+        : current,
+    );
+  }
+
+  async function toggleNetwork(entry: Entry) {
+    const allow = !entry.allowNetwork;
+    try {
+      await setAllowNetwork(entry.dictionaryId, allow);
+    } catch {
+      return; // the switch stays as it was: the preference was not saved
+    }
+    updateEntry(entry.dictionaryId, { allowNetwork: allow });
+  }
+
+  async function toggleAsAuthored(entry: Entry) {
+    const asAuthored = !entry.asAuthored;
+    try {
+      await setAsAuthored(entry.dictionaryId, asAuthored);
+    } catch {
+      return;
+    }
+    updateEntry(entry.dictionaryId, { asAuthored });
+  }
+
+  const reading = {
+    ...appearance,
+    /** Every Dictionary at once, the ones on the page included. */
+    setAllAsAuthored: async (asAuthored: boolean) => {
+      await appearance.setAllAsAuthored(asAuthored);
+      setPage((current) =>
+        current.kind === "found" ? { ...current, entries: current.entries.map((e) => ({ ...e, asAuthored })) } : current,
+      );
+    },
+  };
 
   const actions: LibraryActions = {
     addFolder: () => change(addLibraryFolder, () => setView("library")),
@@ -351,14 +545,39 @@ export function App() {
   ) : miss && items.length > 0 ? (
     t.missNote
   ) : null;
-  const columnSelected = list === "history" ? historySelected : selected;
+  const columnSelected = list === "history" ? historySelected : list === "wordBook" ? wordBookSelected : selected;
+  const bookWords: ColumnItem[] = (currentBook?.words ?? []).map((word) => ({ headword: word.headword }));
+  const columnItems: ColumnItem[] =
+    list === "history" ? history.map((headword) => ({ headword })) : list === "wordBook" ? bookWords : items;
 
   return (
-    <div className="grid h-full grid-cols-[264px_minmax(0,1fr)] grid-rows-[48px_minmax(0,1fr)_26px] max-[860px]:grid-cols-[200px_minmax(0,1fr)]">
-      <header className="col-span-2 flex items-center bg-cover text-on-cover select-none">
-        <div className="flex w-[264px] flex-none items-center gap-sm pr-3.5 pl-lg max-[860px]:w-[200px]">
-          <span className="font-serif text-[17px] font-bold">{t.appName}</span>
+    <div className="grid h-full grid-cols-[264px_minmax(0,1fr)] grid-rows-[48px_minmax(0,1fr)_26px] max-[860px]:grid-cols-[200px_minmax(0,1fr)] max-[620px]:grid-cols-[minmax(0,1fr)]">
+      <header
+        // On macOS the cover band is the title bar (the system's controls sit at its left).
+        data-tauri-drag-region={platform === "macos" ? "deep" : undefined}
+        className="col-span-full flex items-center bg-cover text-on-cover select-none"
+      >
+        <div className="flex w-[264px] flex-none items-center gap-sm pr-3.5 pl-lg max-[860px]:w-[200px] max-[620px]:w-auto max-[620px]:pr-1.5 macos:pl-20">
+          <span className="font-serif text-[17px] font-bold max-[620px]:hidden">{t.appName}</span>
           <GroupSwitcher groups={groups} current={currentGroup} onSwitch={(id) => void switchGroup(id)} />
+          <button
+            type="button"
+            aria-label={t.toggleColumn}
+            aria-controls={COLUMN_ID}
+            aria-expanded={columnOpen || typing}
+            // Keep the caret in the search field: the toggle answers what is shown now.
+            onMouseDown={(event) => event.preventDefault()}
+            onClick={() => {
+              setTyping(false);
+              setColumnOpen(!(columnOpen || typing));
+            }}
+            className="hidden size-6.5 place-items-center rounded-sharp text-on-cover-muted hover:bg-cover-edge hover:text-on-cover max-[620px]:grid"
+          >
+            <svg className="size-4 fill-none stroke-current stroke-[1.2]" viewBox="0 0 16 16" aria-hidden="true">
+              <rect x="2.5" y="3" width="11" height="10" />
+              <path d="M6.5 3v10" />
+            </svg>
+          </button>
         </div>
         <NavButtons canGoBack={canStep(trail, -1)} canGoForward={canStep(trail, 1)} onGo={go} />
         <div className="flex min-w-0 flex-1 pr-lg">
@@ -369,12 +588,14 @@ export function App() {
             onQuery={(text) => void changeQuery(text)}
             onMove={(by) => void move(by)}
             onCommit={commitCurrent}
+            onEscape={putColumnAway}
+            onBlur={() => setTyping(false)}
           />
         </div>
       </header>
 
       <HeadwordColumn
-        items={list === "history" ? history.map((headword) => ({ headword })) : items}
+        items={columnItems}
         selected={columnSelected}
         note={list === "suggestions" ? note : null}
         view={view}
@@ -392,13 +613,23 @@ export function App() {
           setView("lookup");
         }}
         onClearHistory={forgetHistory}
-        onToggleLibrary={() => setView(view === "library" ? "lookup" : "library")}
+        onShowWordBook={showWordBook}
+        onToggleLibrary={() => {
+          setColumnOpen(false);
+          setView(view === "library" ? "lookup" : "library");
+        }}
+        open={columnOpen || typing}
       />
 
-      <div className="grid min-h-0 grid-cols-[minmax(0,1fr)_auto]">
+      <div className="grid min-h-0 grid-cols-[minmax(0,1fr)_auto] bg-paper">
         <main ref={pageRef} aria-label={t.pageLabel} className="min-h-0 overflow-y-auto pt-[18px] pr-[30px] pb-12 pl-xl">
           {view === "library" && library ? (
-            <LibraryPage library={library} busy={busy} notice={notice} actions={actions} />
+            <>
+              <LibraryPage library={library} busy={busy} notice={notice} actions={actions} />
+              <ReadingSettings controls={reading} />
+            </>
+          ) : view === "wordBook" ? (
+            <WordBookPage wordBooks={wordBooks ?? { books: [], current: null }} busy={busy} notice={bookNotice} actions={bookActions} />
           ) : (
             <PageContent
               page={page}
@@ -407,12 +638,17 @@ export function App() {
               busy={busy}
               notice={notice}
               onAddFolder={actions.addFolder}
+              reading={{ scheme: appearance.scheme, textSize: appearance.appearance.textSize }}
+              onToggleNetwork={(entry) => void toggleNetwork(entry)}
+              onToggleAsAuthored={(entry) => void toggleAsAuthored(entry)}
               onLookUp={followLink}
               onSearch={search}
               groups={groups}
               currentGroup={currentGroup}
               onGoTo={(id, headword) => void switchGroup(id, headword)}
               recent={<RecentLookups words={history} onPick={(word) => void commit(word)} />}
+              saved={page.kind === "found" && savedHere(page.headword)}
+              onToggleSave={() => void toggleSave()}
             />
           )}
         </main>
@@ -430,9 +666,14 @@ export function App() {
         ) : null}
       </div>
 
-      <footer className="flex items-center gap-[18px] overflow-hidden border-t border-rule px-xl text-label whitespace-nowrap text-text-secondary tabular-nums select-none">
+      <footer className="flex items-center bg-paper gap-[18px] overflow-hidden border-t border-rule px-xl text-label whitespace-nowrap text-text-secondary tabular-nums select-none">
         {group ? <span>{t.currentGroupIs(group.name)}</span> : null}
         <span>{library && !library.problem ? t.libraryCount(answeringCount) : null}</span>
+        {said ? (
+          <span role="status" className="min-w-0 truncate">
+            {said}
+          </span>
+        ) : null}
         <UpdateNotice />
       </footer>
     </div>
@@ -446,12 +687,17 @@ function PageContent({
   busy,
   notice,
   onAddFolder,
+  reading,
+  onToggleNetwork,
+  onToggleAsAuthored,
   onLookUp,
   onSearch,
   groups,
   currentGroup,
   onGoTo,
   recent,
+  saved,
+  onToggleSave,
 }: {
   page: PageState;
   /** How many Dictionaries the Lookup ran against. */
@@ -460,6 +706,9 @@ function PageContent({
   busy: boolean;
   notice: string | null;
   onAddFolder: () => void;
+  reading: Reading;
+  onToggleNetwork: (entry: Entry) => void;
+  onToggleAsAuthored: (entry: Entry) => void;
   onLookUp: (headword: string) => void;
   onSearch: (text: string) => void;
   groups: Group[];
@@ -468,6 +717,9 @@ function PageContent({
   onGoTo: (group: string | null, headword: string) => void;
   /** Recent lookups, offered on the empty page. */
   recent: ReactNode;
+  /** Whether the word on the page is in the chosen Word Book. */
+  saved: boolean;
+  onToggleSave: () => void;
 }) {
   const { t } = useI18n();
   switch (page.kind) {
@@ -478,7 +730,12 @@ function PageContent({
           headword={page.headword}
           entries={page.entries}
           asked={asked}
+          reading={reading}
+          onToggleNetwork={onToggleNetwork}
+          onToggleAsAuthored={onToggleAsAuthored}
           onLookUp={onLookUp}
+          saved={saved}
+          onToggleSave={onToggleSave}
         />
       );
     case "missing":
@@ -521,6 +778,12 @@ function PageContent({
   }
 }
 
+/** What the page needs to know of the reader's appearance settings. */
+interface Reading {
+  scheme: Scheme;
+  textSize: number;
+}
+
 /**
  * The page head and one section per answering Dictionary. `asked` is how many Dictionaries
  * the Lookup ran against. An `entry://` link in any Entry looks its headword up; a
@@ -528,17 +791,27 @@ function PageContent({
  */
 function EntryPage({
   headword,
-  entries: initial,
+  entries,
   asked,
   onLookUp,
+  reading,
+  onToggleNetwork,
+  onToggleAsAuthored,
+  saved,
+  onToggleSave,
 }: {
   headword: string;
   entries: Entry[];
   asked: number;
+  reading: Reading;
+  onToggleNetwork: (entry: Entry) => void;
+  onToggleAsAuthored: (entry: Entry) => void;
   onLookUp: (headword: string) => void;
+  saved: boolean;
+  onToggleSave: () => void;
 }) {
   const { t } = useI18n();
-  const [entries, setEntries] = useState(initial);
+  const dark = reading.scheme === "dark";
   const pronunciation = entries.find((entry) => entry.pronunciation)?.pronunciation;
   const sound = firstSound(entries);
   const [folded, setFolded] = useState<ReadonlySet<string>>(new Set());
@@ -566,30 +839,21 @@ function EntryPage({
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [sound]);
 
-  async function toggleNetwork(entry: Entry) {
-    const allow = !entry.allowNetwork;
-    try {
-      await setAllowNetwork(entry.dictionaryId, allow);
-    } catch {
-      return; // the switch stays as it was: the preference was not saved
-    }
-    setEntries((current) => current.map((e) => (e.dictionaryId === entry.dictionaryId ? { ...e, allowNetwork: allow } : e)));
-  }
-
   return (
     <article>
       <div className="flex flex-wrap items-baseline gap-x-md gap-y-xs border-b-[3px] border-double border-rule pb-2.5">
         <h1 className="-ml-3.5 font-serif text-display font-bold [overflow-wrap:anywhere]">【{headword}】</h1>
         {pronunciation ? <span className="font-serif text-[16px] text-text-secondary">{pronunciation}</span> : null}
         <span className="text-[12px] text-text-secondary">{t.answeredOf(entries.length, asked)}</span>
-        {sound !== null && (
-          <div className="ml-auto flex gap-1.5 self-center">
-            <PronounceButton onClick={() => playSound(sound)} />
-          </div>
-        )}
+        <div className="ml-auto flex gap-1.5 self-center">
+          {sound !== null && <PronounceButton onClick={() => playSound(sound)} />}
+          <SaveButton saved={saved} onToggle={onToggleSave} />
+        </div>
       </div>
       {entries.map((entry) => {
         const open = !folded.has(entry.dictionaryId);
+        // In the dark theme an Entry is recoloured, or keeps its own white page as authored.
+        const whitePage = dark && entry.asAuthored;
         const body = `${sectionId(entry.dictionaryId)}-body`;
         return (
           <section
@@ -601,19 +865,24 @@ function EntryPage({
           >
             <div className="flex h-9 items-center gap-sm">
               <h2 className="-ml-[7px] min-w-0 flex-1 truncate text-title font-bold">【{entry.dictionaryTitle}】</h2>
-              <NetworkSwitch allowed={entry.allowNetwork} onToggle={() => void toggleNetwork(entry)} />
+              {dark ? <AsAuthoredSwitch on={entry.asAuthored} onToggle={() => onToggleAsAuthored(entry)} /> : null}
+              <NetworkSwitch allowed={entry.allowNetwork} onToggle={() => onToggleNetwork(entry)} />
               <FoldButton open={open} controls={body} onToggle={() => toggleFold(entry.dictionaryId)} />
             </div>
             {/* Folded, the Entry stays loaded out of sight, so unfolding shows it as it was. */}
             <div id={body} hidden={!open} className="pb-3.5">
-              {/* A new frame when the switch changes, so the document reloads under its new policy. */}
-              <EntryFrame
-                key={String(entry.allowNetwork)}
-                dictionaryTitle={entry.dictionaryTitle}
-                src={entry.src}
-                onLink={onLookUp}
-                onSound={playSound}
-              />
+              <div className={whitePage ? "max-w-[860px] rounded-sharp bg-india-paper px-3 pt-2.5 pb-3" : undefined}>
+                {/* A new frame when the switch changes, so the document reloads under its new policy. */}
+                <EntryFrame
+                  key={String(entry.allowNetwork)}
+                  dictionaryTitle={entry.dictionaryTitle}
+                  src={entry.src}
+                  onLink={onLookUp}
+                  onSound={playSound}
+                  textSize={reading.textSize}
+                  recolour={dark && !entry.asAuthored}
+                />
+              </div>
             </div>
           </section>
         );
@@ -730,6 +999,48 @@ function NoMatch({
         </>
       ) : null}
     </article>
+  );
+}
+
+/** Add to Word Book, in the page head: solid ink once the word is saved (DESIGN.md: toggled on). */
+function SaveButton({ saved, onToggle }: { saved: boolean; onToggle: () => void }) {
+  const { t } = useI18n();
+  return (
+    <button
+      type="button"
+      aria-pressed={saved}
+      aria-keyshortcuts={MOD === "⌘" ? "Meta+D" : "Control+D"}
+      onClick={onToggle}
+      className="flex h-7 flex-none items-center gap-1.5 rounded-sharp border border-rule px-2.5 text-body text-text hover:bg-shade active:translate-y-px aria-pressed:bg-text aria-pressed:text-paper"
+    >
+      <svg className="size-3.5 fill-none stroke-current stroke-[1.3]" viewBox="0 0 14 14" aria-hidden="true">
+        <path d="M3.5 1.5h7v11L7 9.8l-3.5 2.7z" fill={saved ? "currentColor" : "none"} />
+      </svg>
+      <span>{saved ? t.inWordBook : t.addToWordBook}</span>
+      <kbd aria-hidden="true" className="font-sans text-label text-current opacity-70">
+        {MOD} D
+      </kbd>
+    </button>
+  );
+}
+
+/** The dark theme's switch in the section header: pressed when the Entry keeps its own white page. */
+function AsAuthoredSwitch({ on, onToggle }: { on: boolean; onToggle: () => void }) {
+  const { t } = useI18n();
+  return (
+    <button
+      type="button"
+      aria-pressed={on}
+      aria-label={t.asAuthored}
+      title={on ? t.shownAsAuthored : t.shownRecoloured}
+      onClick={onToggle}
+      className="grid size-6.5 flex-none place-items-center rounded-sharp text-text-secondary hover:bg-shade hover:text-text aria-pressed:bg-text aria-pressed:text-paper"
+    >
+      <svg className="size-4 fill-none stroke-current stroke-[1.2]" viewBox="0 0 16 16" aria-hidden="true">
+        <path d="M4 2.5h5.5L12 5v8.5H4z" />
+        <path d="M9.5 2.5V5H12" />
+      </svg>
+    </button>
   );
 }
 

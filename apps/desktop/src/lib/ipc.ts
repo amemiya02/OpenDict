@@ -16,6 +16,21 @@ export interface Entry {
   sound: string | null;
   /** How the headword is said, as this Entry gives it, if it shows that plainly (plain text). */
   pronunciation: string | null;
+  /** In the dark theme, whether the Entry keeps its Dictionary's own white page rather than being recoloured. */
+  asAuthored: boolean;
+}
+
+export type Theme = "system" | "light" | "dark";
+
+/** How the page reads; the shell keeps it in the reader's preferences. */
+export interface Appearance {
+  theme: Theme;
+  /** In the dark theme, every Dictionary shows as authored unless the reader chose otherwise for it. */
+  allAsAuthored: boolean;
+  /** The base text size of Entries, in CSS pixels: the size of text a Dictionary does not size itself. */
+  textSize: number;
+  /** Page zoom, in percent. */
+  zoom: number;
 }
 
 /** One headword in the headword column. */
@@ -124,6 +139,17 @@ export interface Elsewhere {
   headword: string;
 }
 
+/** The window's native chrome, as the shell built it (apps/desktop/src-tauri/src/window.rs). */
+export interface WindowChrome {
+  platform: "windows" | "macos" | "linux";
+  /** The system material behind the window (Mica, macOS vibrancy), if one took. */
+  material: "mica" | "vibrancy" | null;
+}
+
+export function windowChrome(): Promise<WindowChrome> {
+  return invoke("window_chrome");
+}
+
 export function lookUp(headword: string): Promise<Entry[]> {
   return invoke<Entry[]>("look_up", { headword });
 }
@@ -196,6 +222,106 @@ export async function registerDictionary(path: string, email: string, code: stri
 
 export function setAllowNetwork(dictionaryId: string, allow: boolean): Promise<void> {
   return invoke<void>("set_allow_network", { dictionaryId, allow });
+}
+
+export function getAppearance(): Promise<Appearance> {
+  return invoke<Appearance>("appearance");
+}
+
+/** Saves the theme; the shell also gives it to the windows. */
+export function setTheme(theme: Theme): Promise<void> {
+  return invoke<void>("set_theme", { theme });
+}
+
+export function setAsAuthored(dictionaryId: string, asAuthored: boolean): Promise<void> {
+  return invoke<void>("set_as_authored", { dictionaryId, asAuthored });
+}
+
+/** Shows every Dictionary as authored, or recoloured, in the dark theme, replacing choices for single ones. */
+export function setAllAsAuthored(asAuthored: boolean): Promise<void> {
+  return invoke<void>("set_all_as_authored", { asAuthored });
+}
+
+/** Resolves to the size as saved, within the shell's limits. */
+export function setTextSize(size: number): Promise<number> {
+  return invoke<number>("set_text_size", { size });
+}
+
+/** Zooms the window's page; resolves to the zoom as saved, within the shell's limits. */
+export function setZoom(percent: number): Promise<number> {
+  return invoke<number>("set_zoom", { percent });
+}
+
+/** A Headword saved in a Word Book. */
+export interface SavedWord {
+  headword: string;
+  /** The Dictionary the reader was reading when they saved it. */
+  dictionaryId: string;
+  dictionaryTitle: string;
+  /** A note or example sentence. */
+  note: string | null;
+  /** When it was saved, in milliseconds since 1970 (UTC). */
+  added: number;
+}
+
+export interface WordBook {
+  /** Stays the same whatever the Word Book is renamed to. */
+  id: number;
+  name: string;
+  /** Newest first. */
+  words: SavedWord[];
+}
+
+export interface WordBooks {
+  /** In the order they were made. */
+  books: WordBook[];
+  /** The Word Book Ctrl/⌘ + D saves into, or null while there are none. */
+  current: number | null;
+}
+
+export type ExportFormat = "csv" | "tsv";
+
+export function getWordBooks(): Promise<WordBooks> {
+  return invoke<WordBooks>("word_books");
+}
+
+/**
+ * Saves the word to the chosen Word Book, or takes it out if it is there. `newBookName`
+ * names the Word Book made for the very first word.
+ */
+export function toggleWord(headword: string, dictionaryId: string, dictionaryTitle: string, newBookName: string): Promise<WordBooks> {
+  return invoke<WordBooks>("toggle_word", { headword, dictionaryId, dictionaryTitle, newBookName });
+}
+
+export function createWordBook(name: string): Promise<WordBooks> {
+  return invoke<WordBooks>("create_word_book", { name });
+}
+
+export function renameWordBook(id: number, name: string): Promise<WordBooks> {
+  return invoke<WordBooks>("rename_word_book", { id, name });
+}
+
+export function deleteWordBook(id: number): Promise<WordBooks> {
+  return invoke<WordBooks>("delete_word_book", { id });
+}
+
+/** Makes the Word Book the one new words go into. */
+export function chooseWordBook(id: number): Promise<WordBooks> {
+  return invoke<WordBooks>("choose_word_book", { id });
+}
+
+export function removeSavedWord(id: number, headword: string): Promise<WordBooks> {
+  return invoke<WordBooks>("remove_saved_word", { id, headword });
+}
+
+/** Sets a saved word's note; an empty note removes it. */
+export function setWordNote(id: number, headword: string, note: string): Promise<WordBooks> {
+  return invoke<WordBooks>("set_word_note", { id, headword, note });
+}
+
+/** Asks where to save with the system dialog and exports there; resolves to the file, or null when cancelled. */
+export function exportWordBook(id: number, format: ExportFormat): Promise<string | null> {
+  return invoke<string | null>("export_word_book", { id, format });
 }
 
 /** The headwords of committed Lookups, newest first. */
