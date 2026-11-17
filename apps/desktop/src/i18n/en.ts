@@ -62,6 +62,7 @@ export const en = {
   indexFailed: (reason: string) => `Could not be indexed: ${reason}`,
   libraryActionFailed: (reason: string) => `That did not work: ${reason}`,
   headwordColumn: "Headword column",
+  toggleColumn: "Show or hide the headword column",
   headwords: "Headwords",
   suggestions: "Suggestions",
   noMatchingHeadwords: "No matching headwords",
