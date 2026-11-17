@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-register-dictionary"
+description = "Enables the register_dictionary command without any pre-configured scope."
+commands.allow = ["register_dictionary"]
+
+[[permission]]
+identifier = "deny-register-dictionary"
+description = "Denies the register_dictionary command without any pre-configured scope."
+commands.deny = ["register_dictionary"]

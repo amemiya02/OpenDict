@@ -3,6 +3,7 @@ use std::path::Path;
 use crate::error::Result;
 use crate::file::{Kind, MdictFile};
 use crate::header::Header;
+use crate::registration::Registration;
 
 /// An open MDX file: headwords and the records filed under them.
 pub struct Mdx {
@@ -25,7 +26,20 @@ impl Mdx {
     /// Opens an MDX file. The file is memory-mapped; the header and the key index are
     /// read now, records only when they are looked up.
     pub fn open(path: impl AsRef<Path>) -> Result<Mdx> {
-        let file = MdictFile::open(path.as_ref(), Kind::Mdx)?;
+        Self::from_file(MdictFile::open(path.as_ref(), Kind::Mdx, None)?)
+    }
+
+    /// Opens an MDX file that may need a registration code (`Encrypted="1"`), unlocking
+    /// it with `registration`. A file that needs none opens as with [`Mdx::open`].
+    pub fn open_registered(path: impl AsRef<Path>, registration: &Registration) -> Result<Mdx> {
+        Self::from_file(MdictFile::open(
+            path.as_ref(),
+            Kind::Mdx,
+            Some(registration),
+        )?)
+    }
+
+    fn from_file(file: MdictFile) -> Result<Mdx> {
         let keys = &file.keys;
         let mut sorted: Vec<usize> = (0..keys.len()).collect();
         sorted.sort_by(|&a, &b| keys[a].text.cmp(&keys[b].text).then(a.cmp(&b)));
