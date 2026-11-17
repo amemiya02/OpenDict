@@ -150,12 +150,18 @@ pub fn set_zoom(app: AppHandle, state: State<'_, AppState>, percent: u32) -> Res
 }
 
 /// Gives the windows the reader's theme; `System` lets them follow the operating system.
+/// Each window takes it itself, so its native frame and material (Mica) match the page and
+/// its webview's `prefers-color-scheme` follows.
 pub fn apply_theme(app: &AppHandle, theme: Theme) {
-    app.set_theme(match theme {
+    let theme = match theme {
         Theme::System => None,
         Theme::Light => Some(tauri::Theme::Light),
         Theme::Dark => Some(tauri::Theme::Dark),
-    });
+    };
+    app.set_theme(theme);
+    for window in app.webview_windows().values() {
+        let _ = window.set_theme(theme);
+    }
 }
 
 /// Zooms every window's page, Entry frames included, to `percent`.

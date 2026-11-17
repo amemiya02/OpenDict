@@ -211,7 +211,7 @@ test("a Dictionary reaches the network only once the reader allows it from its s
   await new Promise((r) => setTimeout(r, 1000));
   assert.ok(!sinkRequests.some((url) => url.startsWith("/allowed.png")), "blocked by default");
 
-  const networkSwitch = page.getByRole("region", { name: "Networked Probe", exact: true }).locator("button[aria-pressed]");
+  const networkSwitch = page.getByRole("region", { name: "Networked Probe", exact: true }).getByRole("button", { name: "Allow network access" });
   assert.equal(await networkSwitch.getAttribute("aria-pressed"), "false");
   await networkSwitch.click();
 
@@ -341,6 +341,75 @@ test("the headword column suggests as the reader types and the keyboard browses 
   assert.equal(await search.inputValue(), "cat");
   assert.equal(await heading.count(), 1);
   if (process.env.OPENDICT_E2E_COLUMN_SCREENSHOT) await page.screenshot({ path: process.env.OPENDICT_E2E_COLUMN_SCREENSHOT });
+});
+
+test("in the dark theme Entries are recoloured unless shown as authored; text size and zoom adjust; all are kept", async () => {
+  const openReading = async () => {
+    await page.getByRole("button", { name: "Library", exact: true }).click();
+    const reading = page.getByRole("region", { name: "Reading" });
+    await reading.waitFor({ timeout: 10_000 });
+    return reading;
+  };
+  const invoke = <T>(command: string, args: Record<string, unknown> = {}) =>
+    page.evaluate(
+      ([command, args]) =>
+        (window as unknown as { __TAURI_INTERNALS__: { invoke: (cmd: string, args: unknown) => Promise<unknown> } }).__TAURI_INTERNALS__.invoke(command, args),
+      [command, args] as const,
+    ) as Promise<T>;
+  const frameFilter = () =>
+    page.evaluate(() => getComputedStyle(document.querySelector('section[aria-label="Sample English Dictionary"] iframe')!).filter);
+
+  let reading = await openReading();
+  await reading.getByRole("radio", { name: "Dark" }).check();
+  await page.waitForFunction(() => document.documentElement.dataset.theme === "dark");
+  assert.equal(await page.evaluate(() => getComputedStyle(document.body).backgroundColor), "rgb(17, 26, 48)", "bookcloth navy");
+  // The shell gave the window the theme as well, so its native frame (and Mica) match the page.
+  assert.equal(await invoke("plugin:window|theme", { label: "main" }), "dark");
+  await reading.getByRole("button", { name: "Larger text" }).click();
+  await reading.getByRole("button", { name: "Larger text" }).click();
+  await reading.getByText("18 px").waitFor({ timeout: 5_000 });
+  if (process.env.OPENDICT_E2E_SCREENSHOT) await page.screenshot({ path: process.env.OPENDICT_E2E_SCREENSHOT.replace(/\.png$/, "-reading-dark.png") });
+
+  await lookUp("serendipity");
+  const frame = await entryFrame("Sample English Dictionary");
+  assert.match(await frameFilter(), /invert/, "recoloured by default");
+  // From outside: the Entry document keeps its own colours, and takes the reader's text size.
+  assert.equal(await frame.evaluate(() => getComputedStyle(document.documentElement).fontSize), "18px");
+  if (process.env.OPENDICT_E2E_SCREENSHOT) await page.screenshot({ path: process.env.OPENDICT_E2E_SCREENSHOT.replace(/\.png$/, "-dark.png") });
+
+  const section = page.getByRole("region", { name: "Sample English Dictionary", exact: true });
+  await section.getByRole("button", { name: "Show as authored" }).click();
+  await page.waitForFunction(
+    () => getComputedStyle(document.querySelector('section[aria-label="Sample English Dictionary"] iframe')!).filter === "none",
+    null,
+    { timeout: 5_000 },
+  );
+  if (process.env.OPENDICT_E2E_SCREENSHOT) await page.screenshot({ path: process.env.OPENDICT_E2E_SCREENSHOT.replace(/\.png$/, "-as-authored.png") });
+
+  // Page zoom: the whole window, Entry frames included.
+  const ratio = await page.evaluate(() => devicePixelRatio);
+  await page.getByRole("main").click({ position: { x: 5, y: 5 } });
+  await page.keyboard.press("Control+Equal");
+  await page.waitForFunction((before) => Math.abs(devicePixelRatio / before - 1.1) < 0.02, ratio, { timeout: 5_000 });
+
+  // Everything is kept in the reader's preferences.
+  assert.deepEqual(await invoke("appearance"), { theme: "dark", allAsAuthored: false, textSize: 18, zoom: 110 });
+  const entries = await invoke<{ dictionaryTitle: string; asAuthored: boolean }[]>("look_up", { headword: "serendipity" });
+  assert.equal(entries.find((e) => e.dictionaryTitle === "Sample English Dictionary")?.asAuthored, true);
+
+  // Back as it was, for the tests after this one.
+  await page.keyboard.press("Control+Digit0");
+  await page.waitForFunction((before) => Math.abs(devicePixelRatio - before) < 0.01, ratio, { timeout: 5_000 });
+  await section.getByRole("button", { name: "Show as authored" }).click();
+  reading = await openReading();
+  await reading.getByRole("button", { name: "Smaller text" }).click();
+  await reading.getByRole("button", { name: "Smaller text" }).click();
+  await reading.getByRole("radio", { name: "Light" }).check();
+  await page.waitForFunction(() => document.documentElement.dataset.theme === "light");
+  if (process.env.OPENDICT_E2E_SCREENSHOT) await page.screenshot({ path: process.env.OPENDICT_E2E_SCREENSHOT.replace(/\.png$/, "-reading-light.png") });
+  await reading.getByRole("radio", { name: "Follow system" }).check();
+  assert.deepEqual(await invoke("appearance"), { theme: "system", allAsAuthored: false, textSize: 16, zoom: 100 });
+  await lookUp("serendipity"); // back on the page
 });
 
 // Runs last: unlocking adds a Dictionary, and with it a headword, to the Library.
