@@ -4,7 +4,8 @@
 //! fixture is generated from entries written in the test itself. It writes MDX
 //! ([`MdxBuilder`]) and MDD ([`MddBuilder`]) files in format versions 1.2 and 2.0, with
 //! blocks stored plain, zlib- or LZO-compressed, in UTF-8, UTF-16, GBK or Big5, with or
-//! without an encrypted key index (`Encrypted="2"`), and can damage what it writes.
+//! without an encrypted key index (`Encrypted="2"`) or a registration code
+//! (`Encrypted="1"`), and can damage what it writes.
 //!
 //! ```
 //! use opendict_mdict_fixture::{Compression, Encoding, MdxBuilder, Version};
@@ -53,6 +54,17 @@ pub enum Compression {
     Lzo,
     /// Block type 2: a zlib stream.
     Zlib,
+}
+
+/// How a dictionary's publisher turned the buyer's e-mail or device ID into bytes before
+/// hashing it into the key that decrypts the registration code. Public descriptions of
+/// MDict disagree, so readers try both and the tests write both.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Identity {
+    /// UTF-16 little-endian.
+    Utf16,
+    /// The bytes as written (ASCII for any real e-mail address or device ID).
+    Ascii,
 }
 
 /// A way to damage a written file, for testing that readers report it.
@@ -145,6 +157,8 @@ struct Layout {
     version: Version,
     compression: Compression,
     encrypt_key_index: bool,
+    /// The key the key section header is encrypted with (`Encrypted="1"`), if any.
+    header_key: Option<[u8; 16]>,
     keys_per_block: usize,
     records_per_block: usize,
     /// Header attributes that replace or add to the written ones, in order.
@@ -157,6 +171,7 @@ impl Layout {
             version: Version::V2_0,
             compression: Compression::Zlib,
             encrypt_key_index: false,
+            header_key: None,
             keys_per_block: 64,
             records_per_block: 64,
             attributes: Vec::new(),
@@ -164,7 +179,12 @@ impl Layout {
     }
 
     fn encrypted_attribute(&self) -> &'static str {
-        if self.encrypt_key_index { "2" } else { "0" }
+        match (self.header_key.is_some(), self.encrypt_key_index) {
+            (false, false) => "0",
+            (true, false) => "1",
+            (false, true) => "2",
+            (true, true) => "3",
+        }
     }
 }
 
@@ -188,6 +208,15 @@ macro_rules! layout_methods {
         /// version 1.2 key index is stored raw, so asking for both panics at build time.
         pub fn encrypt_key_index(mut self) -> Self {
             self.layout.encrypt_key_index = true;
+            self
+        }
+
+        /// Encrypts the key section header as `Encrypted="1"` files do, so that the file
+        /// opens only with `code` (32 hex digits) and the e-mail or device ID `identity`
+        /// it was issued to. The code is not written into the file; add it with
+        /// `.attribute("RegCode", code)` to write a file that carries its own code.
+        pub fn registered_to(mut self, identity: &str, code: &str, form: Identity) -> Self {
+            self.layout.header_key = Some(dictionary_key(identity, code, form));
             self
         }
 
@@ -560,6 +589,10 @@ fn key_section(
     version.put(&mut head, blocks_len);
 
     let mut out = head.clone();
+    if let Some(key) = &layout.header_key {
+        salsa20_8(key, &mut out);
+    }
+    // The checksum is of the header in the clear.
     if version == Version::V2_0 {
         out.extend(adler32(&head).to_be_bytes());
     }
@@ -640,6 +673,80 @@ fn encrypt_key_index(block: &mut [u8]) {
         let mixed = *byte ^ previous ^ (i as u8) ^ key[i % 16];
         *byte = mixed.rotate_left(4);
         previous = *byte;
+    }
+}
+
+/// The key that decrypts the key section header: the registration code decrypted with
+/// Salsa20/8 under RIPEMD-128 of the identity. (Writing a file, we choose the code and
+/// derive the key; the publisher of a real file chose the key and derived the code. The
+/// cipher is its own inverse, so both directions agree.)
+fn dictionary_key(identity: &str, code: &str, form: Identity) -> [u8; 16] {
+    let digits: Vec<u8> = code.bytes().filter(u8::is_ascii_hexdigit).collect();
+    assert_eq!(digits.len(), 32, "a registration code is 32 hex digits");
+    let mut key = [0u8; 16];
+    for (byte, pair) in key.iter_mut().zip(digits.chunks(2)) {
+        *byte = u8::from_str_radix(std::str::from_utf8(pair).expect("ASCII"), 16).expect("hex");
+    }
+    let identity = match form {
+        Identity::Utf16 => utf16le(identity),
+        Identity::Ascii => identity.as_bytes().to_vec(),
+    };
+    let identity_key: [u8; 16] = Ripemd128::digest(&identity).into();
+    salsa20_8(&identity_key, &mut key);
+    key
+}
+
+/// Salsa20/8 with a 16-byte key, an all-zero nonce and the block counter from 0, XORed
+/// into `data`. From the public-domain Salsa20 specification.
+fn salsa20_8(key: &[u8; 16], data: &mut [u8]) {
+    let word = |bytes: &[u8]| u32::from_le_bytes(bytes.try_into().expect("4 bytes"));
+    let tau = b"expand 16-byte k";
+    for (counter, chunk) in data.chunks_mut(64).enumerate() {
+        let counter = counter as u64;
+        let input: [u32; 16] = [
+            word(&tau[0..4]),
+            word(&key[0..4]),
+            word(&key[4..8]),
+            word(&key[8..12]),
+            word(&key[12..16]),
+            word(&tau[4..8]),
+            0,
+            0,
+            counter as u32,
+            (counter >> 32) as u32,
+            word(&tau[8..12]),
+            word(&key[0..4]),
+            word(&key[4..8]),
+            word(&key[8..12]),
+            word(&key[12..16]),
+            word(&tau[12..16]),
+        ];
+        let mut x = input;
+        for _ in 0..4 {
+            for [a, b, c, d] in [
+                [0, 4, 8, 12],
+                [5, 9, 13, 1],
+                [10, 14, 2, 6],
+                [15, 3, 7, 11],
+                [0, 1, 2, 3],
+                [5, 6, 7, 4],
+                [10, 11, 8, 9],
+                [15, 12, 13, 14],
+            ] {
+                x[b] ^= x[a].wrapping_add(x[d]).rotate_left(7);
+                x[c] ^= x[b].wrapping_add(x[a]).rotate_left(9);
+                x[d] ^= x[c].wrapping_add(x[b]).rotate_left(13);
+                x[a] ^= x[d].wrapping_add(x[c]).rotate_left(18);
+            }
+        }
+        let stream: Vec<u8> = x
+            .iter()
+            .zip(input)
+            .flat_map(|(&z, x)| z.wrapping_add(x).to_le_bytes())
+            .collect();
+        for (byte, k) in chunk.iter_mut().zip(stream) {
+            *byte ^= k;
+        }
     }
 }
 

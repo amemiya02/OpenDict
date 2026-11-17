@@ -60,7 +60,15 @@ export type FailureReason =
   | { kind: "unsupportedVersion"; detail: string }
   | { kind: "damaged" }
   | { kind: "needsRegistrationCode" }
+  /** A registration code was kept for it, but no longer unlocks it. */
+  | { kind: "wrongRegistrationCode" }
   | { kind: "unsupported"; detail: string };
+
+/** Why a registration code was not accepted. */
+export type RegisterError =
+  | { kind: "wrongCode" }
+  | { kind: "codeNeeded" }
+  | { kind: "failed"; detail: string };
 
 export interface OpenFailure {
   path: string;
@@ -112,6 +120,20 @@ export function setDictionaryEnabled(id: string, enabled: boolean): Promise<Libr
 
 export function moveDictionary(id: string, direction: "up" | "down"): Promise<Library> {
   return invoke<Library>("move_dictionary", { id, direction });
+}
+
+/**
+ * Unlocks a Dictionary that needs a registration code. `code` may be empty when the
+ * Dictionary carries its own. Rejects with a RegisterError when they do not unlock it.
+ */
+export async function registerDictionary(path: string, email: string, code: string): Promise<Library> {
+  try {
+    return await invoke<Library>("register_dictionary", { path, email, code });
+  } catch (error) {
+    const typed = error as Partial<RegisterError> | null;
+    if (typed && typeof typed === "object" && typeof typed.kind === "string") throw typed as RegisterError;
+    throw { kind: "failed", detail: String(error) } satisfies RegisterError;
+  }
 }
 
 export function setAllowNetwork(dictionaryId: string, allow: boolean): Promise<void> {

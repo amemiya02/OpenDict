@@ -54,6 +54,7 @@ pub fn run() {
             commands::rescan_library,
             commands::set_dictionary_enabled,
             commands::move_dictionary,
+            commands::register_dictionary,
             commands::set_allow_network,
         ])
         .run(tauri::generate_context!())

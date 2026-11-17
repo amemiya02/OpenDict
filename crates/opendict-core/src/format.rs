@@ -4,7 +4,10 @@
 //! implements [`DictionaryFormat`] to recognise and open its files, and the opened file
 //! answers through [`DictionaryReader`].
 
+use std::fmt;
 use std::path::{Component, Path, PathBuf};
+
+use serde::{Deserialize, Serialize};
 
 /// A dictionary file format the Library can read.
 pub trait DictionaryFormat: Send + Sync {
@@ -13,6 +16,35 @@ pub trait DictionaryFormat: Send + Sync {
 
     /// Opens the Dictionary whose main file is `path`.
     fn open(&self, path: &Path) -> Result<Box<dyn DictionaryReader>, OpenError>;
+
+    /// Opens a Dictionary that may need a registration code, with what the reader
+    /// entered. A format with no such encryption opens it as [`DictionaryFormat::open`].
+    fn open_registered(
+        &self,
+        path: &Path,
+        registration: &Registration,
+    ) -> Result<Box<dyn DictionaryReader>, OpenError> {
+        let _ = registration;
+        self.open(path)
+    }
+}
+
+/// What the reader entered to unlock a Dictionary sold with a registration code.
+///
+/// Its `Debug` output shows neither field, so it is safe to log.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Registration {
+    /// The e-mail address (or device ID) the Dictionary was registered to.
+    pub email: String,
+    /// The registration code; empty when the Dictionary carries its own (in its header,
+    /// or for MDict in a `name.key` file beside it).
+    pub code: String,
+}
+
+impl fmt::Debug for Registration {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Registration").finish_non_exhaustive()
+    }
 }
 
 /// An open Dictionary, as a format presents it to the core.
@@ -73,6 +105,9 @@ pub enum OpenError {
     /// code or e-mail.
     #[error("it needs a registration code")]
     NeedsRegistrationCode,
+    /// The registration code or e-mail kept for this Dictionary does not unlock it.
+    #[error("its registration code or e-mail does not unlock it")]
+    WrongRegistrationCode,
     /// The file uses a feature OpenDict does not read yet.
     #[error("it uses {0}, which OpenDict cannot read yet")]
     Unsupported(String),
@@ -90,11 +125,31 @@ impl DictionaryFormat for MdictFormat {
 
     fn open(&self, path: &Path) -> Result<Box<dyn DictionaryReader>, OpenError> {
         let mdx = opendict_mdict::Mdx::open(path).map_err(open_error)?;
-        Ok(Box::new(MdictReader {
-            mdx,
-            resource_files: open_resource_files(path),
-            folder: path.parent().map(Path::to_owned).unwrap_or_default(),
-        }))
+        Ok(Box::new(MdictReader::new(mdx, path, None)))
+    }
+
+    fn open_registered(
+        &self,
+        path: &Path,
+        registration: &Registration,
+    ) -> Result<Box<dyn DictionaryReader>, OpenError> {
+        // With no code entered, use the one in `name.key` beside the file, if there is
+        // one; failing that, the parser looks in the file's header.
+        let entered = registration.code.trim();
+        let code = match entered {
+            "" => std::fs::read_to_string(path.with_extension("key"))
+                .ok()
+                .map(|text| text.trim().to_owned()),
+            code => Some(code.to_owned()),
+        };
+        let unlock = match code {
+            // A code that is not 32 hex digits cannot be the right one.
+            Some(code) => opendict_mdict::Registration::new(&registration.email, &code)
+                .ok_or(OpenError::WrongRegistrationCode)?,
+            None => opendict_mdict::Registration::without_code(&registration.email),
+        };
+        let mdx = opendict_mdict::Mdx::open_registered(path, &unlock).map_err(open_error)?;
+        Ok(Box::new(MdictReader::new(mdx, path, Some(&unlock))))
     }
 }
 
@@ -104,6 +159,22 @@ struct MdictReader {
     resource_files: Vec<opendict_mdict::Mdd>,
     /// The folder the MDX is in; stylesheets and scripts beside it belong to the Dictionary.
     folder: PathBuf,
+}
+
+impl MdictReader {
+    /// The reader for the MDX at `path`, with its MDD files; those of a Dictionary that
+    /// needs a registration code open with the same registration.
+    fn new(
+        mdx: opendict_mdict::Mdx,
+        path: &Path,
+        registration: Option<&opendict_mdict::Registration>,
+    ) -> MdictReader {
+        MdictReader {
+            mdx,
+            resource_files: open_resource_files(path, registration),
+            folder: path.parent().map(Path::to_owned).unwrap_or_default(),
+        }
+    }
 }
 
 impl DictionaryReader for MdictReader {
@@ -155,7 +226,10 @@ impl DictionaryReader for MdictReader {
 
 /// The MDD files that go with the MDX at `path`. One that cannot be read is skipped: the
 /// Entries still open, without its resources.
-fn open_resource_files(path: &Path) -> Vec<opendict_mdict::Mdd> {
+fn open_resource_files(
+    path: &Path,
+    registration: Option<&opendict_mdict::Registration>,
+) -> Vec<opendict_mdict::Mdd> {
     let Some(stem) = path.file_stem().map(|s| s.to_string_lossy().into_owned()) else {
         return Vec::new();
     };
@@ -164,7 +238,12 @@ fn open_resource_files(path: &Path) -> Vec<opendict_mdict::Mdd> {
     names
         .map(|name| path.with_file_name(name))
         .take_while(|candidate| candidate.is_file())
-        .filter_map(|candidate| opendict_mdict::Mdd::open(candidate).ok())
+        .filter_map(|candidate| match registration {
+            Some(registration) => {
+                opendict_mdict::Mdd::open_registered(candidate, registration).ok()
+            }
+            None => opendict_mdict::Mdd::open(candidate).ok(),
+        })
         .collect()
 }
 
@@ -204,6 +283,7 @@ fn open_error(error: opendict_mdict::Error) -> OpenError {
         Error::UnsupportedVersion(version) => OpenError::UnsupportedVersion(version),
         Error::Corrupt(_) => OpenError::Damaged,
         Error::Encrypted => OpenError::NeedsRegistrationCode,
+        Error::WrongRegistration => OpenError::WrongRegistrationCode,
         Error::Unsupported(feature) => OpenError::Unsupported(feature),
         other => OpenError::Unsupported(other.to_string()),
     }
