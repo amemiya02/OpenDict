@@ -267,15 +267,15 @@ test("a Dictionary that needs a registration code opens once the reader enters i
   assert.match(await failure.innerText(), /needs its registration code/);
 
   await failure.getByRole("button", { name: /^Enter the registration code for / }).click();
-  await page.getByLabel("E-mail").fill("reader@example.com");
-  await page.getByLabel("Registration code").fill("FEDCBA9876543210FEDCBA9876543210");
+  await page.getByLabel("E-mail", { exact: true }).fill("reader@example.com");
+  await page.getByLabel("Registration code", { exact: true }).fill("FEDCBA9876543210FEDCBA9876543210");
   await page.getByRole("button", { name: "Unlock" }).click();
   await page.getByRole("alert").filter({ hasText: "do not unlock the dictionary" }).waitFor({ timeout: 10_000 });
   if (process.env.OPENDICT_E2E_SCREENSHOT) {
     await page.screenshot({ path: process.env.OPENDICT_E2E_SCREENSHOT.replace(/\.png$/, "-registration.png") });
   }
 
-  await page.getByLabel("Registration code").fill("0123 4567 89AB CDEF 0123 4567 89AB CDEF");
+  await page.getByLabel("Registration code", { exact: true }).fill("0123 4567 89AB CDEF 0123 4567 89AB CDEF");
   await page.getByRole("button", { name: "Unlock" }).click();
   await page.getByRole("rowheader", { name: /Sample Bought Dictionary/ }).waitFor({ timeout: 10_000 });
 

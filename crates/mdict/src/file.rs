@@ -255,34 +255,63 @@ fn read_key_section(
         Version::V1 => None,
         Version::V2 => Some(reader.u32_be()?),
     };
-    let head = match header_keys {
-        None => {
-            if checksum.is_some_and(|checksum| adler32(stored) != checksum) {
-                return Err(Error::Corrupt(
-                    "the key section header checksum does not match",
-                ));
-            }
-            stored.to_vec()
+    let Some(keys) = header_keys else {
+        if checksum.is_some_and(|checksum| adler32(stored) != checksum) {
+            return Err(Error::Corrupt(
+                "the key section header checksum does not match",
+            ));
         }
-        // `Encrypted="1"`: the dictionary key is the one that decrypts the header into
-        // one that checks out. Version 2 headers carry a checksum of the clear text;
-        // version 1 headers have none, so their sizes must at least fit in the file.
-        Some(keys) => {
-            let room = reader.remaining();
-            keys.iter()
-                .map(|key| {
-                    let mut head = stored.to_vec();
-                    salsa::apply_keystream(key, salsa::MDICT_ROUNDS, &mut head);
-                    head
-                })
-                .find(|head| match checksum {
-                    Some(checksum) => adler32(head) == checksum,
-                    None => plausible_v1_head(head, room),
-                })
-                .ok_or(Error::WrongRegistration)?
-        }
+        return read_key_index_and_blocks(reader, version, encoding, encrypted_index, stored);
     };
-    let mut head = Reader::new(&head);
+
+    // `Encrypted="1"`: the dictionary key is the one that decrypts the header into one
+    // that checks out.
+    let room = reader.remaining();
+    let mut heads = keys.iter().map(|key| {
+        let mut head = stored.to_vec();
+        salsa::apply_keystream(key, salsa::MDICT_ROUNDS, &mut head);
+        head
+    });
+    match checksum {
+        // Version 2 headers carry a checksum of the clear text, which settles it; damage
+        // found after that is damage, not a wrong code.
+        Some(checksum) => {
+            let head = heads
+                .find(|head| adler32(head) == checksum)
+                .ok_or(Error::WrongRegistration)?;
+            read_key_index_and_blocks(reader, version, encoding, encrypted_index, &head)
+        }
+        // Version 1 headers have none. A wrong key occasionally gives sizes that fit in
+        // the file, so each plausible key is tried through the whole key section.
+        None => {
+            for head in heads.filter(|head| plausible_v1_head(head, room)) {
+                let mut attempt = reader.clone();
+                if let Ok(keys) = read_key_index_and_blocks(
+                    &mut attempt,
+                    version,
+                    encoding,
+                    encrypted_index,
+                    &head,
+                ) {
+                    *reader = attempt;
+                    return Ok(keys);
+                }
+            }
+            Err(Error::WrongRegistration)
+        }
+    }
+}
+
+/// Reads the key index (key block info) and every key block, given the key section
+/// header in the clear.
+fn read_key_index_and_blocks(
+    reader: &mut Reader<'_>,
+    version: Version,
+    encoding: TextEncoding,
+    encrypted_index: bool,
+    head: &[u8],
+) -> Result<Vec<Key>> {
+    let mut head = Reader::new(head);
     let block_count = version.number(&mut head)?;
     let entry_count = version.number(&mut head)?;
     let info_plain_len = match version {

@@ -241,3 +241,21 @@ fn the_resources_of_a_registered_dictionary_open_with_the_same_registration() {
         Some(&b"\x89PNG sample picture"[..])
     );
 }
+
+#[test]
+fn a_damaged_registrations_file_is_reported_without_quoting_it() {
+    let data = tempfile::tempdir().unwrap();
+    std::fs::write(
+        data.path().join("registrations.json"),
+        format!(r#"{{"bought.mdx": "{EMAIL}""#),
+    )
+    .unwrap();
+
+    let error = Library::load(&data.path().join("library.json"))
+        .err()
+        .expect("a damaged file is reported")
+        .to_string();
+
+    assert!(error.contains("registrations.json"), "{error}");
+    assert!(!error.contains(EMAIL), "{error}");
+}

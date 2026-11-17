@@ -4,6 +4,7 @@ use crate::error::{Error, Result};
 
 /// A cursor over a byte slice. Every read checks bounds, so a damaged or hostile file
 /// produces an error instead of a panic.
+#[derive(Clone)]
 pub(crate) struct Reader<'a> {
     bytes: &'a [u8],
     pos: usize,
