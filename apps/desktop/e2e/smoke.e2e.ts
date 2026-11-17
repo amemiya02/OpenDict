@@ -218,6 +218,11 @@ test("a sound:// link plays the Dictionary's audio, and so do Pronounce and Alt+
   await page.getByRole("heading", { level: 1 }).click();
   await page.keyboard.press("Alt+KeyP");
   assert.equal((await waitForSound(before + 3))[before + 2], expected);
+
+  // With the focus inside the Entry, the frame reports the keys and the window answers them.
+  await frame.locator("body").click({ position: { x: 2, y: 2 } });
+  await page.keyboard.press("Alt+KeyP");
+  assert.equal((await waitForSound(before + 4))[before + 3], expected);
 });
 
 test("an Entry shows the image from its MDD and the stylesheet beside its MDX, and its frame fits it", async () => {
@@ -474,7 +479,7 @@ test("in the dark theme Entries are recoloured unless shown as authored; text si
   await page.waitForFunction((before) => Math.abs(devicePixelRatio / before - 1.1) < 0.02, ratio, { timeout: 5_000 });
 
   // Everything is kept in the reader's preferences.
-  assert.deepEqual(await invoke("appearance"), { theme: "dark", allAsAuthored: false, textSize: 18, zoom: 110 });
+  assert.deepEqual(await invoke("appearance"), { theme: "dark", allAsAuthored: false, textSize: 18, zoom: 110, language: null });
   const entries = await invoke<{ dictionaryTitle: string; asAuthored: boolean }[]>("look_up", { headword: "serendipity" });
   assert.equal(entries.find((e) => e.dictionaryTitle === "Sample English Dictionary")?.asAuthored, true);
 
@@ -489,7 +494,7 @@ test("in the dark theme Entries are recoloured unless shown as authored; text si
   await page.waitForFunction(() => document.documentElement.dataset.theme === "light");
   if (process.env.OPENDICT_E2E_SCREENSHOT) await page.screenshot({ path: process.env.OPENDICT_E2E_SCREENSHOT.replace(/\.png$/, "-reading-light.png") });
   await reading.getByRole("radio", { name: "Follow system" }).check();
-  assert.deepEqual(await invoke("appearance"), { theme: "system", allAsAuthored: false, textSize: 16, zoom: 100 });
+  assert.deepEqual(await invoke("appearance"), { theme: "system", allAsAuthored: false, textSize: 16, zoom: 100, language: null });
   await lookUp("serendipity"); // back on the page
 });
 
@@ -666,6 +671,56 @@ test("the window has the system's own title bar controls, Mica on Windows 11, an
 });
 
 // Runs last: unlocking adds a Dictionary, and with it a headword, to the Library.
+test("the command palette switches the theme and the interface language; shortcuts work inside an Entry", async () => {
+  const palette = page.getByRole("dialog", { name: "Command palette" });
+  const run = async (label: string) => {
+    await page.keyboard.press("Control+k");
+    await palette.waitFor({ timeout: 5_000 });
+    await palette.getByRole("combobox").fill(label);
+    await palette.getByRole("option", { name: label, exact: false }).first().waitFor({ timeout: 5_000 });
+    await palette.getByRole("combobox").press("Enter");
+    await palette.waitFor({ state: "hidden", timeout: 5_000 });
+  };
+  await lookUp("thumb");
+
+  await run("Theme: dark");
+  await page.waitForFunction(() => document.documentElement.dataset.theme === "dark", null, { timeout: 5_000 });
+  await page.keyboard.press("Control+k");
+  const dark = palette.getByRole("option", { name: "Theme: dark" });
+  assert.equal(await dark.getAttribute("aria-checked"), "true", "the palette ticks the theme");
+  assert.equal(await palette.getByRole("option", { name: "Interface language: English" }).getAttribute("aria-checked"), "true");
+  if (process.env.OPENDICT_E2E_PALETTE_SCREENSHOT) await page.screenshot({ path: process.env.OPENDICT_E2E_PALETTE_SCREENSHOT });
+  await page.keyboard.press("Escape");
+  await palette.waitFor({ state: "hidden", timeout: 5_000 });
+  await run("Theme: follow system");
+  await page.waitForFunction(() => document.documentElement.dataset.theme !== "dark" || matchMedia("(prefers-color-scheme: dark)").matches);
+
+  // The interface language switches at once, the page staying as it was.
+  await run("Interface language: 日本語");
+  await page.getByRole("combobox", { name: "調べたい語を入力" }).waitFor({ timeout: 5_000 });
+  assert.equal(await page.evaluate(() => document.documentElement.lang), "ja");
+  await page.getByRole("heading", { level: 1, name: "【thumb】" }).waitFor({ timeout: 5_000 });
+  await run("表示言語：English");
+  await page.getByRole("combobox", { name: "Type a word" }).waitFor({ timeout: 5_000 });
+
+  // `/` focuses the search field from anywhere.
+  await page.getByRole("heading", { level: 1 }).click();
+  await page.keyboard.press("/");
+  assert.equal(await page.evaluate(() => document.activeElement?.getAttribute("role")), "combobox");
+
+  // Keys pressed with the focus inside an Entry reach the window: Alt+2 jumps, Ctrl+K opens the palette.
+  const frame = await entryFrame("Sample English Dictionary");
+  await frame.locator("body").click({ position: { x: 2, y: 2 } });
+  await page.keyboard.press("Alt+2");
+  const rail = page.getByRole("navigation", { name: "Jump to dictionary" });
+  await rail.getByRole("link", { name: "Sample Illustrated Dictionary", exact: false }).and(rail.locator('[aria-current="true"]')).waitFor({ timeout: 5_000 });
+  await frame.locator("body").click({ position: { x: 2, y: 2 } });
+  await page.keyboard.press("Control+k");
+  await palette.waitFor({ timeout: 5_000 });
+  await page.keyboard.press("Escape");
+  await palette.waitFor({ state: "hidden", timeout: 5_000 });
+});
+
 test("a Dictionary that needs a registration code opens once the reader enters it", async () => {
   const page = browser!.contexts()[0]!.pages()[0]!;
   await page.getByRole("button", { name: "Library", exact: true }).click();
