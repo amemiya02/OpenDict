@@ -2,3 +2,4 @@
 //! shortcut over whatever application the reader is in.
 
 pub mod placement;
+pub mod settings;
