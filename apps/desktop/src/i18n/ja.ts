@@ -43,6 +43,7 @@ export const ja = {
   libraryActionFailed: (reason: string) => `うまくいきませんでした：${reason}`,
   startHint: "見出し語を入力して Enter を押してください。",
   lookupFailed: (reason: string) => `検索に失敗しました：${reason}`,
+  pronounce: "発音",
   allowNetwork: "ネットワークへのアクセスを許可",
   networkAllowed: "この辞書はネットワークを使えます。クリックで遮断します。",
   networkBlocked: "この辞書はネットワークから遮断されています。クリックで許可します。",

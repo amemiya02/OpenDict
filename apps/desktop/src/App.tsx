@@ -4,6 +4,8 @@ import { EmptyLibrary, LibraryPage, OutlineButton, type LibraryActions } from ".
 import { SearchField } from "./components/SearchField";
 import { UpdateNotice } from "./components/UpdateNotice";
 import { useI18n } from "./i18n";
+import { soundUrl } from "./lib/entryLinks";
+import { playSound } from "./lib/sound";
 import {
   addLibraryFolder,
   getLibrary,
@@ -105,7 +107,7 @@ export function App() {
         {view === "library" && library ? (
           <LibraryPage library={library} busy={busy} notice={notice} actions={actions} />
         ) : (
-          <PageContent page={page} library={library} busy={busy} notice={notice} onAddFolder={actions.addFolder} />
+          <PageContent page={page} library={library} busy={busy} notice={notice} onAddFolder={actions.addFolder} onLookUp={runLookup} />
         )}
       </main>
 
@@ -123,17 +125,19 @@ function PageContent({
   busy,
   notice,
   onAddFolder,
+  onLookUp,
 }: {
   page: PageState;
   library: Library | null;
   busy: boolean;
   notice: string | null;
   onAddFolder: () => void;
+  onLookUp: (headword: string) => void;
 }) {
   const { t } = useI18n();
   switch (page.kind) {
     case "found":
-      return <EntryPage key={page.headword} headword={page.headword} entries={page.entries} />;
+      return <EntryPage key={page.headword} headword={page.headword} entries={page.entries} onLookUp={onLookUp} />;
     case "missing":
       return <Lead>{t.notFound(page.query)}</Lead>;
     case "failed":
@@ -160,10 +164,37 @@ function PageContent({
   }
 }
 
-/** The page head and one section per answering Dictionary. */
-function EntryPage({ headword, entries: initial }: { headword: string; entries: Entry[] }) {
+/**
+ * The page head and one section per answering Dictionary. An `entry://` link in any Entry
+ * looks its headword up; a `sound://` link plays from its own Dictionary.
+ */
+function EntryPage({
+  headword,
+  entries: initial,
+  onLookUp,
+}: {
+  headword: string;
+  entries: Entry[];
+  onLookUp: (headword: string) => void;
+}) {
   const { t } = useI18n();
   const [entries, setEntries] = useState(initial);
+  const pronunciation = firstPronunciation(entries);
+
+  // Alt+P: the Pronounce action, wherever focus is in the app (not inside an Entry frame,
+  // whose keys stay its own).
+  useEffect(() => {
+    if (pronunciation === null) return;
+    const url = pronunciation;
+    function onKeyDown(event: KeyboardEvent) {
+      if (!event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
+      if (event.code !== "KeyP" && event.key.toLowerCase() !== "p") return;
+      event.preventDefault();
+      playSound(url);
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [pronunciation]);
 
   async function toggleNetwork(entry: Entry) {
     const allow = !entry.allowNetwork;
@@ -180,6 +211,11 @@ function EntryPage({ headword, entries: initial }: { headword: string; entries: 
       <div className="flex flex-wrap items-baseline gap-x-md gap-y-xs border-b-[3px] border-double border-rule pb-2.5">
         <h1 className="-ml-3.5 font-serif text-display font-bold [overflow-wrap:anywhere]">【{headword}】</h1>
         <span className="text-[12px] text-text-secondary">{t.answered(entries.length)}</span>
+        {pronunciation !== null && (
+          <div className="ml-auto flex gap-1.5 self-center">
+            <PronounceButton onClick={() => playSound(pronunciation)} />
+          </div>
+        )}
       </div>
       {entries.map((entry) => (
         <section key={entry.dictionaryId} aria-label={entry.dictionaryTitle} className="border-rule [&+&]:border-t">
@@ -188,10 +224,46 @@ function EntryPage({ headword, entries: initial }: { headword: string; entries: 
             <NetworkSwitch allowed={entry.allowNetwork} onToggle={() => void toggleNetwork(entry)} />
           </div>
           {/* A new frame when the switch changes, so the document reloads under its new policy. */}
-          <EntryFrame key={String(entry.allowNetwork)} dictionaryTitle={entry.dictionaryTitle} src={entry.src} />
+          <EntryFrame
+            key={String(entry.allowNetwork)}
+            dictionaryTitle={entry.dictionaryTitle}
+            src={entry.src}
+            onLink={onLookUp}
+            onSound={playSound}
+          />
         </section>
       ))}
     </article>
+  );
+}
+
+/** The URL of the first audio the Entries offer, in page order, or null. */
+function firstPronunciation(entries: Entry[]): string | null {
+  for (const entry of entries) {
+    const url = entry.pronunciation ? soundUrl(entry.src, entry.pronunciation) : null;
+    if (url !== null) return url;
+  }
+  return null;
+}
+
+function PronounceButton({ onClick }: { onClick: () => void }) {
+  const { t } = useI18n();
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-keyshortcuts="Alt+P"
+      className="flex h-7 items-center gap-1.5 rounded-sharp border border-rule px-2.5 text-body text-text hover:bg-shade active:translate-y-px"
+    >
+      <svg className="size-4 fill-none stroke-current stroke-[1.2]" viewBox="0 0 16 16" aria-hidden="true">
+        <path d="M2.5 6v4H5l3.5 3V3L5 6z" />
+        <path d="M11 5.5a3.5 3.5 0 0 1 0 5" />
+      </svg>
+      <span>{t.pronounce}</span>
+      <kbd aria-hidden="true" className="font-sans text-[11px] text-text-secondary max-[620px]:hidden">
+        Alt P
+      </kbd>
+    </button>
   );
 }
 

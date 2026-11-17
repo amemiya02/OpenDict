@@ -11,6 +11,8 @@ export interface Entry {
   src: string;
   /** Whether the reader allowed this Dictionary network access. */
   allowNetwork: boolean;
+  /** The first audio the Entry offers (the path of its first `sound://` link), for Pronounce. */
+  pronunciation: string | null;
 }
 
 export interface LibraryFolder {
