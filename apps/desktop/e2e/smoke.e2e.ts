@@ -18,7 +18,8 @@ import { chromium, type Browser } from "playwright-core";
 const repo = resolve(import.meta.dirname, "../../..");
 const targetDir = process.env.CARGO_TARGET_DIR ?? join(repo, "target");
 const appPath = process.env.OPENDICT_APP ?? join(targetDir, "debug", process.platform === "win32" ? "opendict-desktop.exe" : "opendict-desktop");
-const port = 9333;
+// Override with OPENDICT_E2E_PORT when several worktrees run the test at once.
+const port = Number(process.env.OPENDICT_E2E_PORT ?? 9333);
 
 let app: ChildProcess | undefined;
 let browser: Browser | undefined;
@@ -70,7 +71,7 @@ test("typing a headword shows its Entry in a sandboxed frame", async () => {
 
   // The status line fills in once the Library has been opened.
   await page.waitForFunction(() => Boolean(document.querySelector("footer")?.textContent?.trim()), null, { timeout: 30_000 });
-  const search = page.getByRole("searchbox");
+  const search = page.getByRole("combobox", { name: "Type a word" });
   await search.fill("serendipity");
   await search.press("Enter");
 
@@ -130,7 +131,7 @@ test("the Library view lists the Dictionaries, and a disabled one stops answerin
   await page.getByRole("button", { name: "Move up: サンプル国語辞典" }).click();
   await page.waitForFunction(() => document.querySelector("tbody th")?.textContent?.includes("サンプル国語辞典"), null, { timeout: 10_000 });
 
-  const search = page.getByRole("searchbox");
+  const search = page.getByRole("combobox", { name: "Type a word" });
   await search.fill("serendipity");
   await search.press("Enter");
   await page.getByText("Nothing found for “serendipity”.").waitFor({ timeout: 10_000 });
@@ -141,4 +142,33 @@ test("the Library view lists the Dictionaries, and a disabled one stops answerin
   await search.fill("serendipity");
   await search.press("Enter");
   await page.locator("iframe").waitFor({ timeout: 10_000 });
+});
+
+test("the headword column suggests as the reader types and the keyboard browses it", async () => {
+  const page = browser!.contexts()[0]!.pages()[0]!;
+  const search = page.getByRole("combobox", { name: "Type a word" });
+  const column = page.getByRole("listbox", { name: "Headwords" });
+  const heading = page.getByRole("heading", { level: 1 });
+
+  // An empty field shows the headword index to browse, guide words above it.
+  await search.click();
+  await search.fill("");
+  await column.getByRole("option").first().waitFor({ timeout: 10_000 });
+  const index = await column.getByRole("option").evaluateAll((options) => options.map((o) => (o as HTMLElement).dataset.headword));
+  assert.deepEqual(index, ["apple", "apples", "serendipity", "食べる"]);
+  assert.equal((await page.getByTestId("guide-words").innerText()).replace(/\s+/g, " "), "apple 食べる");
+
+  // Typing suggests by prefix, shows the first match at once, and the column carries on.
+  await search.pressSequentially("app");
+  await column.getByRole("option", { name: "apple, in 1 dictionary", selected: true }).waitFor({ timeout: 10_000 });
+  await page.waitForFunction(() => document.querySelector("h1")?.textContent === "【apple】", null, { timeout: 10_000 });
+
+  await search.press("ArrowDown");
+  await page.waitForFunction(() => document.querySelector("h1")?.textContent === "【apples】", null, { timeout: 10_000 });
+  await search.press("ArrowDown");
+  await search.press("Enter");
+  await page.waitForFunction(() => document.querySelector("h1")?.textContent === "【serendipity】", null, { timeout: 10_000 });
+  assert.equal(await search.inputValue(), "serendipity");
+  assert.equal(await heading.count(), 1);
+  if (process.env.OPENDICT_E2E_COLUMN_SCREENSHOT) await page.screenshot({ path: process.env.OPENDICT_E2E_COLUMN_SCREENSHOT });
 });
