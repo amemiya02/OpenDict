@@ -18,13 +18,21 @@ const answers: Record<string, ReturnType<typeof entry>[]> = {
 
 let lookedUp: string[];
 let played: string[];
+let recorded: string[];
 
 beforeEach(() => {
   lookedUp = [];
   played = [];
+  recorded = [];
   mockIPC((command, args) => {
     if (command === "library")
-      return { folders: [], dictionaries: [{ id: "q", title: "Quiet", path: "/q.mdx", entryCount: 2, size: 1, enabled: true }], failures: [], problem: null };
+      return {
+        folders: [],
+        dictionaries: [{ id: "q", title: "Quiet", path: "/q.mdx", entryCount: 2, size: 1, enabled: true, index: { state: "ready" } }],
+        failures: [],
+        indexing: null,
+        problem: null,
+      };
     if (command === "look_up") {
       const { headword } = args as { headword: string };
       lookedUp.push(headword);
@@ -38,8 +46,13 @@ beforeEach(() => {
       return { items, lemma: null, near: false, miss: items.length === 0, browse: !query };
     }
     if (command === "headwords_after") return [];
+    if (command === "history") return [];
+    if (command === "record_lookup") {
+      recorded.push((args as { headword: string }).headword);
+      return [...recorded].reverse();
+    }
     throw new Error(`unexpected command ${command}`);
-  });
+  }, { shouldMockEvents: true });
   vi.spyOn(HTMLMediaElement.prototype, "play").mockImplementation(function (this: HTMLMediaElement) {
     played.push(this.src);
     return Promise.resolve();
@@ -89,6 +102,21 @@ describe("links inside Entries", () => {
     expect(await screen.findByRole("heading", { level: 1, name: "【serendipitous】" })).toBeTruthy();
     expect(lookedUp).toEqual(["serendipitous"]);
     expect(screen.getByRole<HTMLInputElement>("combobox", { name: "Type a word" }).value).toBe("serendipitous");
+  });
+
+  it("a followed entry:// link goes into History and is a step for Back and Forward", async () => {
+    await lookUpSerendipity();
+
+    post({ opendict: "link", href: "entry://serendipitous" }, clickInto("Quiet"));
+    await screen.findByRole("heading", { level: 1, name: "【serendipitous】" });
+
+    await vi.waitFor(() => expect(recorded).toEqual(["serendipity", "serendipitous"]));
+    await userEvent.click(screen.getByRole("button", { name: "Back" }));
+    expect(await screen.findByRole("heading", { level: 1, name: "【serendipity】" })).toBeTruthy();
+    await userEvent.click(screen.getByRole("button", { name: "Forward" }));
+    expect(await screen.findByRole("heading", { level: 1, name: "【serendipitous】" })).toBeTruthy();
+    // Retracing steps does not record them again.
+    expect(recorded).toEqual(["serendipity", "serendipitous"]);
   });
 
   it("ignores link messages that are not a frame's own, or are not links", async () => {

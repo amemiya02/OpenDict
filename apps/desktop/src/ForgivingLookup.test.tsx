@@ -26,8 +26,9 @@ function fakeShell(answers: Record<string, Suggestions>) {
       case "library":
         return {
           folders: [{ path: "/library", dictionaryCount: 1, problem: null }],
-          dictionaries: [{ id: "a", title: "A", path: "/library/a.mdx", entryCount: 3, size: 1, enabled: true }],
+          dictionaries: [{ id: "a", title: "A", path: "/library/a.mdx", entryCount: 3, size: 1, enabled: true, index: { state: "ready" } }],
           failures: [],
+          indexing: null,
           problem: null,
         };
       case "suggest":
@@ -39,7 +40,7 @@ function fakeShell(answers: Record<string, Suggestions>) {
       default:
         throw new Error(`unexpected command ${command}`);
     }
-  });
+  }, { shouldMockEvents: true });
   return calls;
 }
 

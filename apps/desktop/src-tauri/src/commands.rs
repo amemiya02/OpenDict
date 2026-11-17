@@ -134,6 +134,24 @@ pub async fn move_dictionary(
     state.move_dictionary(&id, direction)
 }
 
+/// The headwords of committed Lookups, newest first.
+#[tauri::command]
+pub fn history(state: State<'_, AppState>) -> Result<Vec<String>, String> {
+    state.history()
+}
+
+/// Records a committed Lookup (Enter, a click, a followed link); returns History as it
+/// is afterwards.
+#[tauri::command]
+pub fn record_lookup(state: State<'_, AppState>, headword: String) -> Result<Vec<String>, String> {
+    state.record_lookup(&headword)
+}
+
+#[tauri::command]
+pub fn clear_history(state: State<'_, AppState>) -> Result<(), String> {
+    state.clear_history()
+}
+
 #[tauri::command]
 pub fn set_allow_network(
     state: State<'_, AppState>,

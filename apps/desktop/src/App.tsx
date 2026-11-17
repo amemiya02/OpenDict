@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { EntryFrame } from "./components/EntryFrame";
-import { HeadwordColumn, optionId } from "./components/HeadwordColumn";
+import { HeadwordColumn, optionId, type ColumnList } from "./components/HeadwordColumn";
+import { NavButtons } from "./components/NavButtons";
+import { RecentLookups } from "./components/RecentLookups";
 import { sectionId, ThumbIndex } from "./components/ThumbIndex";
 import { EmptyLibrary, LibraryPage, OutlineButton, type LibraryActions } from "./components/LibraryPage";
 import { SearchField } from "./components/SearchField";
@@ -11,10 +13,13 @@ import { playSound } from "./lib/sound";
 import {
   addLibraryFolder,
   cancelIndexing,
+  clearHistory,
+  getHistory,
   getLibrary,
   indexLibrary,
   lookUp,
   moveDictionary,
+  recordLookup,
   registerDictionary,
   onLibraryChanged,
   removeLibraryFolder,
@@ -26,6 +31,7 @@ import {
   type RegisterError,
   type Suggestion,
 } from "./lib/ipc";
+import { canStep, emptyTrail, step, visit } from "./lib/trail";
 import { useHeadwordColumn } from "./lib/useHeadwordColumn";
 import { wildcardHint } from "./lib/wildcard";
 
@@ -47,6 +53,13 @@ export function App() {
   const [library, setLibrary] = useState<Library | null>(null);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
+  /** Committed Lookups, newest first. */
+  const [history, setHistory] = useState<string[]>([]);
+  const [list, setList] = useState<ColumnList>("suggestions");
+  /** The words visited in this window, for Back and Forward. */
+  const [trail, setTrail] = useState(emptyTrail);
+  /** Where the word on the page stands in History, or -1. */
+  const historySelected = page.kind === "found" ? history.indexOf(page.headword) : -1;
   const pageRef = useRef<HTMLElement>(null);
   const column = useHeadwordColumn();
   const { refresh } = column;
@@ -80,6 +93,10 @@ export function App() {
     };
   }, [refresh]);
 
+  useEffect(() => {
+    getHistory().then((words) => setHistory(asWords(words)), () => {});
+  }, []);
+
   // Moving between the page and the Library puts the reader at the top of the new view.
   useEffect(() => {
     pageRef.current?.scrollTo?.({ top: 0 });
@@ -91,14 +108,18 @@ export function App() {
     setPage(next);
   }
 
-  /** Puts `headword`'s Entries on the page. */
-  async function show(headword: string) {
+  /**
+   * Puts `headword`'s Entries on the page. `onFound` runs in the same update as the page
+   * when a Dictionary had the word, so nothing sees the page without it.
+   */
+  async function show(headword: string, onFound?: () => void) {
     const ticket = ++pageRequests.current;
     setView("lookup");
     try {
       const entries = await lookUp(headword);
       if (ticket !== pageRequests.current) return;
       setPage(entries.length > 0 ? { kind: "found", headword, entries } : { kind: "missing", query: headword, next: [] });
+      if (entries.length > 0) onFound?.();
     } catch (error) {
       if (ticket === pageRequests.current) setPage({ kind: "failed", reason: String(error) });
     }
@@ -106,6 +127,7 @@ export function App() {
 
   /** The reader's query changed: new suggestions, and the first match on the page at once. */
   async function changeQuery(text: string) {
+    setList("suggestions");
     try {
       const answer = await column.refresh(text);
       if (!answer) return;
@@ -123,6 +145,14 @@ export function App() {
   }
 
   async function move(by: number) {
+    if (list === "history") {
+      if (history.length === 0) return;
+      const next = historySelected < 0 ? (by > 0 ? 0 : history.length - 1) : historySelected + by;
+      const headword = history[Math.max(0, Math.min(next, history.length - 1))]!;
+      type(headword);
+      void show(headword);
+      return;
+    }
     const headword = await column.move(by).catch(() => null);
     if (headword) void show(headword);
   }
@@ -132,15 +162,22 @@ export function App() {
     setQuery(text);
   }
 
-  /** The reader chose a word: it goes into the search field and onto the page. */
-  function commit(headword: string) {
+  /**
+   * The reader chose a word (Enter, a click, a followed link): it goes into the search
+   * field and onto the page. A word that was found is recorded in History and becomes
+   * the latest step for Back and Forward.
+   */
+  async function commit(headword: string) {
     type(headword);
-    void show(headword);
+    await show(headword, () => {
+      setTrail((now) => visit(now, headword));
+      recordLookup(headword).then((words) => setHistory(asWords(words)), () => {});
+    });
   }
 
   /** An `entry://` link in an Entry: the linked headword, as if the reader had typed and chosen it. */
   function followLink(headword: string) {
-    commit(headword);
+    void commit(headword);
     column.refresh(headword).catch(() => {});
   }
 
@@ -152,13 +189,48 @@ export function App() {
 
   function commitCurrent() {
     const { items, selected } = column.state;
-    const headword = items[selected]?.headword ?? query.trim();
-    if (headword) commit(headword);
+    const current = list === "history" ? history[historySelected] : items[selected]?.headword;
+    const headword = current ?? query.trim();
+    if (headword) void commit(headword);
   }
 
   function pick(index: number) {
-    const headword = column.select(index);
-    if (headword) commit(headword);
+    const headword = list === "history" ? history[index] : column.select(index);
+    if (headword) void commit(headword);
+  }
+
+  /** Back (-1) or Forward (1) through the words visited. Retracing is not a new Lookup. */
+  function go(by: -1 | 1) {
+    const next = step(trail, by);
+    if (!next) return;
+    setTrail(next.trail);
+    type(next.word);
+    column.refresh(next.word).catch(() => {});
+    void show(next.word);
+  }
+
+  // Alt+← and Alt+→ work wherever the focus is in the window (but not inside an Entry
+  // frame, which is another document).
+  const goRef = useRef(go);
+  useEffect(() => {
+    goRef.current = go;
+  });
+  useEffect(() => {
+    function onKeyDown(event: KeyboardEvent) {
+      if (!event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
+      if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+      event.preventDefault();
+      goRef.current(event.key === "ArrowLeft" ? -1 : 1);
+    }
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, []);
+
+  function forgetHistory() {
+    clearHistory().then(
+      () => setHistory([]),
+      () => {}, // History stays as it was: nothing was cleared
+    );
   }
 
   /** Runs one Library command; the shell answers with the Library as it now is. */
@@ -220,6 +292,7 @@ export function App() {
   ) : miss && items.length > 0 ? (
     t.missNote
   ) : null;
+  const columnSelected = list === "history" ? historySelected : selected;
 
   return (
     <div className="grid h-full grid-cols-[264px_minmax(0,1fr)] grid-rows-[48px_minmax(0,1fr)_26px] max-[860px]:grid-cols-[200px_minmax(0,1fr)]">
@@ -227,10 +300,11 @@ export function App() {
         <div className="flex w-[264px] flex-none items-center gap-sm pr-3.5 pl-lg max-[860px]:w-[200px]">
           <span className="font-serif text-[17px] font-bold">{t.appName}</span>
         </div>
-        <div className="flex min-w-0 flex-1 pr-lg pl-xl max-[860px]:pl-xs">
+        <NavButtons canGoBack={canStep(trail, -1)} canGoForward={canStep(trail, 1)} onGo={go} />
+        <div className="flex min-w-0 flex-1 pr-lg">
           <SearchField
             value={query}
-            activeOption={view === "lookup" && selected >= 0 ? optionId(selected) : undefined}
+            activeOption={view === "lookup" && columnSelected >= 0 ? optionId(columnSelected) : undefined}
             onChange={type}
             onQuery={(text) => void changeQuery(text)}
             onMove={(by) => void move(by)}
@@ -240,13 +314,24 @@ export function App() {
       </header>
 
       <HeadwordColumn
-        items={items}
-        selected={selected}
-        note={note}
+        items={list === "history" ? history.map((headword) => ({ headword })) : items}
+        selected={columnSelected}
+        note={list === "suggestions" ? note : null}
         view={view}
+        list={list}
         onPick={pick}
-        onNeedMore={() => void column.loadMore().catch(() => {})}
-        onShowSuggestions={() => setView("lookup")}
+        onNeedMore={() => {
+          if (list === "suggestions") void column.loadMore().catch(() => {});
+        }}
+        onShowSuggestions={() => {
+          setList("suggestions");
+          setView("lookup");
+        }}
+        onShowHistory={() => {
+          setList("history");
+          setView("lookup");
+        }}
+        onClearHistory={forgetHistory}
         onToggleLibrary={() => setView(view === "library" ? "lookup" : "library")}
       />
 
@@ -264,6 +349,7 @@ export function App() {
               onAddFolder={actions.addFolder}
               onLookUp={followLink}
               onSearch={search}
+              recent={<RecentLookups words={history} onPick={(word) => void commit(word)} />}
             />
           )}
         </main>
@@ -298,6 +384,7 @@ function PageContent({
   onAddFolder,
   onLookUp,
   onSearch,
+  recent,
 }: {
   page: PageState;
   /** How many Dictionaries the Lookup ran against. */
@@ -308,6 +395,8 @@ function PageContent({
   onAddFolder: () => void;
   onLookUp: (headword: string) => void;
   onSearch: (text: string) => void;
+  /** Recent lookups, offered on the empty page. */
+  recent: ReactNode;
 }) {
   const { t } = useI18n();
   switch (page.kind) {
@@ -343,7 +432,12 @@ function PageContent({
           />
         );
       }
-      return <Lead muted>{t.startHint}</Lead>;
+      return (
+        <>
+          <Lead muted>{t.startHint}</Lead>
+          {recent}
+        </>
+      );
   }
 }
 
@@ -568,4 +662,9 @@ function FoldButton({ open, controls, onToggle }: { open: boolean; controls: str
 
 function Lead({ children, muted = false }: { children: ReactNode; muted?: boolean }) {
   return <p className={`max-w-[860px] py-lg text-[14px] ${muted ? "text-text-secondary" : ""}`}>{children}</p>;
+}
+
+/** History as the shell sent it; anything but a list of words counts as none. */
+function asWords(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((word): word is string => typeof word === "string") : [];
 }

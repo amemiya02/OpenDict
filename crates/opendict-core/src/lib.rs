@@ -6,6 +6,7 @@
 
 mod error;
 mod format;
+mod history;
 mod index;
 mod indexing;
 mod lemma;
@@ -24,6 +25,7 @@ pub use format::{
     DictionaryFormat, DictionaryReader, FormatError, Location, MdictFormat, OpenError, RawRecord,
     Registration,
 };
+pub use history::History;
 pub use index::{HeadwordIndex, IndexError, IndexedHeadword, Start, index_key};
 pub use indexing::{BuiltIndex, IndexJob, IndexOutcome, IndexResult, IndexState};
 pub use lemma::{BaseForm, base_forms};

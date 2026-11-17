@@ -18,6 +18,9 @@
     "allow-index-library",
     "allow-cancel-indexing",
     "allow-set-allow-network",
+    "allow-history",
+    "allow-record-lookup",
+    "allow-clear-history",
     "updater:default",
     "process:allow-restart"
   ]

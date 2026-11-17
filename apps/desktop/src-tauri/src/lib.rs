@@ -12,8 +12,8 @@ pub use state::{AppState, EntryView, LibraryView};
 /// kept in memory only (used by tests and development).
 pub const LIBRARY_FOLDER_ENV: &str = "OPENDICT_LIBRARY_FOLDER";
 
-/// Environment variable that overrides the data directory, where the Library file and
-/// preferences are kept (used by tests and development).
+/// Environment variable that overrides the data directory, where the Library file,
+/// preferences and History are kept (used by tests and development).
 pub const DATA_DIR_ENV: &str = "OPENDICT_DATA_DIR";
 
 pub fn run() {
@@ -60,6 +60,9 @@ pub fn run() {
             commands::index_library,
             commands::cancel_indexing,
             commands::set_allow_network,
+            commands::history,
+            commands::record_lookup,
+            commands::clear_history,
         ])
         .run(tauri::generate_context!())
         .expect("OpenDict failed to start");

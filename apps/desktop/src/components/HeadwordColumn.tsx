@@ -1,6 +1,13 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { useI18n } from "../i18n";
-import type { Suggestion } from "../lib/ipc";
+/** One row: a headword and, for suggestions, how many Dictionaries have it. */
+export interface ColumnItem {
+  headword: string;
+  count?: number;
+}
+
+/** What the column lists: suggestions for what the reader typed, or History. */
+export type ColumnList = "suggestions" | "history";
 
 /** Height of one index row (DESIGN.md: index-row). Guide words are worked out from it. */
 const ROW = 26;
@@ -17,26 +24,33 @@ export const optionId = (index: number) => `headword-${index}`;
  * The headword column: guide words (the first and last headwords in view) over a double
  * rule, an optional note line, the headwords themselves with how many Dictionaries have
  * each, and the column's tabs. The search field drives it from the keyboard; rows can
- * also be clicked.
+ * also be clicked. The History tab lists committed Lookups instead, newest first, with a
+ * way to clear them.
  */
 export function HeadwordColumn({
   items,
   selected,
   note,
   view,
+  list = "suggestions",
   onPick,
   onNeedMore,
   onShowSuggestions,
+  onShowHistory,
+  onClearHistory,
   onToggleLibrary,
 }: {
-  items: Suggestion[];
+  items: ColumnItem[];
   /** The current row, or -1. Nothing in the column is current while the Library is open. */
   selected: number;
   note: ReactNode;
   view: "lookup" | "library";
+  list?: ColumnList;
   onPick: (index: number) => void;
   onNeedMore: () => void;
   onShowSuggestions: () => void;
+  onShowHistory: () => void;
+  onClearHistory: () => void;
   onToggleLibrary: () => void;
 }) {
   const { t } = useI18n();
@@ -85,7 +99,7 @@ export function HeadwordColumn({
   }, [first]);
 
   const lastIndex = items.length - 1;
-  const guide: [Suggestion, Suggestion] | null =
+  const guide: [ColumnItem, ColumnItem] | null =
     items.length > 0
       ? [items[Math.min(inView?.[0] ?? 0, lastIndex)]!, items[Math.min(inView?.[1] ?? lastIndex, lastIndex)]!]
       : null;
@@ -123,7 +137,7 @@ export function HeadwordColumn({
             id={optionId(index)}
             role="option"
             aria-selected={index === current}
-            aria-label={`${item.headword}, ${t.answered(item.count)}`}
+            aria-label={item.count === undefined ? item.headword : `${item.headword}, ${t.answered(item.count)}`}
             data-headword={item.headword}
             lang={KANA.test(item.headword) ? "ja" : undefined}
             onClick={() => onPick(index)}
@@ -131,20 +145,62 @@ export function HeadwordColumn({
           >
             {index === current ? <i className="size-1.5 flex-none bg-here" aria-hidden="true" /> : null}
             <span className="truncate">{item.headword}</span>
-            <small className="ml-auto font-sans text-[11px] font-normal text-text-secondary tabular-nums">{item.count}</small>
+            {item.count === undefined ? null : (
+              <small className="ml-auto font-sans text-[11px] font-normal text-text-secondary tabular-nums">{item.count}</small>
+            )}
           </li>
         ))}
       </ul>
-      {items.length === 0 ? <p className="flex-1 px-lg py-3.5 text-text-secondary">{t.noMatchingHeadwords}</p> : null}
+      {items.length === 0 ? (
+        <p className="flex-1 px-lg py-3.5 text-text-secondary">{list === "history" ? t.noLookupsYet : t.noMatchingHeadwords}</p>
+      ) : null}
+      {list === "history" && view === "lookup" && items.length > 0 ? <ClearHistory onClear={onClearHistory} /> : null}
       <div className="flex border-t border-rule">
-        <ColumnTab pressed={view === "lookup"} onClick={onShowSuggestions}>
+        <ColumnTab pressed={view === "lookup" && list === "suggestions"} onClick={onShowSuggestions}>
           {t.suggestions}
+        </ColumnTab>
+        <ColumnTab pressed={view === "lookup" && list === "history"} onClick={onShowHistory}>
+          {t.history}
         </ColumnTab>
         <ColumnTab pressed={view === "library"} onClick={onToggleLibrary}>
           {t.library}
         </ColumnTab>
       </div>
     </aside>
+  );
+}
+
+/** Clearing History asks once more in place, so one stray click cannot lose it. */
+function ClearHistory({ onClear }: { onClear: () => void }) {
+  const { t } = useI18n();
+  const [asking, setAsking] = useState(false);
+  const button =
+    "h-6.5 flex-none rounded-sharp px-sm text-[12px] text-text-secondary hover:bg-shade hover:text-text";
+  return (
+    <div className="flex min-h-9 items-center justify-end gap-xs border-t border-hair px-sm text-[12px]">
+      {asking ? (
+        <>
+          <span className="mr-auto min-w-0 pl-sm text-text-secondary">{t.clearHistoryQuestion}</span>
+          <button type="button" className={button} onClick={() => setAsking(false)}>
+            {t.keep}
+          </button>
+          <button
+            type="button"
+            className={`${button} border border-rule text-text`}
+            onClick={() => {
+              setAsking(false);
+              onClear();
+            }}
+          >
+            {t.clear}
+          </button>
+        </>
+      ) : (
+        <button type="button" className={button} onClick={() => setAsking(true)}>
+          {t.clearHistory}
+        </button>
+      )}
+    </div>
   );
 }
 

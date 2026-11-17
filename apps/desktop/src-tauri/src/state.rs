@@ -6,15 +6,16 @@ use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 use opendict_core::{
-    Error as CoreError, IndexState, Library, Move, OpenError, Preferences, Registration, Suggestion,
+    Error as CoreError, History, IndexState, Library, Move, OpenError, Preferences, Registration,
+    Suggestion,
 };
 use serde::{Deserialize, Serialize};
 
 use crate::entry_protocol;
 
 /// What the shell holds between commands: the Library (or why it could not be loaded),
-/// the reader's preferences (or why they could not be read), and the indexing that runs
-/// beside them. Cloning shares the same state.
+/// the reader's preferences and History (or why they could not be read), and the
+/// indexing that runs beside them. Cloning shares the same state.
 #[derive(Clone)]
 pub struct AppState {
     inner: Arc<Inner>,
@@ -30,6 +31,7 @@ struct Inner {
     cancel: AtomicBool,
     worker: Mutex<Option<JoinHandle<()>>>,
     preferences: Mutex<Result<Preferences, String>>,
+    history: Mutex<Result<History, String>>,
 }
 
 /// An Entry as the interface receives it. Its HTML never passes through the interface:
@@ -182,7 +184,7 @@ impl AppState {
     /// Loads the Library recorded in `library_file`. With `override_folder` (from the
     /// environment, for tests and development) the Library is that one folder instead,
     /// kept only in memory, so the reader's own Library is never touched. Preferences
-    /// live in `data_dir`.
+    /// and History live in `data_dir`.
     pub fn load(
         library_file: &Path,
         override_folder: Option<PathBuf>,
@@ -193,10 +195,12 @@ impl AppState {
             None => Library::load(library_file),
         };
         let preferences = Preferences::load(&data_dir.join("preferences.json"));
+        let history = History::load(&data_dir.join("history.json"));
         AppState {
             inner: Arc::new(Inner {
                 library: Mutex::new(library.map_err(|error| error.to_string())),
                 preferences: Mutex::new(preferences.map_err(|error| error.to_string())),
+                history: Mutex::new(history.map_err(|error| error.to_string())),
                 indexing: Mutex::new(None),
                 indexing_running: AtomicBool::new(false),
                 cancel: AtomicBool::new(false),
@@ -360,6 +364,29 @@ impl AppState {
                 .map_err(|e| e.to_string()),
             Err(reason) => Err(reason.clone()),
         }
+    }
+
+    /// The headwords of committed Lookups, newest first.
+    pub fn history(&self) -> Result<Vec<String>, String> {
+        let history = self.inner.history.lock().unwrap_or_else(|e| e.into_inner());
+        match history.as_ref() {
+            Ok(h) => Ok(h.headwords().to_vec()),
+            Err(reason) => Err(reason.clone()),
+        }
+    }
+
+    /// Records a committed Lookup of `headword`; returns History as it is afterwards.
+    pub fn record_lookup(&self, headword: &str) -> Result<Vec<String>, String> {
+        let mut history = self.inner.history.lock().unwrap_or_else(|e| e.into_inner());
+        let history = history.as_mut().map_err(|reason| reason.clone())?;
+        history.record(headword).map_err(|e| e.to_string())?;
+        Ok(history.headwords().to_vec())
+    }
+
+    pub fn clear_history(&self) -> Result<(), String> {
+        let mut history = self.inner.history.lock().unwrap_or_else(|e| e.into_inner());
+        let history = history.as_mut().map_err(|reason| reason.clone())?;
+        history.clear().map_err(|e| e.to_string())
     }
 
     pub fn library(&self) -> LibraryView {
@@ -865,6 +892,48 @@ mod tests {
             !data.path().join("indexes").exists(),
             "nor is anything stored beside it"
         );
+    }
+
+    #[test]
+    fn committed_lookups_are_kept_in_history_in_the_data_directory() {
+        let data = tempfile::tempdir().unwrap();
+        let state = AppState::load(&data.path().join("library.json"), None, data.path());
+
+        state.record_lookup("apple").unwrap();
+        let history = state.record_lookup("serendipity").unwrap();
+
+        assert_eq!(history, ["serendipity", "apple"]);
+        let restarted = AppState::load(&data.path().join("library.json"), None, data.path());
+        assert_eq!(restarted.history().unwrap(), ["serendipity", "apple"]);
+        assert!(data.path().join("history.json").exists());
+    }
+
+    #[test]
+    fn history_can_be_cleared() {
+        let data = tempfile::tempdir().unwrap();
+        let state = AppState::load(&data.path().join("library.json"), None, data.path());
+        state.record_lookup("apple").unwrap();
+
+        state.clear_history().unwrap();
+
+        assert!(state.history().unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_damaged_history_is_reported_without_stopping_lookups() {
+        let data = tempfile::tempdir().unwrap();
+        std::fs::write(data.path().join("history.json"), "[ broken").unwrap();
+        let folder = library_folder();
+
+        let state = AppState::load(
+            &data.path().join("library.json"),
+            Some(folder.path().to_owned()),
+            data.path(),
+        );
+
+        assert!(state.history().is_err());
+        assert!(state.record_lookup("serendipity").is_err());
+        assert_eq!(state.look_up("serendipity").unwrap().len(), 1);
     }
 
     #[test]
