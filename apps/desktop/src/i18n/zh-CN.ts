@@ -41,6 +41,11 @@ export const zhCN = {
   emptyLibrary: "还没有词典。",
   emptyLibraryHow: "请添加词库文件夹：放着 MDict 文件（.mdx 及其 .mdd）的文件夹。子文件夹也会扫描，文件留在原处。",
   libraryActionFailed: (reason: string) => `操作没有成功：${reason}`,
-  startHint: "输入词头，按 Enter 查词。",
+  headwordColumn: "词头栏",
+  headwords: "词头",
+  suggestions: "联想",
+  noMatchingHeadwords: "没有匹配的词头",
+  missNote: "没有匹配。词头表里接下来的词：",
+  startHint: "输入词头。↑ ↓ 选词，Enter 查词。",
   lookupFailed: (reason: string) => `查词失败：${reason}`,
 } satisfies Catalogue;

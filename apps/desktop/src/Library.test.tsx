@@ -37,6 +37,9 @@ function fakeShell(initial: Library, { picked = stocked }: { picked?: Library | 
   const calls: { command: string; args: Record<string, unknown> }[] = [];
   mockIPC((command, payload) => {
     const args = (payload ?? {}) as Record<string, unknown>;
+    // The headword column's reads are not Library commands; they are answered, not recorded.
+    if (command === "suggest") return { items: [], lemma: null, near: false, miss: false, browse: true };
+    if (command === "headwords_after") return [];
     calls.push({ command, args });
     switch (command) {
       case "library":

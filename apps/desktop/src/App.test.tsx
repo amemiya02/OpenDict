@@ -21,6 +21,12 @@ function fakeShell() {
         problem: null,
       };
     if (command === "look_up") return (args as { headword: string }).headword === "serendipity" ? [sample] : [];
+    if (command === "suggest") {
+      const query = (args as { query: string }).query.trim();
+      const matches = "serendipity".startsWith(query);
+      return { items: matches ? [{ headword: "serendipity", count: 1 }] : [], lemma: null, near: false, miss: !matches, browse: !query };
+    }
+    if (command === "headwords_after") return [];
     throw new Error(`unexpected command ${command}`);
   });
 }
@@ -34,7 +40,7 @@ describe("main window", () => {
       </I18nProvider>,
     );
 
-    await userEvent.type(screen.getByRole("searchbox", { name: "Type a word" }), "serendipity{Enter}");
+    await userEvent.type(screen.getByRole("combobox", { name: "Type a word" }), "serendipity{Enter}");
 
     const frame = await screen.findByTitle("Entry from Sample Dictionary");
     expect(screen.getByRole("heading", { level: 1 })).toHaveProperty("textContent", "【serendipity】");
@@ -50,7 +56,7 @@ describe("main window", () => {
       </I18nProvider>,
     );
 
-    await userEvent.type(screen.getByRole("searchbox"), "nonexistent{Enter}");
+    await userEvent.type(screen.getByRole("combobox"), "nonexistent{Enter}");
 
     expect(await screen.findByText("「nonexistent」は見つかりませんでした。")).toBeTruthy();
   });

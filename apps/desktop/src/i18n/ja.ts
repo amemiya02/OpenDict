@@ -41,6 +41,11 @@ export const ja = {
   emptyLibrary: "辞書はまだありません。",
   emptyLibraryHow: "ライブラリフォルダを追加してください。MDict ファイル（.mdx と、あれば .mdd）を置いたフォルダです。サブフォルダも含まれ、ファイルは元の場所に置いたままです。",
   libraryActionFailed: (reason: string) => `うまくいきませんでした：${reason}`,
-  startHint: "見出し語を入力して Enter を押してください。",
+  headwordColumn: "見出し語欄",
+  headwords: "見出し語",
+  suggestions: "候補",
+  noMatchingHeadwords: "一致する見出し語がありません",
+  missNote: "一致なし。見出し語一覧の続き：",
+  startHint: "語を入力してください。↑ ↓ で見出し語を選び、Enter で引きます。",
   lookupFailed: (reason: string) => `検索に失敗しました：${reason}`,
 } satisfies Catalogue;
