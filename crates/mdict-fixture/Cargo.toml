@@ -1,0 +1,15 @@
+[package]
+name = "opendict-mdict-fixture"
+version = "0.0.0"
+description = "Writes small MDict files for OpenDict's tests. Test support only; not published."
+license = "MIT OR Apache-2.0"
+publish = false
+edition.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+
+[dependencies]
+flate2.workspace = true
+
+[lints]
+workspace = true
