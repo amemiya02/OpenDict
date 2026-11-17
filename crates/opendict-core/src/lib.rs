@@ -8,6 +8,7 @@ mod format;
 mod index;
 mod library;
 mod normalization;
+mod pattern;
 mod preferences;
 mod scan;
 

@@ -48,8 +48,14 @@ fn full_width_half_width_katakana_and_hiragana_do_not_matter() {
         assert_eq!(headwords(&suggestions.items), ["カフェ"], "query {query}");
         assert!(!suggestions.miss, "query {query}");
     }
-    assert_eq!(headwords(&library.suggest("dvd", 1).unwrap().items), ["ＤＶＤ"]);
-    assert_eq!(headwords(&library.suggest("ｶﾞﾗｽ", 1).unwrap().items), ["ガラス"]);
+    assert_eq!(
+        headwords(&library.suggest("dvd", 1).unwrap().items),
+        ["ＤＶＤ"]
+    );
+    assert_eq!(
+        headwords(&library.suggest("ｶﾞﾗｽ", 1).unwrap().items),
+        ["ガラス"]
+    );
     // The voicing mark is part of the word, not a diacritic.
     assert!(library.suggest("からす", 1).unwrap().miss);
 }
@@ -58,7 +64,75 @@ fn full_width_half_width_katakana_and_hiragana_do_not_matter() {
 fn traditional_and_simplified_characters_do_not_matter() {
     let (_folder, library) = library_of(&["学习", "東京"]);
 
-    assert_eq!(headwords(&library.suggest("學習", 1).unwrap().items), ["学习"]);
-    assert_eq!(headwords(&library.suggest("东京", 1).unwrap().items), ["東京"]);
+    assert_eq!(
+        headwords(&library.suggest("學習", 1).unwrap().items),
+        ["学习"]
+    );
+    assert_eq!(
+        headwords(&library.suggest("东京", 1).unwrap().items),
+        ["東京"]
+    );
     assert!(!library.suggest("學", 1).unwrap().miss);
+}
+
+#[test]
+fn star_stands_for_any_run_of_letters_and_question_mark_for_one() {
+    let (_folder, library) = library_of(&[
+        "glasses", "sea", "seas", "series", "serious", "serves", "settle", "sew",
+    ]);
+
+    let any_run = library.suggest("se*s", 10).unwrap();
+    let one = library.suggest("se?", 10).unwrap();
+
+    // Only the matches: a pattern's column does not carry on through the index.
+    assert_eq!(
+        headwords(&any_run.items),
+        ["seas", "series", "serious", "serves"]
+    );
+    assert!(!any_run.miss && !any_run.near && !any_run.browse);
+    assert_eq!(headwords(&one.items), ["sea", "sew"]);
+    assert_eq!(
+        headwords(&library.suggest("*SES", 10).unwrap().items),
+        ["glasses"]
+    );
+}
+
+#[test]
+fn a_pattern_that_matches_nothing_is_a_miss_where_its_letters_would_stand() {
+    let (_folder, library) = library_of(&["apple", "banana", "cherry"]);
+
+    let between = library.suggest("bx*z", 10).unwrap();
+    let beyond = library.suggest("z?", 10).unwrap();
+
+    assert!(between.miss && !between.near);
+    assert_eq!(headwords(&between.items), ["cherry"]);
+    assert!(beyond.miss);
+    assert_eq!(beyond.items, []);
+}
+
+#[test]
+fn the_column_continues_with_what_the_query_offers() {
+    let (_folder, library) = library_of(&["a1", "a2", "a3", "a4", "a5", "b1"]);
+
+    let first = library.suggest("a*", 2).unwrap();
+
+    assert_eq!(headwords(&first.items), ["a1", "a2"]);
+    assert_eq!(
+        headwords(&library.suggest_after("a*", "a2", 2).unwrap()),
+        ["a3", "a4"]
+    );
+    assert_eq!(
+        headwords(&library.suggest_after("a*", "a4", 10).unwrap()),
+        ["a5"]
+    );
+    assert_eq!(library.suggest_after("a*", "a5", 10).unwrap(), []);
+    // Without wildcards, or after a miss, the column is the index itself.
+    assert_eq!(
+        headwords(&library.suggest_after("a", "a5", 10).unwrap()),
+        ["b1"]
+    );
+    assert_eq!(
+        headwords(&library.suggest_after("ax*", "a5", 10).unwrap()),
+        ["b1"]
+    );
 }

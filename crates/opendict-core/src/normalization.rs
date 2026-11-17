@@ -37,7 +37,9 @@ fn simplified() -> &'static HashMap<char, char> {
             .filter_map(|line| {
                 let (traditional, simplified) = line.split_once('\t')?;
                 let mut traditional = traditional.chars();
-                let from = traditional.next().filter(|_| traditional.as_str().is_empty())?;
+                let from = traditional
+                    .next()
+                    .filter(|_| traditional.as_str().is_empty())?;
                 let to = simplified.chars().next()?;
                 Some((from, to))
             })
