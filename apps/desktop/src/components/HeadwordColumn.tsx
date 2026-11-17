@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { useI18n } from "../i18n";
 /** One row: a headword and, for suggestions, how many Dictionaries have it. */
 export interface ColumnItem {
@@ -6,8 +6,8 @@ export interface ColumnItem {
   count?: number;
 }
 
-/** What the column lists: suggestions for what the reader typed, or the chosen Word Book. */
-export type ColumnList = "suggestions" | "wordBook";
+/** What the column lists: suggestions for what the reader typed, History, or the chosen Word Book. */
+export type ColumnList = "suggestions" | "history" | "wordBook";
 
 /** Height of one index row (DESIGN.md: index-row). Guide words are worked out from it. */
 const ROW = 26;
@@ -24,7 +24,8 @@ export const optionId = (index: number) => `headword-${index}`;
  * The headword column: guide words (the first and last headwords in view) over a double
  * rule, an optional note line, the headwords themselves with how many Dictionaries have
  * each, and the column's tabs. The search field drives it from the keyboard; rows can
- * also be clicked. The Word Book tab lists the chosen Word Book instead, newest first.
+ * also be clicked. The History tab lists committed Lookups instead, newest first, with a
+ * way to clear them; the Word Book tab lists the chosen Word Book, newest first.
  */
 export function HeadwordColumn({
   items,
@@ -35,18 +36,22 @@ export function HeadwordColumn({
   onPick,
   onNeedMore,
   onShowSuggestions,
+  onShowHistory,
+  onClearHistory,
   onShowWordBook,
   onToggleLibrary,
 }: {
   items: ColumnItem[];
   /** The current row, or -1. Nothing in the column is current while the Library is open. */
   selected: number;
-  note: string | null;
+  note: ReactNode;
   view: "lookup" | "library" | "wordBook";
   list?: ColumnList;
   onPick: (index: number) => void;
   onNeedMore: () => void;
   onShowSuggestions: () => void;
+  onShowHistory: () => void;
+  onClearHistory: () => void;
   onShowWordBook: () => void;
   onToggleLibrary: () => void;
 }) {
@@ -149,11 +154,17 @@ export function HeadwordColumn({
         ))}
       </ul>
       {items.length === 0 ? (
-        <p className="flex-1 px-lg py-3.5 text-text-secondary">{list === "wordBook" ? t.wordCount(0) : t.noMatchingHeadwords}</p>
+        <p className="flex-1 px-lg py-3.5 text-text-secondary">
+          {list === "history" ? t.noLookupsYet : list === "wordBook" ? t.wordCount(0) : t.noMatchingHeadwords}
+        </p>
       ) : null}
+      {list === "history" && view === "lookup" && items.length > 0 ? <ClearHistory onClear={onClearHistory} /> : null}
       <div className="flex border-t border-rule">
         <ColumnTab pressed={view === "lookup" && list === "suggestions"} onClick={onShowSuggestions}>
           {t.suggestions}
+        </ColumnTab>
+        <ColumnTab pressed={view === "lookup" && list === "history"} onClick={onShowHistory}>
+          {t.history}
         </ColumnTab>
         <ColumnTab pressed={view !== "library" && list === "wordBook"} onClick={onShowWordBook}>
           {t.wordBook}
@@ -163,6 +174,40 @@ export function HeadwordColumn({
         </ColumnTab>
       </div>
     </aside>
+  );
+}
+
+/** Clearing History asks once more in place, so one stray click cannot lose it. */
+function ClearHistory({ onClear }: { onClear: () => void }) {
+  const { t } = useI18n();
+  const [asking, setAsking] = useState(false);
+  const button =
+    "h-6.5 flex-none rounded-sharp px-sm text-[12px] text-text-secondary hover:bg-shade hover:text-text";
+  return (
+    <div className="flex min-h-9 items-center justify-end gap-xs border-t border-hair px-sm text-[12px]">
+      {asking ? (
+        <>
+          <span className="mr-auto min-w-0 pl-sm text-text-secondary">{t.clearHistoryQuestion}</span>
+          <button type="button" className={button} onClick={() => setAsking(false)}>
+            {t.keep}
+          </button>
+          <button
+            type="button"
+            className={`${button} border border-rule text-text`}
+            onClick={() => {
+              setAsking(false);
+              onClear();
+            }}
+          >
+            {t.clear}
+          </button>
+        </>
+      ) : (
+        <button type="button" className={button} onClick={() => setAsking(true)}>
+          {t.clearHistory}
+        </button>
+      )}
+    </div>
   );
 }
 

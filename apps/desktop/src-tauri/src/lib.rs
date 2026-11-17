@@ -13,7 +13,7 @@ pub use state::{AppState, EntryView, LibraryView};
 pub const LIBRARY_FOLDER_ENV: &str = "OPENDICT_LIBRARY_FOLDER";
 
 /// Environment variable that overrides the data directory, where the Library file,
-/// preferences and Word Books are kept (used by tests and development).
+/// preferences, History and Word Books are kept (used by tests and development).
 pub const DATA_DIR_ENV: &str = "OPENDICT_DATA_DIR";
 
 /// Environment variable naming a folder that Word Books are exported into without asking
@@ -45,7 +45,9 @@ pub fn run() {
                 None => app.path().app_data_dir()?,
             };
             let library_file = data_dir.join("library.json");
-            app.manage(AppState::load(&library_file, override_folder, &data_dir));
+            let state = AppState::load(&library_file, override_folder, &data_dir);
+            commands::start_indexing(app.handle(), &state);
+            app.manage(state);
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -59,6 +61,8 @@ pub fn run() {
             commands::set_dictionary_enabled,
             commands::move_dictionary,
             commands::register_dictionary,
+            commands::index_library,
+            commands::cancel_indexing,
             commands::set_allow_network,
             commands::word_books,
             commands::toggle_word,
@@ -69,6 +73,9 @@ pub fn run() {
             commands::remove_saved_word,
             commands::set_word_note,
             commands::export_word_book,
+            commands::history,
+            commands::record_lookup,
+            commands::clear_history,
         ])
         .run(tauri::generate_context!())
         .expect("OpenDict failed to start");

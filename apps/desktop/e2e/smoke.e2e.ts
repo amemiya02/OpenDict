@@ -145,6 +145,81 @@ test("typing a headword shows its Entry in a sandboxed frame", async () => {
   assert.equal(await frame.evaluate(() => document.querySelector("p.def")?.getAttribute("class")), "def", "the Entry keeps its own markup");
 });
 
+/** Starts recording every sound the app plays, and whether playback really started. */
+async function watchSounds() {
+  await page.evaluate(() => {
+    const w = window as unknown as { __sounds?: string[] };
+    if (w.__sounds) return;
+    const sounds: string[] = (w.__sounds = []);
+    const play = HTMLMediaElement.prototype.play;
+    HTMLMediaElement.prototype.play = function (this: HTMLMediaElement) {
+      const started = play.call(this);
+      started.then(
+        () => sounds.push(`played ${this.src}`),
+        (error: unknown) => sounds.push(`refused ${this.src}: ${String(error)}`),
+      );
+      return started;
+    };
+  });
+}
+
+async function sounds(): Promise<string[]> {
+  return page.evaluate(() => [...((window as unknown as { __sounds?: string[] }).__sounds ?? [])]);
+}
+
+async function waitForSound(count: number): Promise<string[]> {
+  const deadline = Date.now() + 10_000;
+  for (;;) {
+    const heard = await sounds();
+    if (heard.length >= count) return heard;
+    if (Date.now() > deadline) assert.fail(`expected ${count} sounds, heard ${JSON.stringify(heard)}`);
+    await new Promise((r) => setTimeout(r, 200));
+  }
+}
+
+test("a redirect chain lands on the real Entry", async () => {
+  await lookUp("happy accident");
+
+  const frame = await entryFrame("Sample English Dictionary");
+  await frame.getByText("Finding something good without looking for it.").waitFor({ timeout: 10_000 });
+});
+
+test("clicking an entry:// link looks the linked headword up; an anchor link stays in the Entry", async () => {
+  await lookUp("serendipity");
+  let frame = await entryFrame("Sample English Dictionary");
+
+  await frame.getByRole("link", { name: "top" }).click();
+  await new Promise((r) => setTimeout(r, 500));
+  assert.equal(await page.getByRole("heading", { level: 1 }).innerText(), "【serendipity】");
+
+  await frame.getByRole("link", { name: "serendipitous" }).click();
+  await page.getByRole("heading", { level: 1, name: "【serendipitous】" }).waitFor({ timeout: 10_000 });
+  frame = await entryFrame("Sample English Dictionary");
+  await frame.getByText("Found by happy accident.").waitFor({ timeout: 10_000 });
+
+  await frame.getByRole("link", { name: "serendipity" }).click();
+  await page.getByRole("heading", { level: 1, name: "【serendipity】" }).waitFor({ timeout: 10_000 });
+});
+
+test("a sound:// link plays the Dictionary's audio, and so do Pronounce and Alt+P", async () => {
+  await watchSounds();
+  await lookUp("serendipity");
+  const before = (await sounds()).length;
+  const frame = await entryFrame("Sample English Dictionary");
+  const key = new URL(frame.url()).pathname.split("/")[1];
+  const expected = `played http://odentry.localhost/${key}/serendipity.wav`;
+
+  await frame.getByRole("link", { name: "Listen" }).click();
+  assert.equal((await waitForSound(before + 1))[before], expected);
+
+  await page.getByRole("button", { name: /Pronounce/ }).click();
+  assert.equal((await waitForSound(before + 2))[before + 1], expected);
+
+  await page.getByRole("heading", { level: 1 }).click();
+  await page.keyboard.press("Alt+KeyP");
+  assert.equal((await waitForSound(before + 3))[before + 2], expected);
+});
+
 test("an Entry shows the image from its MDD and the stylesheet beside its MDX, and its frame fits it", async () => {
   await lookUp("cat");
 
@@ -188,6 +263,10 @@ test("an Entry's scripts run but cannot reach the app, stored data, other Dictio
     assert.ok(!results[route]!.startsWith("answered"), `${route}: ${results[route]}`);
   }
   assert.ok(!results.topNavigation!.startsWith("allowed"), `topNavigation: ${results.topNavigation}`);
+  // The link and sound it sent without a click were ignored.
+  assert.equal(results.unpromptedLink, "sent");
+  assert.equal(await page.getByRole("heading", { level: 1 }).innerText(), "【probe】");
+  assert.ok(!(await sounds()).some((sound) => sound.includes("networked")), JSON.stringify(await sounds()));
 
   // Meanwhile "Wandering Probe" navigated its own frame to the network. Whatever the
   // frames tried, nothing reached the network.
@@ -327,7 +406,7 @@ test("the headword column suggests as the reader types and the keyboard browses 
   await search.fill("");
   await column.getByRole("option", { name: "apple, in 1 dictionary" }).waitFor({ timeout: 10_000 });
   const index = await column.getByRole("option").evaluateAll((options) => options.map((o) => (o as HTMLElement).dataset.headword));
-  assert.deepEqual(index, ["apple", "apples", "cat", "probe", "serendipity", "thumb", "食べる"]);
+  assert.deepEqual(index, ["apple", "apples", "cat", "happy accident", "probe", "serendipities", "serendipitous", "serendipity", "thumb", "食べる"]);
   assert.equal((await page.getByTestId("guide-words").innerText()).replace(/\s+/g, " "), "apple 食べる");
 
   // Typing suggests by prefix, shows the first match at once, and the column carries on.
@@ -370,6 +449,29 @@ test("a word saved with Ctrl+D goes into the Word Book, keeps a note and exports
   assert.equal(header, "Headword,Note,Dictionary,Added");
   assert.match(row!, /^serendipity,"Finding a book I was not looking for, in a shop\.",Sample English Dictionary,\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$/);
   assert.deepEqual(rest, [""]);
+});
+
+test("History lists committed Lookups, and Back and Forward retrace them", async () => {
+  const search = page.getByRole("combobox", { name: "Type a word" });
+  const column = page.getByRole("listbox", { name: "Headwords" });
+  const onPage = (headword: string) =>
+    page.waitForFunction((word) => document.querySelector("h1")?.textContent === `【${word}】`, headword, { timeout: 10_000 });
+
+  await lookUp("apple");
+  await lookUp("cat");
+
+  await search.press("Alt+ArrowLeft");
+  await onPage("apple");
+  assert.equal(await search.inputValue(), "apple");
+  await page.getByRole("button", { name: "Forward" }).click();
+  await onPage("cat");
+
+  await page.getByRole("button", { name: "History" }).click();
+  await column.getByRole("option", { name: "cat", exact: true }).waitFor({ timeout: 10_000 });
+  const history = await column.getByRole("option").evaluateAll((options) => options.map((o) => (o as HTMLElement).dataset.headword));
+  assert.deepEqual(history.slice(0, 2), ["cat", "apple"]);
+  if (process.env.OPENDICT_E2E_HISTORY_SCREENSHOT) await page.screenshot({ path: process.env.OPENDICT_E2E_HISTORY_SCREENSHOT });
+  await page.getByRole("button", { name: "Suggestions" }).click();
 });
 
 // Runs last: unlocking adds a Dictionary, and with it a headword, to the Library.

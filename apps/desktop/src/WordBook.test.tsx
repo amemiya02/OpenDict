@@ -9,17 +9,18 @@ import type { Entry, Library, SavedWord, WordBook, WordBooks } from "./lib/ipc";
 const library: Library = {
   folders: [{ path: "D:\\Dictionaries", dictionaryCount: 2, problem: null }],
   dictionaries: [
-    { id: "learner", title: "Sample Learner's Dictionary", path: "D:\\Dictionaries\\learner.mdx", entryCount: 3, size: 1024, enabled: true },
-    { id: "kokugo", title: "サンプル国語辞典", path: "D:\\Dictionaries\\kokugo.mdx", entryCount: 3, size: 1024, enabled: true },
+    { id: "learner", title: "Sample Learner's Dictionary", path: "D:\\Dictionaries\\learner.mdx", entryCount: 3, size: 1024, enabled: true, index: { state: "ready" } },
+    { id: "kokugo", title: "サンプル国語辞典", path: "D:\\Dictionaries\\kokugo.mdx", entryCount: 3, size: 1024, enabled: true, index: { state: "ready" } },
   ],
   failures: [],
+  indexing: null,
   problem: null,
 };
 
 const headwords = ["apple", "banter", "serendipity"];
 
 function entry(dictionaryId: string, dictionaryTitle: string, headword: string): Entry {
-  return { dictionaryId, dictionaryTitle, src: `http://odentry.localhost/${dictionaryId}/?headword=${headword}`, allowNetwork: false, pronunciation: null };
+  return { dictionaryId, dictionaryTitle, src: `http://odentry.localhost/${dictionaryId}/?headword=${headword}`, allowNetwork: false, sound: null, pronunciation: null };
 }
 
 /** 2026-11-17 09:30 UTC */

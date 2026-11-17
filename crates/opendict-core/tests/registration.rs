@@ -61,6 +61,7 @@ fn a_dictionary_with_an_encrypted_key_index_opens_with_no_input() {
 
     let mut library = load(data.path());
     library.add_folder(folder.path()).unwrap();
+    library.build_indexes();
 
     assert_eq!(titles(&library), ["Indexed"]);
     assert_eq!(library.look_up("apple").unwrap().len(), 1);
@@ -79,6 +80,7 @@ fn a_dictionary_that_needs_a_code_opens_once_the_code_and_email_are_entered() {
     );
 
     library.register(&path, registration(EMAIL, CODE)).unwrap();
+    library.build_indexes();
 
     assert_eq!(titles(&library), ["Bought"]);
     assert_eq!(failure_of(&library, &path), None);

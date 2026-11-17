@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-index-library"
+description = "Enables the index_library command without any pre-configured scope."
+commands.allow = ["index_library"]
+
+[[permission]]
+identifier = "deny-index-library"
+description = "Denies the index_library command without any pre-configured scope."
+commands.deny = ["index_library"]

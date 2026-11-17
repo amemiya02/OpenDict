@@ -15,6 +15,8 @@
     "allow-set-dictionary-enabled",
     "allow-move-dictionary",
     "allow-register-dictionary",
+    "allow-index-library",
+    "allow-cancel-indexing",
     "allow-set-allow-network",
     "allow-word-books",
     "allow-toggle-word",
@@ -25,6 +27,9 @@
     "allow-remove-saved-word",
     "allow-set-word-note",
     "allow-export-word-book",
+    "allow-history",
+    "allow-record-lookup",
+    "allow-clear-history",
     "updater:default",
     "process:allow-restart"
   ]

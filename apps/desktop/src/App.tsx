@@ -1,18 +1,28 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { EntryFrame } from "./components/EntryFrame";
 import { HeadwordColumn, optionId, type ColumnItem, type ColumnList } from "./components/HeadwordColumn";
+import { NavButtons } from "./components/NavButtons";
+import { RecentLookups } from "./components/RecentLookups";
 import { sectionId, ThumbIndex } from "./components/ThumbIndex";
 import { EmptyLibrary, LibraryPage, OutlineButton, type LibraryActions } from "./components/LibraryPage";
 import { SearchField } from "./components/SearchField";
 import { UpdateNotice } from "./components/UpdateNotice";
 import { WordBookPage, type WordBookActions } from "./components/WordBookPage";
 import { useI18n } from "./i18n";
+import { soundUrl } from "./lib/entryLinks";
+import { playSound } from "./lib/sound";
 import {
   addLibraryFolder,
+  cancelIndexing,
+  clearHistory,
+  getHistory,
   getLibrary,
+  indexLibrary,
   lookUp,
   moveDictionary,
+  recordLookup,
   registerDictionary,
+  onLibraryChanged,
   removeLibraryFolder,
   rescanLibrary,
   setAllowNetwork,
@@ -29,15 +39,19 @@ import {
   type Entry,
   type Library,
   type RegisterError,
+  type Suggestion,
   type WordBooks,
 } from "./lib/ipc";
 import { MOD, withMod } from "./lib/platform";
+import { canStep, emptyTrail, step, visit } from "./lib/trail";
 import { useHeadwordColumn } from "./lib/useHeadwordColumn";
+import { wildcardHint } from "./lib/wildcard";
 
 type PageState =
   | { kind: "idle" }
   | { kind: "found"; headword: string; entries: Entry[] }
-  | { kind: "missing"; query: string }
+  /** Nothing found for `query`; `next` are the headwords after where it would stand. */
+  | { kind: "missing"; query: string; next: Suggestion[] }
   | { kind: "failed"; reason: string };
 
 type View = "lookup" | "library" | "wordBook";
@@ -57,6 +71,17 @@ export function App() {
   const [said, setSaid] = useState<string | null>(null);
   /** What the Word Book view says about the last change made there. */
   const [bookNotice, setBookNotice] = useState<string | null>(null);
+  /** Committed Lookups, newest first. */
+  const [history, setHistory] = useState<string[]>([]);
+  /** The words visited in this window, for Back and Forward. */
+  const [trail, setTrail] = useState(emptyTrail);
+  /** Where the word on the page stands in History, or -1. */
+  const historySelected = page.kind === "found" ? history.indexOf(page.headword) : -1;
+  /** The Word Book Ctrl/⌘ + D saves into, and where the word on the page stands in it, or -1. */
+  const currentBook = wordBooks?.books.find((book) => book.id === wordBooks.current) ?? null;
+  const savedHere = (headword: string) => currentBook?.words.some((word) => word.headword === headword) ?? false;
+  const wordBookSelected =
+    page.kind === "found" && currentBook ? currentBook.words.findIndex((word) => word.headword === page.headword) : -1;
   const pageRef = useRef<HTMLElement>(null);
   const column = useHeadwordColumn();
   const { refresh } = column;
@@ -74,11 +99,26 @@ export function App() {
       },
       (error: unknown) => setPage({ kind: "failed", reason: String(error) }),
     );
+    // Indexing runs in the shell's background and reports the Library as it goes. When
+    // another Dictionary's index is ready, the column has more to offer.
+    let ready = -1;
+    const unlisten = onLibraryChanged((changed) => {
+      setLibrary(changed);
+      const nowReady = changed.dictionaries.filter((d) => d.index.state === "ready").length;
+      if (nowReady !== ready) {
+        ready = nowReady;
+        refresh(typed.current).catch(() => {});
+      }
+    });
+    return () => {
+      unlisten.then((stop) => stop(), () => {});
+    };
   }, [refresh]);
 
   useEffect(() => {
     // Without readable Word Books the rest of the app still works; saving reports why not.
     getWordBooks().then((books) => setWordBooks(Array.isArray(books?.books) ? books : null), () => {});
+    getHistory().then((words) => setHistory(asWords(words)), () => {});
   }, []);
 
   // Moving between the page and the Library puts the reader at the top of the new view.
@@ -92,14 +132,18 @@ export function App() {
     setPage(next);
   }
 
-  /** Puts `headword`'s Entries on the page. */
-  async function show(headword: string) {
+  /**
+   * Puts `headword`'s Entries on the page. `onFound` runs in the same update as the page
+   * when a Dictionary had the word, so nothing sees the page without it.
+   */
+  async function show(headword: string, onFound?: () => void) {
     const ticket = ++pageRequests.current;
     setView("lookup");
     try {
       const entries = await lookUp(headword);
       if (ticket !== pageRequests.current) return;
-      setPage(entries.length > 0 ? { kind: "found", headword, entries } : { kind: "missing", query: headword });
+      setPage(entries.length > 0 ? { kind: "found", headword, entries } : { kind: "missing", query: headword, next: [] });
+      if (entries.length > 0) onFound?.();
     } catch (error) {
       if (ticket === pageRequests.current) setPage({ kind: "failed", reason: String(error) });
     }
@@ -115,7 +159,7 @@ export function App() {
         void show(answer.headword);
       } else if (text.trim()) {
         setView("lookup");
-        setPageNow({ kind: "missing", query: text.trim() });
+        setPageNow({ kind: "missing", query: text.trim(), next: answer.miss ? answer.items : [] });
       } else {
         setPageNow({ kind: "idle" });
       }
@@ -125,11 +169,21 @@ export function App() {
   }
 
   async function move(by: number) {
+    if (list === "history") {
+      if (history.length === 0) return;
+      const next = historySelected < 0 ? (by > 0 ? 0 : history.length - 1) : historySelected + by;
+      const headword = history[Math.max(0, Math.min(next, history.length - 1))]!;
+      type(headword);
+      void show(headword);
+      return;
+    }
     if (list === "wordBook") {
       const words = currentBook?.words ?? [];
-      const at = page.kind === "found" ? words.findIndex((w) => w.headword === page.headword) : -1;
-      const next = words[Math.min(Math.max(at + by, 0), words.length - 1)];
-      if (next) commit(next.headword);
+      if (words.length === 0) return;
+      const next = wordBookSelected < 0 ? (by > 0 ? 0 : words.length - 1) : wordBookSelected + by;
+      const headword = words[Math.max(0, Math.min(next, words.length - 1))]!.headword;
+      type(headword);
+      void show(headword);
       return;
     }
     const headword = await column.move(by).catch(() => null);
@@ -141,30 +195,82 @@ export function App() {
     setQuery(text);
   }
 
-  /** The reader chose a word: it goes into the search field and onto the page. */
-  function commit(headword: string) {
+  /**
+   * The reader chose a word (Enter, a click, a followed link): it goes into the search
+   * field and onto the page. A word that was found is recorded in History and becomes
+   * the latest step for Back and Forward.
+   */
+  async function commit(headword: string) {
     type(headword);
-    void show(headword);
+    await show(headword, () => {
+      setTrail((now) => visit(now, headword));
+      recordLookup(headword).then((words) => setHistory(asWords(words)), () => {});
+    });
+  }
+
+  /** An `entry://` link in an Entry: the linked headword, as if the reader had typed and chosen it. */
+  function followLink(headword: string) {
+    void commit(headword);
+    column.refresh(headword).catch(() => {});
+  }
+
+  /** The reader chose a way forward from a miss: a pattern to try or a headword. */
+  function search(text: string) {
+    type(text);
+    void changeQuery(text);
   }
 
   function commitCurrent() {
     const { items, selected } = column.state;
-    const headword = items[selected]?.headword ?? query.trim();
-    if (headword) commit(headword);
+    const current =
+      list === "history"
+        ? history[historySelected]
+        : list === "wordBook"
+          ? currentBook?.words[wordBookSelected]?.headword
+          : items[selected]?.headword;
+    const headword = current ?? query.trim();
+    if (headword) void commit(headword);
   }
 
   function pick(index: number) {
-    if (list === "wordBook") {
-      const word = currentBook?.words[index];
-      if (word) commit(word.headword);
-      return;
-    }
-    const headword = column.select(index);
-    if (headword) commit(headword);
+    const headword =
+      list === "history" ? history[index] : list === "wordBook" ? currentBook?.words[index]?.headword : column.select(index);
+    if (headword) void commit(headword);
   }
 
-  const currentBook = wordBooks?.books.find((book) => book.id === wordBooks.current) ?? null;
-  const savedHere = (headword: string) => currentBook?.words.some((word) => word.headword === headword) ?? false;
+  /** Back (-1) or Forward (1) through the words visited. Retracing is not a new Lookup. */
+  function go(by: -1 | 1) {
+    const next = step(trail, by);
+    if (!next) return;
+    setTrail(next.trail);
+    type(next.word);
+    column.refresh(next.word).catch(() => {});
+    void show(next.word);
+  }
+
+  // Alt+← and Alt+→ work wherever the focus is in the window (but not inside an Entry
+  // frame, which is another document).
+  const goRef = useRef(go);
+  useEffect(() => {
+    goRef.current = go;
+  });
+  useEffect(() => {
+    function onKeyDown(event: KeyboardEvent) {
+      if (!event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
+      if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+      event.preventDefault();
+      goRef.current(event.key === "ArrowLeft" ? -1 : 1);
+    }
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, []);
+
+  function forgetHistory() {
+    clearHistory().then(
+      () => setHistory([]),
+      () => {}, // History stays as it was: nothing was cleared
+    );
+  }
 
   /** Saves the word on the page to the chosen Word Book, or takes it out (Ctrl/⌘ + D). */
   async function toggleSave() {
@@ -214,7 +320,7 @@ export function App() {
         setBusy(false);
       }
     },
-    lookUp: (headword) => commit(headword),
+    lookUp: (headword) => void commit(headword),
   };
 
   function showWordBook() {
@@ -280,15 +386,28 @@ export function App() {
         setBusy(false);
       }
     },
+    index: () => change(indexLibrary),
+    cancelIndexing: () => {
+      cancelIndexing().catch((error: unknown) => setNotice(t.libraryActionFailed(String(error))));
+    },
   };
 
   const enabledCount = library?.dictionaries.filter((d) => d.enabled).length ?? 0;
   const asked = page.kind === "found" ? Math.max(enabledCount, page.entries.length) : enabledCount;
-  const { items: suggestions, selected: suggested, miss } = column.state;
+  const { items, selected, miss, near, lemma } = column.state;
+  const note = lemma ? (
+    <>
+      {t.lemmatized} <b>{lemma.from}</b> → <b>{lemma.to}</b>
+    </>
+  ) : near ? (
+    t.nearNote
+  ) : miss && items.length > 0 ? (
+    t.missNote
+  ) : null;
+  const columnSelected = list === "history" ? historySelected : list === "wordBook" ? wordBookSelected : selected;
   const bookWords: ColumnItem[] = (currentBook?.words ?? []).map((word) => ({ headword: word.headword }));
-  const items: ColumnItem[] = list === "wordBook" ? bookWords : suggestions;
-  const selected =
-    list === "wordBook" ? (page.kind === "found" ? bookWords.findIndex((w) => w.headword === page.headword) : -1) : suggested;
+  const columnItems: ColumnItem[] =
+    list === "history" ? history.map((headword) => ({ headword })) : list === "wordBook" ? bookWords : items;
 
   return (
     <div className="grid h-full grid-cols-[264px_minmax(0,1fr)] grid-rows-[48px_minmax(0,1fr)_26px] max-[860px]:grid-cols-[200px_minmax(0,1fr)]">
@@ -296,10 +415,11 @@ export function App() {
         <div className="flex w-[264px] flex-none items-center gap-sm pr-3.5 pl-lg max-[860px]:w-[200px]">
           <span className="font-serif text-[17px] font-bold">{t.appName}</span>
         </div>
-        <div className="flex min-w-0 flex-1 pr-lg pl-xl max-[860px]:pl-xs">
+        <NavButtons canGoBack={canStep(trail, -1)} canGoForward={canStep(trail, 1)} onGo={go} />
+        <div className="flex min-w-0 flex-1 pr-lg">
           <SearchField
             value={query}
-            activeOption={view === "lookup" && selected >= 0 ? optionId(selected) : undefined}
+            activeOption={view === "lookup" && columnSelected >= 0 ? optionId(columnSelected) : undefined}
             onChange={type}
             onQuery={(text) => void changeQuery(text)}
             onMove={(by) => void move(by)}
@@ -309,17 +429,24 @@ export function App() {
       </header>
 
       <HeadwordColumn
-        items={items}
-        selected={selected}
-        note={list === "suggestions" && miss && items.length > 0 ? t.missNote : null}
+        items={columnItems}
+        selected={columnSelected}
+        note={list === "suggestions" ? note : null}
         view={view}
         list={list}
         onPick={pick}
-        onNeedMore={() => void column.loadMore().catch(() => {})}
+        onNeedMore={() => {
+          if (list === "suggestions") void column.loadMore().catch(() => {});
+        }}
         onShowSuggestions={() => {
           setList("suggestions");
           setView("lookup");
         }}
+        onShowHistory={() => {
+          setList("history");
+          setView("lookup");
+        }}
+        onClearHistory={forgetHistory}
         onShowWordBook={showWordBook}
         onToggleLibrary={() => setView(view === "library" ? "lookup" : "library")}
       />
@@ -338,6 +465,9 @@ export function App() {
               busy={busy}
               notice={notice}
               onAddFolder={actions.addFolder}
+              onLookUp={followLink}
+              onSearch={search}
+              recent={<RecentLookups words={history} onPick={(word) => void commit(word)} />}
               saved={page.kind === "found" && savedHere(page.headword)}
               onToggleSave={() => void toggleSave()}
             />
@@ -377,6 +507,9 @@ function PageContent({
   busy,
   notice,
   onAddFolder,
+  onLookUp,
+  onSearch,
+  recent,
   saved,
   onToggleSave,
 }: {
@@ -387,6 +520,10 @@ function PageContent({
   busy: boolean;
   notice: string | null;
   onAddFolder: () => void;
+  onLookUp: (headword: string) => void;
+  onSearch: (text: string) => void;
+  /** Recent lookups, offered on the empty page. */
+  recent: ReactNode;
   /** Whether the word on the page is in the chosen Word Book. */
   saved: boolean;
   onToggleSave: () => void;
@@ -400,12 +537,13 @@ function PageContent({
           headword={page.headword}
           entries={page.entries}
           asked={asked}
+          onLookUp={onLookUp}
           saved={saved}
           onToggleSave={onToggleSave}
         />
       );
     case "missing":
-      return <Lead>{t.notFound(page.query)}</Lead>;
+      return <NoMatch query={page.query} next={page.next} onSearch={onSearch} />;
     case "failed":
       return <Lead>{t.lookupFailed(page.reason)}</Lead>;
     case "idle":
@@ -426,27 +564,39 @@ function PageContent({
           />
         );
       }
-      return <Lead muted>{t.startHint}</Lead>;
+      return (
+        <>
+          <Lead muted>{t.startHint}</Lead>
+          {recent}
+        </>
+      );
   }
 }
 
-/** The page head and one section per answering Dictionary. `asked` is how many Dictionaries the Lookup ran against. */
+/**
+ * The page head and one section per answering Dictionary. `asked` is how many Dictionaries
+ * the Lookup ran against. An `entry://` link in any Entry looks its headword up; a
+ * `sound://` link plays from its own Dictionary.
+ */
 function EntryPage({
   headword,
   entries: initial,
   asked,
+  onLookUp,
   saved,
   onToggleSave,
 }: {
   headword: string;
   entries: Entry[];
   asked: number;
+  onLookUp: (headword: string) => void;
   saved: boolean;
   onToggleSave: () => void;
 }) {
   const { t } = useI18n();
   const [entries, setEntries] = useState(initial);
   const pronunciation = entries.find((entry) => entry.pronunciation)?.pronunciation;
+  const sound = firstSound(entries);
   const [folded, setFolded] = useState<ReadonlySet<string>>(new Set());
 
   function toggleFold(dictionaryId: string) {
@@ -456,6 +606,21 @@ function EntryPage({
       return next;
     });
   }
+
+  // Alt+P: the Pronounce action, wherever focus is in the app (not inside an Entry frame,
+  // whose keys stay its own).
+  useEffect(() => {
+    if (sound === null) return;
+    const url = sound;
+    function onKeyDown(event: KeyboardEvent) {
+      if (!event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
+      if (event.code !== "KeyP" && event.key.toLowerCase() !== "p") return;
+      event.preventDefault();
+      playSound(url);
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [sound]);
 
   async function toggleNetwork(entry: Entry) {
     const allow = !entry.allowNetwork;
@@ -473,7 +638,10 @@ function EntryPage({
         <h1 className="-ml-3.5 font-serif text-display font-bold [overflow-wrap:anywhere]">【{headword}】</h1>
         {pronunciation ? <span className="font-serif text-[16px] text-text-secondary">{pronunciation}</span> : null}
         <span className="text-[12px] text-text-secondary">{t.answeredOf(entries.length, asked)}</span>
-        <SaveButton saved={saved} onToggle={onToggleSave} />
+        <div className="ml-auto flex gap-1.5 self-center">
+          {sound !== null && <PronounceButton onClick={() => playSound(sound)} />}
+          <SaveButton saved={saved} onToggle={onToggleSave} />
+        </div>
       </div>
       {entries.map((entry) => {
         const open = !folded.has(entry.dictionaryId);
@@ -494,11 +662,92 @@ function EntryPage({
             {/* Folded, the Entry stays loaded out of sight, so unfolding shows it as it was. */}
             <div id={body} hidden={!open} className="pb-3.5">
               {/* A new frame when the switch changes, so the document reloads under its new policy. */}
-              <EntryFrame key={String(entry.allowNetwork)} dictionaryTitle={entry.dictionaryTitle} src={entry.src} />
+              <EntryFrame
+                key={String(entry.allowNetwork)}
+                dictionaryTitle={entry.dictionaryTitle}
+                src={entry.src}
+                onLink={onLookUp}
+                onSound={playSound}
+              />
             </div>
           </section>
         );
       })}
+    </article>
+  );
+}
+
+/** The URL of the first audio the Entries offer, in page order, or null. */
+function firstSound(entries: Entry[]): string | null {
+  for (const entry of entries) {
+    const url = entry.sound ? soundUrl(entry.src, entry.sound) : null;
+    if (url !== null) return url;
+  }
+  return null;
+}
+
+function PronounceButton({ onClick }: { onClick: () => void }) {
+  const { t } = useI18n();
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-keyshortcuts="Alt+P"
+      className="flex h-7 items-center gap-1.5 rounded-sharp border border-rule px-2.5 text-body text-text hover:bg-shade active:translate-y-px"
+    >
+      <svg className="size-4 fill-none stroke-current stroke-[1.2]" viewBox="0 0 16 16" aria-hidden="true">
+        <path d="M2.5 6v4H5l3.5 3V3L5 6z" />
+        <path d="M11 5.5a3.5 3.5 0 0 1 0 5" />
+      </svg>
+      <span>{t.pronounce}</span>
+      <kbd aria-hidden="true" className="font-sans text-[11px] text-text-secondary max-[620px]:hidden">
+        Alt P
+      </kbd>
+    </button>
+  );
+}
+
+/**
+ * The page when nothing was found: it says so, suggests a wildcard pattern, and lists the
+ * headwords that follow where the word would stand, so a miss is never a dead end.
+ */
+function NoMatch({ query, next, onSearch }: { query: string; next: Suggestion[]; onSearch: (text: string) => void }) {
+  const { t } = useI18n();
+  const pattern = wildcardHint(query);
+  return (
+    <article>
+      <div className="flex flex-wrap items-baseline gap-x-md gap-y-xs border-b-[3px] border-double border-rule pb-2.5">
+        <h1 className="-ml-3.5 font-serif text-display font-bold [overflow-wrap:anywhere]">【{query}】</h1>
+        <span className="text-[12px] text-text-secondary">{t.notFoundMeta}</span>
+      </div>
+      <Lead>{t.notFound(query)}</Lead>
+      <div className="flex max-w-[860px] flex-wrap items-center gap-x-2.5 gap-y-sm pb-xs text-text-secondary">
+        <span>{t.wildcardTip}</span>
+        <OutlineButton onClick={() => onSearch(pattern)}>
+          {t.tryPattern} <b className="font-serif text-[14px]">{pattern}</b>
+        </OutlineButton>
+      </div>
+      {next.length > 0 ? (
+        <>
+          <h2 id="next-in-index" className="mt-5 mb-1.5 text-[13px] font-bold">
+            {t.nextInIndex}
+          </h2>
+          <ul aria-labelledby="next-in-index" className="columns-[150px] gap-x-7 [column-rule:1px_solid_var(--hairline)] pt-0.5 pb-1.5">
+            {next.slice(0, 40).map((item) => (
+              <li key={item.headword}>
+                <button
+                  type="button"
+                  lang={/[぀-ヿ]/.test(item.headword) ? "ja" : undefined}
+                  onClick={() => onSearch(item.headword)}
+                  className="-ml-1.5 block h-[26px] w-full truncate rounded-sharp px-1.5 text-left font-serif text-index hover:bg-shade"
+                >
+                  {item.headword}
+                </button>
+              </li>
+            ))}
+          </ul>
+        </>
+      ) : null}
     </article>
   );
 }
@@ -512,7 +761,7 @@ function SaveButton({ saved, onToggle }: { saved: boolean; onToggle: () => void 
       aria-pressed={saved}
       aria-keyshortcuts={MOD === "⌘" ? "Meta+D" : "Control+D"}
       onClick={onToggle}
-      className="ml-auto flex h-7 flex-none items-center gap-1.5 self-center rounded-sharp border border-rule px-2.5 text-body text-text hover:bg-shade active:translate-y-px aria-pressed:bg-text aria-pressed:text-paper"
+      className="flex h-7 flex-none items-center gap-1.5 rounded-sharp border border-rule px-2.5 text-body text-text hover:bg-shade active:translate-y-px aria-pressed:bg-text aria-pressed:text-paper"
     >
       <svg className="size-3.5 fill-none stroke-current stroke-[1.3]" viewBox="0 0 14 14" aria-hidden="true">
         <path d="M3.5 1.5h7v11L7 9.8l-3.5 2.7z" fill={saved ? "currentColor" : "none"} />
@@ -570,4 +819,9 @@ function FoldButton({ open, controls, onToggle }: { open: boolean; controls: str
 
 function Lead({ children, muted = false }: { children: ReactNode; muted?: boolean }) {
   return <p className={`max-w-[860px] py-lg text-[14px] ${muted ? "text-text-secondary" : ""}`}>{children}</p>;
+}
+
+/** History as the shell sent it; anything but a list of words counts as none. */
+function asWords(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((word): word is string => typeof word === "string") : [];
 }

@@ -12,6 +12,9 @@ fn main() {
         "rescan_library",
         "set_dictionary_enabled",
         "move_dictionary",
+        "history",
+        "record_lookup",
+        "clear_history",
         "register_dictionary",
         "word_books",
         "toggle_word",
@@ -22,6 +25,8 @@ fn main() {
         "remove_saved_word",
         "set_word_note",
         "export_word_book",
+        "index_library",
+        "cancel_indexing",
     ]);
     tauri_build::try_build(tauri_build::Attributes::new().app_manifest(manifest))
         .expect("failed to run tauri-build");

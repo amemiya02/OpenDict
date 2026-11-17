@@ -39,6 +39,10 @@ pub enum Error {
     #[error("a Word Book needs a name")]
     BlankWordBookName,
 
+    /// The History file could not be read or written.
+    #[error("cannot read or write the History file {file}: {reason}")]
+    History { file: PathBuf, reason: String },
+
     /// No Dictionary in the Library has this key.
     #[error("no Dictionary in the Library has the key {0}")]
     UnknownDictionary(String),

@@ -14,6 +14,7 @@ mod bytes;
 mod error;
 mod file;
 mod header;
+mod lazy;
 mod mdd;
 mod mdx;
 mod registration;
@@ -21,6 +22,7 @@ mod salsa;
 
 pub use error::{Error, Result};
 pub use header::Header;
+pub use lazy::LazyMdx;
 pub use mdd::Mdd;
 pub use mdx::{Mdx, Record};
 pub use registration::Registration;

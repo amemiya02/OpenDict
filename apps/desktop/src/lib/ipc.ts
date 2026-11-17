@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 
 // Mirrors of the shapes the Tauri commands return (apps/desktop/src-tauri/src/state.rs).
 
@@ -11,6 +12,8 @@ export interface Entry {
   src: string;
   /** Whether the reader allowed this Dictionary network access. */
   allowNetwork: boolean;
+  /** The first audio the Entry offers (the path of its first `sound://` link), for Pronounce. */
+  sound: string | null;
   /** How the headword is said, as this Entry gives it, if it shows that plainly (plain text). */
   pronunciation: string | null;
 }
@@ -52,6 +55,21 @@ export interface Dictionary {
   /** Bytes, all of the Dictionary's files together. */
   size: number;
   enabled: boolean;
+  /** Whether its index is built; only an indexed Dictionary answers Lookups. */
+  index: IndexState;
+}
+
+export type IndexState = { state: "ready" } | { state: "pending" } | { state: "failed"; detail: string };
+
+/** The Dictionary being indexed right now. */
+export interface Indexing {
+  dictionaryId: string;
+  title: string;
+  /** Headwords read so far, out of `total`. */
+  done: number;
+  total: number;
+  /** Dictionaries waiting after this one. */
+  waiting: number;
 }
 
 export type FailureReason =
@@ -80,6 +98,8 @@ export interface Library {
   /** Every Dictionary, enabled or not, in Library order. */
   dictionaries: Dictionary[];
   failures: OpenFailure[];
+  /** The Dictionary being indexed right now, if any. */
+  indexing: Indexing | null;
   /** Why the Library could not be loaded at all, if it could not. */
   problem: string | null;
 }
@@ -92,9 +112,12 @@ export function suggest(query: string, limit: number): Promise<Suggestions> {
   return invoke<Suggestions>("suggest", { query, limit });
 }
 
-/** The headword column continued: up to `limit` headwords after `headword` in index order. */
-export function headwordsAfter(headword: string, limit: number): Promise<Suggestion[]> {
-  return invoke<Suggestion[]>("headwords_after", { headword, limit });
+/**
+ * The headword column for `query` continued: up to `limit` more suggestions after
+ * `headword`. A pattern's column continues with its matches, any other through the index.
+ */
+export function headwordsAfter(query: string, headword: string, limit: number): Promise<Suggestion[]> {
+  return invoke<Suggestion[]>("headwords_after", { query, headword, limit });
 }
 
 export function getLibrary(): Promise<Library> {
@@ -116,6 +139,21 @@ export function rescanLibrary(): Promise<Library> {
 
 export function setDictionaryEnabled(id: string, enabled: boolean): Promise<Library> {
   return invoke<Library>("set_dictionary_enabled", { id, enabled });
+}
+
+/** Indexes the Dictionaries still waiting for their index. */
+export function indexLibrary(): Promise<Library> {
+  return invoke<Library>("index_library");
+}
+
+/** Stops indexing; Dictionaries not yet indexed wait until indexing starts again. */
+export function cancelIndexing(): Promise<void> {
+  return invoke<void>("cancel_indexing");
+}
+
+/** Calls `handler` with the Library whenever the shell reports a change (indexing progress). */
+export function onLibraryChanged(handler: (library: Library) => void): Promise<UnlistenFn> {
+  return listen<Library>("library", (event) => handler(event.payload));
 }
 
 export function moveDictionary(id: string, direction: "up" | "down"): Promise<Library> {
@@ -210,4 +248,18 @@ export function setWordNote(id: number, headword: string, note: string): Promise
 /** Asks where to save with the system dialog and exports there; resolves to the file, or null when cancelled. */
 export function exportWordBook(id: number, format: ExportFormat): Promise<string | null> {
   return invoke<string | null>("export_word_book", { id, format });
+}
+
+/** The headwords of committed Lookups, newest first. */
+export function getHistory(): Promise<string[]> {
+  return invoke<string[]>("history");
+}
+
+/** Records a committed Lookup (Enter, a click, a followed link); resolves to History as it now is. */
+export function recordLookup(headword: string): Promise<string[]> {
+  return invoke<string[]>("record_lookup", { headword });
+}
+
+export function clearHistory(): Promise<void> {
+  return invoke<void>("clear_history");
 }
