@@ -19,15 +19,21 @@ pub enum Platform {
 }
 
 impl Platform {
+    #[cfg(target_os = "windows")]
     pub fn current() -> Self {
-        #[cfg(target_os = "windows")]
-        return Platform::Windows {
+        Platform::Windows {
             build: windows_version::OsVersion::current().build,
-        };
-        #[cfg(target_os = "macos")]
-        return Platform::MacOs;
-        #[cfg(not(any(target_os = "windows", target_os = "macos")))]
-        return Platform::Linux;
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    pub fn current() -> Self {
+        Platform::MacOs
+    }
+
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    pub fn current() -> Self {
+        Platform::Linux
     }
 
     fn name(self) -> &'static str {
