@@ -73,6 +73,10 @@ function fakeShell(stored: Partial<Appearance> & { language?: Locale | null } = 
           return { platform: "windows", material: null };
         case "elsewhere":
           return null;
+        case "mini_settings":
+          return { lookUpSelection: "Control+Shift+F9", showMainWindow: null, watchClipboard: false, unavailable: [], problem: null };
+        case "data_directory":
+          return { path: "D:\\Data\\OpenDict", isDefault: true, problem: null };
       }
       if (command.startsWith("plugin:")) return null;
       shell.changes.push({ command, args });
@@ -252,6 +256,18 @@ describe("the command palette", () => {
 
     expect(shell.changes).toEqual([{ command: "set_current_group", args: { group: "g1" } }]);
     expect(await screen.findByText("Current Group: Reading")).toBeTruthy();
+  });
+
+  it("leads to the Mini Window's settings and to moving the data directory", async () => {
+    fakeShell();
+    renderApp();
+
+    await userEvent.click(command(await openPalette(), "Mini Window settings…"));
+    const mini = await screen.findByRole("region", { name: "Mini Window" });
+    await vi.waitFor(() => expect(mini.contains(document.activeElement)).toBe(true));
+
+    await userEvent.click(command(await openPalette(), "Move the data directory…"));
+    await vi.waitFor(() => expect(document.activeElement).toBe(screen.getByRole("button", { name: "Move…" })));
   });
 
   it("collapses and expands every Dictionary on the page", async () => {

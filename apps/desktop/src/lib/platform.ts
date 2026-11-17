@@ -4,7 +4,3 @@ export const IS_MAC = typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test
 /** The name of the shortcut modifier, as keyboard hints show it. */
 export const MOD = IS_MAC ? "⌘" : "Ctrl";
 
-/** Whether the event holds the shortcut modifier (⌘ on macOS, Ctrl elsewhere) and no other. */
-export function withMod(event: KeyboardEvent): boolean {
-  return (IS_MAC ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey) && !event.altKey && !event.shiftKey;
-}

@@ -16,6 +16,9 @@ export interface Notch {
 /** How far below the top of the page a section's head must rise to become the current one. */
 const READING_LINE = 64;
 
+/** The same in the Mini Window's smaller page. */
+const COMPACT_READING_LINE = 48;
+
 const BY_HAND = ["wheel", "pointerdown", "keydown", "touchstart"] as const;
 
 /**
@@ -28,12 +31,15 @@ export function ThumbIndex({
   notches,
   unanswered,
   page,
+  compact = false,
 }: {
   notches: Notch[];
   /** How many of the Dictionaries asked had no Entry. */
   unanswered: number;
   /** The scrolling page the sections are on. */
   page: RefObject<HTMLElement | null>;
+  /** The Mini Window's 30px rail: smaller notches, no captions. */
+  compact?: boolean;
 }) {
   const { t } = useI18n();
   const [current, setCurrent] = useState(0);
@@ -45,7 +51,7 @@ export function ThumbIndex({
   const follow = useEffectEvent(() => {
     const scroller = page.current;
     if (!scroller) return;
-    const line = scroller.getBoundingClientRect().top + READING_LINE;
+    const line = scroller.getBoundingClientRect().top + (compact ? COMPACT_READING_LINE : READING_LINE);
     let reached = 0;
     notches.forEach((notch, index) => {
       const section = document.getElementById(sectionId(notch.dictionaryId));
@@ -95,6 +101,32 @@ export function ThumbIndex({
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
   }, []);
+
+  if (compact) {
+    return (
+      <nav aria-label={t.jumpToDictionary} className="pt-md">
+        {notches.map((notch, index) => (
+          <a
+            key={notch.dictionaryId}
+            href={`#${sectionId(notch.dictionaryId)}`}
+            title={`${notch.title} (Alt+${index + 1})`}
+            aria-label={notch.title}
+            aria-current={index === current}
+            onClick={(event) => {
+              event.preventDefault();
+              jump(index);
+            }}
+            style={{ "--i": index } as CSSProperties}
+            className="group mb-[5px] flex h-8 justify-end no-underline focus-visible:-outline-offset-2"
+          >
+            <b className="grid h-8 w-7 place-items-center rounded-l-2xl bg-notch font-serif text-[13px] font-bold text-notch-text group-hover:-translate-x-[3px] group-aria-[current=true]:bg-here group-aria-[current=true]:text-here-text motion-safe:animate-seat motion-safe:[animation-delay:calc(var(--i)*28ms)] motion-safe:transition-[translate,background-color] motion-safe:duration-180 motion-safe:ease-out-expo">
+              {markOf(notch.title)}
+            </b>
+          </a>
+        ))}
+      </nav>
+    );
+  }
 
   return (
     <nav aria-label={t.jumpToDictionary} className="pt-[26px]">

@@ -3,11 +3,13 @@ import { CommandPalette, type Command } from "./components/CommandPalette";
 import { EntryFrame } from "./components/EntryFrame";
 import { GroupSwitcher } from "./components/GroupSwitcher";
 import { COLUMN_ID, HeadwordColumn, optionId, type ColumnItem, type ColumnList } from "./components/HeadwordColumn";
+import { MiniWindowSettings } from "./components/MiniWindowSettings";
 import { NavButtons } from "./components/NavButtons";
 import { RecentLookups } from "./components/RecentLookups";
 import { sectionId, ThumbIndex } from "./components/ThumbIndex";
 import { EmptyLibrary, LibraryPage, OutlineButton, type LibraryActions } from "./components/LibraryPage";
 import { ReadingSettings } from "./components/ReadingSettings";
+import { DataSettings } from "./components/DataSettings";
 import { SearchField } from "./components/SearchField";
 import { UpdateNotice } from "./components/UpdateNotice";
 import { WordBookPage, type WordBookActions } from "./components/WordBookPage";
@@ -48,6 +50,8 @@ import {
   setWordNote,
   toggleWord,
   windowChrome,
+  onOpenInMain,
+  onWordBooksChanged,
   type Elsewhere,
   type Entry,
   type Group,
@@ -287,6 +291,18 @@ export function App() {
     void commit(headword);
     column.refresh(headword).catch(() => {});
   }
+
+  // The Mini Window hands a word over ("Open in main window"), and either window may save
+  // a word to the Word Book.
+  const openedFromMini = useEffectEvent((headword: string) => followLink(headword));
+  useEffect(() => {
+    const stops = [onOpenInMain((headword) => openedFromMini(headword)), onWordBooksChanged((books) => setWordBooks(books))].map((listening) =>
+      listening.catch(() => null),
+    );
+    return () => {
+      for (const stop of stops) void stop.then((unlisten) => unlisten?.());
+    };
+  }, []);
 
   /** The reader chose a way forward from a miss: a pattern to try or a headword. */
   function search(text: string) {
@@ -597,6 +613,29 @@ export function App() {
     setFolded({ page: pageKey(page), ids: new Set(fold ? page.entries.map((e) => e.dictionaryId) : []) });
   }
 
+  /**
+   * Opens the Library view at one of its settings sections, named by its heading, and puts
+   * the focus on the control named `control` there (or its first control). The sections
+   * load their settings themselves, so this waits a moment for the section to be there.
+   */
+  function reveal(section: string, control?: string) {
+    setColumnOpen(false);
+    setView("library");
+    let frames = 0;
+    const find = () => {
+      const heading = [...(pageRef.current?.querySelectorAll("section > h2") ?? [])].find((h) => h.textContent === section);
+      const target = heading?.parentElement?.querySelectorAll<HTMLElement>("button, input, select");
+      const wanted = target && [...target].find((element) => !control || element.textContent?.trim() === control);
+      if (heading && wanted) {
+        heading.scrollIntoView?.({ block: "start" });
+        wanted.focus();
+      } else if (++frames < 120) {
+        requestAnimationFrame(find);
+      }
+    };
+    requestAnimationFrame(find);
+  }
+
   /** Every action, for the command palette, as things stand now. */
   function commands(): Command[] {
     const found = view === "lookup" && page.kind === "found" ? page : null;
@@ -667,7 +706,12 @@ export function App() {
     );
     if (textSize < TEXT_SIZES.max) list.push({ label: t.largerText, run: () => appearance.setTextSize(textSize + 1) });
     if (textSize > TEXT_SIZES.min) list.push({ label: t.smallerText, run: () => appearance.setTextSize(textSize - 1) });
-    list.push({ label: t.cAddFolder, run: () => void actions.addFolder() }, { label: t.cRescan, run: () => void actions.rescan() });
+    list.push(
+      { label: t.cAddFolder, run: () => void actions.addFolder() },
+      { label: t.cRescan, run: () => void actions.rescan() },
+      { label: t.cMiniSettings, run: () => reveal(t.miniWindow) },
+      { label: t.cMoveData, run: () => reveal(t.yourData, t.moveData) },
+    );
     return list;
   }
 
@@ -750,6 +794,8 @@ export function App() {
             <>
               <LibraryPage library={library} busy={busy} notice={notice} actions={actions} />
               <ReadingSettings controls={reading} />
+              <MiniWindowSettings />
+              <DataSettings />
             </>
           ) : view === "wordBook" ? (
             <WordBookPage wordBooks={wordBooks ?? { books: [], current: null }} busy={busy} notice={bookNotice} actions={bookActions} />

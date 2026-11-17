@@ -15,6 +15,10 @@ fn main() {
         "history",
         "record_lookup",
         "clear_history",
+        "data_directory",
+        "choose_data_folder",
+        "move_data_directory",
+        "use_data_directory",
         "register_dictionary",
         "appearance",
         "set_theme",
@@ -42,6 +46,12 @@ fn main() {
         "set_current_group",
         "elsewhere",
         "window_chrome",
+        "mini_summons",
+        "close_mini",
+        "open_in_main",
+        "mini_settings",
+        "set_shortcut",
+        "set_watch_clipboard",
     ]);
     tauri_build::try_build(tauri_build::Attributes::new().app_manifest(manifest))
         .expect("failed to run tauri-build");

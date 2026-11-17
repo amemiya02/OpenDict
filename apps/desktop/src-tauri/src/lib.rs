@@ -2,6 +2,7 @@
 
 mod commands;
 mod entry_protocol;
+mod mini;
 mod state;
 mod window;
 
@@ -13,18 +14,23 @@ pub use state::{AppState, EntryView, LibraryView};
 /// kept in memory only (used by tests and development).
 pub const LIBRARY_FOLDER_ENV: &str = "OPENDICT_LIBRARY_FOLDER";
 
-/// Environment variable that overrides the data directory, where the Library file,
-/// preferences, History and Word Books are kept (used by tests and development).
+/// Environment variable that overrides the app's home folder: where the reader's data
+/// starts, and where a moved data directory is recorded (used by tests and development).
 pub const DATA_DIR_ENV: &str = "OPENDICT_DATA_DIR";
 
 /// Environment variable naming a folder that Word Books are exported into without asking
 /// the reader where (used by tests).
 pub const EXPORT_DIR_ENV: &str = "OPENDICT_EXPORT_DIR";
 
+/// Environment variable naming the folder the reader is taken to have chosen when asked
+/// for a folder for their data, without asking (used by tests).
+pub const PICK_DATA_FOLDER_ENV: &str = "OPENDICT_PICK_DATA_FOLDER";
+
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_process::init())
+        .plugin(mini::shortcut_plugin())
         .register_asynchronous_uri_scheme_protocol(
             entry_protocol::SCHEME,
             |context, request, responder| {
@@ -41,19 +47,20 @@ pub fn run() {
             app.handle()
                 .plugin(tauri_plugin_updater::Builder::new().build())?;
             let override_folder = std::env::var_os(LIBRARY_FOLDER_ENV).map(Into::into);
-            let data_dir = match std::env::var_os(DATA_DIR_ENV) {
+            let home = match std::env::var_os(DATA_DIR_ENV) {
                 Some(dir) => dir.into(),
                 None => app.path().app_data_dir()?,
             };
-            let library_file = data_dir.join("library.json");
-            let state = AppState::load(&library_file, override_folder, &data_dir);
+            let state = AppState::load(&home, override_folder);
             let appearance = state.appearance();
+            let data_dir = state.data_directory().path;
             commands::start_indexing(app.handle(), &state);
             app.manage(state);
             let chrome = window::build_main(app)?;
             app.manage(chrome);
-            // The reader's theme and zoom from the last session, as soon as the window is
-            // there: its frame and Mica follow the theme too.
+            mini::set_up(app, &data_dir)?;
+            // The reader's theme and zoom from the last session, as soon as the windows are
+            // there (the Mini Window too): their frames and Mica follow the theme.
             commands::apply_theme(app.handle(), appearance.theme);
             commands::apply_zoom(app.handle(), appearance.zoom);
             Ok(())
@@ -98,7 +105,17 @@ pub fn run() {
             commands::move_in_group,
             commands::set_current_group,
             commands::elsewhere,
+            commands::data_directory,
+            commands::choose_data_folder,
+            commands::move_data_directory,
+            commands::use_data_directory,
             window::window_chrome,
+            commands::mini_summons,
+            commands::close_mini,
+            commands::open_in_main,
+            commands::mini_settings,
+            commands::set_shortcut,
+            commands::set_watch_clipboard,
         ])
         .run(tauri::generate_context!())
         .expect("OpenDict failed to start");

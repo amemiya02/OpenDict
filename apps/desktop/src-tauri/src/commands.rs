@@ -9,11 +9,69 @@ use tauri_plugin_dialog::DialogExt;
 
 use opendict_core::ExportFormat;
 
-use crate::EXPORT_DIR_ENV;
+use crate::mini::settings::Role;
+use crate::mini::{self, Mini, MiniSettingsView, Summons};
 use crate::state::{
-    AppState, AppearanceView, Direction, ElsewhereView, EntryView, Language, LibraryView,
-    RegisterError, SuggestionView, SuggestionsView, Theme, WordBooksView,
+    AppState, AppearanceView, DataDirectoryError, DataDirectoryView, Direction, ElsewhereView,
+    EntryView, Language, LibraryView, RegisterError, SuggestionView, SuggestionsView, Theme,
+    WordBooksView,
 };
+use crate::{EXPORT_DIR_ENV, PICK_DATA_FOLDER_ENV};
+
+/// Where the reader's data is kept.
+#[tauri::command]
+pub fn data_directory(state: State<'_, AppState>) -> DataDirectoryView {
+    state.data_directory()
+}
+
+/// Asks the reader for a folder for their data with the system dialog. Returns `None`
+/// when the reader cancels. The dialog runs on the Rust side, so the interface needs no
+/// dialog permission of its own.
+#[tauri::command]
+pub async fn choose_data_folder(app: AppHandle) -> Result<Option<PathBuf>, String> {
+    if let Some(folder) = std::env::var_os(PICK_DATA_FOLDER_ENV) {
+        return Ok(Some(folder.into()));
+    }
+    let Some(folder) = app.dialog().file().blocking_pick_folder() else {
+        return Ok(None);
+    };
+    folder
+        .into_path()
+        .map(Some)
+        .map_err(|error| error.to_string())
+}
+
+/// Moves the reader's data into `path` and uses it from then on. Indexing that was
+/// stopped for the move starts again.
+#[tauri::command]
+pub async fn move_data_directory(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    path: PathBuf,
+) -> Result<DataDirectoryView, DataDirectoryError> {
+    let moved = state.move_data_directory(&path);
+    start_indexing(&app, &state);
+    if let Ok(view) = &moved {
+        mini::reload(&app, &view.path);
+    }
+    moved
+}
+
+/// Uses the data already in `path` from then on, leaving the data used until now where
+/// it is.
+#[tauri::command]
+pub async fn use_data_directory(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    path: PathBuf,
+) -> Result<DataDirectoryView, DataDirectoryError> {
+    let used = state.use_data_directory(&path);
+    start_indexing(&app, &state);
+    if let Ok(view) = &used {
+        mini::reload(&app, &view.path);
+    }
+    used
+}
 
 /// Unlocks a Dictionary that needs a registration code with the code and e-mail the
 /// reader entered; they are kept locally when they work. The unlocked Dictionary is
@@ -313,14 +371,21 @@ pub fn word_books(state: State<'_, AppState>) -> Result<WordBooksView, String> {
 /// in the reader's language, names the Word Book made for the first word.
 #[tauri::command]
 pub fn toggle_word(
+    app: AppHandle,
     state: State<'_, AppState>,
     headword: String,
     dictionary_id: String,
     dictionary_title: String,
     new_book_name: String,
 ) -> Result<WordBooksView, String> {
-    state.toggle_word(&headword, &dictionary_id, &dictionary_title, &new_book_name)
+    let view = state.toggle_word(&headword, &dictionary_id, &dictionary_title, &new_book_name)?;
+    // The other window (main or Mini) shows the word as saved too.
+    let _ = app.emit(WORD_BOOKS_EVENT, &view);
+    Ok(view)
 }
+
+/// The event that carries the Word Books to every window after a word is saved or taken out.
+pub const WORD_BOOKS_EVENT: &str = "word-books";
 
 #[tauri::command]
 pub fn create_word_book(state: State<'_, AppState>, name: String) -> Result<WordBooksView, String> {
@@ -418,4 +483,43 @@ fn file_name(name: &str) -> String {
     } else {
         safe.to_owned()
     }
+}
+
+/// The latest summons of the Mini Window, for a Mini Window that loaded after it.
+#[tauri::command]
+pub fn mini_summons(mini: State<'_, Mini>) -> Option<Summons> {
+    mini.last()
+}
+
+/// Esc in the Mini Window: it goes, and focus goes back to where the reader was.
+#[tauri::command]
+pub fn close_mini(app: AppHandle) {
+    mini::close(&app);
+}
+
+/// "Open in main window" from the Mini Window.
+#[tauri::command]
+pub fn open_in_main(app: AppHandle, headword: String) {
+    mini::open_in_main(&app, &headword);
+}
+
+#[tauri::command]
+pub fn mini_settings(mini: State<'_, Mini>) -> MiniSettingsView {
+    mini.view()
+}
+
+/// Changes one of the global shortcuts; `None` turns it off. Async: registering waits for
+/// the main thread.
+#[tauri::command]
+pub async fn set_shortcut(
+    app: AppHandle,
+    role: Role,
+    accelerator: Option<String>,
+) -> Result<MiniSettingsView, String> {
+    mini::set_shortcut(&app, role, accelerator.as_deref())
+}
+
+#[tauri::command]
+pub fn set_watch_clipboard(app: AppHandle, on: bool) -> Result<MiniSettingsView, String> {
+    mini::set_watch_clipboard(&app, on)
 }

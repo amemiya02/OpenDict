@@ -10,12 +10,15 @@
 
 import { spawn, execFileSync, type ChildProcess } from "node:child_process";
 import { createServer, type Server } from "node:http";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { release, tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { after, before, test } from "node:test";
 import assert from "node:assert/strict";
 import { chromium, type Browser, type Frame, type Page } from "playwright-core";
+
+/** The Mini Window's settings for the run (see src-tauri/src/mini/settings.rs). */
+const MINI_SHORTCUTS = { lookUpSelection: "Control+Shift+F9", showMainWindow: "Control+Shift+F10", watchClipboard: false };
 
 const repo = resolve(import.meta.dirname, "../../..");
 const targetDir = process.env.CARGO_TARGET_DIR ?? join(repo, "target");
@@ -48,6 +51,10 @@ before(async () => {
   cargo("sample_library", library);
   cargo("probe_library", join(library, "probes"), sinkUrl);
   writeFileSync(join(library, "notes.mdx"), "these are notes, not a dictionary");
+  // Global shortcuts no other application is likely to hold, without Alt (whose release
+  // would open the menu bar of whatever window is in front). They go when the app exits.
+  mkdirSync(join(scratch, "data"), { recursive: true });
+  writeFileSync(join(scratch, "data", "mini-window.json"), JSON.stringify(MINI_SHORTCUTS));
 
   // A free port of our own: other copies of the app may be under test at the same time.
   const port = await freePort();
@@ -58,6 +65,8 @@ before(async () => {
       OPENDICT_DATA_DIR: join(scratch, "data"),
       // Word Books export here instead of asking where with the system dialog.
       OPENDICT_EXPORT_DIR: join(scratch, "exports"),
+      // The folder the reader "chooses" when moving their data, without the system dialog.
+      OPENDICT_PICK_DATA_FOLDER: join(scratch, "synced"),
       // A WebView2 browser of our own: instances sharing a user data folder share one
       // browser process, and with it the debugging port of whichever started first.
       WEBVIEW2_USER_DATA_FOLDER: join(scratch, "webview"),
@@ -76,8 +85,8 @@ before(async () => {
       await new Promise((r) => setTimeout(r, 500));
     }
   }
-  const context = browser.contexts()[0]!;
-  page = context.pages()[0] ?? (await context.waitForEvent("page"));
+  // The main window; the Mini Window (mini.html) is the other page.
+  page = await pageOf((url) => !url.endsWith("/mini.html"));
   await page.waitForLoadState();
   // The status line fills in once the Library has been opened.
   await page.waitForFunction(() => Boolean(document.querySelector("footer")?.textContent?.trim()), null, { timeout: 30_000 });
@@ -94,6 +103,18 @@ after(async () => {
   // WebView2's browser processes let go of their user data folder a moment after the app exits.
   if (scratch) rmSync(scratch, { recursive: true, force: true, maxRetries: 20, retryDelay: 500 });
 });
+
+/** The app's page whose URL passes `wanted`, once it exists. */
+async function pageOf(wanted: (url: string) => boolean): Promise<Page> {
+  const context = browser!.contexts()[0]!;
+  const deadline = Date.now() + 30_000;
+  for (;;) {
+    const found = context.pages().find((p) => wanted(p.url()));
+    if (found) return found;
+    if (Date.now() > deadline) throw new Error(`no such page among ${context.pages().map((p) => p.url()).join(", ")}`);
+    await new Promise((r) => setTimeout(r, 200));
+  }
+}
 
 async function freePort(): Promise<number> {
   const probe = createServer();
@@ -366,7 +387,6 @@ test("the thumb index jumps between the Dictionaries on the page and follows the
 });
 
 test("the Library view lists the Dictionaries, and a disabled one stops answering", async () => {
-  const page = browser!.contexts()[0]!.pages()[0]!;
   const libraryButton = page.getByRole("button", { name: "Library", exact: true });
   await libraryButton.click();
   await page.getByRole("heading", { level: 1, name: "【Library】" }).waitFor({ timeout: 10_000 });
@@ -670,6 +690,98 @@ test("the window has the system's own title bar controls, Mica on Windows 11, an
   }
 });
 
+/**
+ * Presses keys at the operating system's level (as the reader's keyboard does), so that
+ * global shortcuts see them: down in order, then up in reverse. Virtual-key codes.
+ */
+function pressKeys(...keys: number[]) {
+  const send = (key: number, up: boolean) => `[OpenDictE2E.Keys]::keybd_event(${key}, 0, ${up ? 2 : 0}, [UIntPtr]::Zero)`;
+  const script = [
+    `Add-Type -Namespace OpenDictE2E -Name Keys -MemberDefinition '[DllImport("user32.dll")] public static extern void keybd_event(byte vk, byte scan, uint flags, UIntPtr extra);'`,
+    ...keys.map((key) => send(key, false)),
+    "Start-Sleep -Milliseconds 60",
+    ...[...keys].reverse().map((key) => send(key, true)),
+  ].join("; ");
+  execFileSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", script]);
+}
+
+/** The text on the system clipboard (empty when it holds none). Reads only. */
+function clipboardText(): string {
+  return execFileSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", "Get-Clipboard -Raw"], { encoding: "utf8" });
+}
+
+const VK = { CONTROL: 0x11, SHIFT: 0x10, F9: 0x78, F10: 0x79 };
+
+async function waitUntil(what: string, check: () => Promise<boolean>) {
+  const deadline = Date.now() + 10_000;
+  while (!(await check())) {
+    if (Date.now() > deadline) assert.fail(`timed out waiting until ${what}`);
+    await new Promise((r) => setTimeout(r, 100));
+  }
+}
+
+test("the global shortcut looks the selection up in the Mini Window, and Esc closes it and gives focus back", async () => {
+  const mini = await pageOf((url) => url.endsWith("/mini.html"));
+  // WebView2 keeps a hidden window's page "visible"; the window itself says whether it shows.
+  const shown = () =>
+    mini.evaluate(() =>
+      (window as unknown as { __TAURI_INTERNALS__: { invoke: (cmd: string, args: object) => Promise<boolean> } }).__TAURI_INTERNALS__.invoke(
+        "plugin:window|is_visible",
+        { label: "mini" },
+      ),
+    );
+  assert.equal(await shown(), false, "the Mini Window waits hidden");
+
+  // The reader selects a word in the main window (standing in for any application) ...
+  const search = page.getByRole("combobox", { name: "Type a word" });
+  await search.click();
+  await search.fill("serendipity");
+  // ... which the shortcut for the main window brings to the front first.
+  pressKeys(VK.CONTROL, VK.SHIFT, VK.F10);
+  await waitUntil("the main window is in front", () => page.evaluate(() => document.hasFocus()));
+  await search.selectText();
+  const clipboardBefore = clipboardText();
+
+  pressKeys(VK.CONTROL, VK.SHIFT, VK.F9);
+  await waitUntil("the Mini Window shows", shown);
+  await mini.getByRole("heading", { level: 1, name: "【serendipity】" }).waitFor({ timeout: 10_000 });
+  assert.equal(await mini.getByRole("searchbox", { name: "Type a word" }).inputValue(), "serendipity");
+  const frame = mini.getByRole("region", { name: "Sample English Dictionary", exact: true }).locator("iframe");
+  assert.equal(await frame.getAttribute("sandbox"), "allow-scripts");
+  assert.ok((await mini.getByRole("navigation", { name: "Jump to dictionary" }).getByRole("link").count()) >= 1, "a compact thumb index");
+  assert.equal(clipboardText(), clipboardBefore, "the clipboard holds what it held before");
+  await waitUntil("the Mini Window has the focus", () => mini.evaluate(() => document.hasFocus()));
+  if (process.env.OPENDICT_E2E_MINI_SCREENSHOT) await mini.screenshot({ path: process.env.OPENDICT_E2E_MINI_SCREENSHOT });
+
+  await mini.keyboard.press("Escape");
+  await waitUntil("the Mini Window is gone", async () => !(await shown()));
+  await waitUntil("the main window has the focus again", () => page.evaluate(() => document.hasFocus()));
+});
+
+test("the data directory moves into another folder, and the app keeps the reader's data there from then on", async () => {
+  const home = join(scratch, "data");
+  const synced = join(scratch, "synced");
+  await lookUp("apple");
+  assert.ok(existsSync(join(home, "history.json")), "History starts in the home folder");
+
+  await page.getByRole("button", { name: "Library", exact: true }).click();
+  const settings = page.getByRole("region", { name: "Your data" });
+  await settings.getByText(home, { exact: true }).waitFor({ timeout: 10_000 });
+  await settings.getByRole("button", { name: "Move…" }).click();
+  await settings.getByRole("status").filter({ hasText: `Your data is now in ${synced}.` }).waitFor({ timeout: 30_000 });
+  if (process.env.OPENDICT_E2E_DATA_SCREENSHOT) await page.screenshot({ path: process.env.OPENDICT_E2E_DATA_SCREENSHOT });
+
+  for (const name of ["history.json", "word-books.json", "preferences.json"]) {
+    assert.ok(existsSync(join(synced, name)), `${name} moved`);
+    assert.ok(!existsSync(join(home, name)), `${name} is no longer in the old place`);
+  }
+  await lookUp("cat");
+  // The Lookup is recorded just after its page shows.
+  const recorded = () => (JSON.parse(readFileSync(join(synced, "history.json"), "utf8")) as { headwords: string[] }).headwords.slice(0, 2);
+  for (let tries = 0; tries < 50 && recorded()[0] !== "cat"; tries++) await new Promise((r) => setTimeout(r, 100));
+  assert.deepEqual(recorded(), ["cat", "apple"], "History goes on in the new place");
+});
+
 // Runs last: unlocking adds a Dictionary, and with it a headword, to the Library.
 test("the command palette switches the theme and the interface language; shortcuts work inside an Entry", async () => {
   const palette = page.getByRole("dialog", { name: "Command palette" });
@@ -722,7 +834,6 @@ test("the command palette switches the theme and the interface language; shortcu
 });
 
 test("a Dictionary that needs a registration code opens once the reader enters it", async () => {
-  const page = browser!.contexts()[0]!.pages()[0]!;
   await page.getByRole("button", { name: "Library", exact: true }).click();
   const failure = page.getByRole("listitem").filter({ hasText: "sample-bought.mdx" });
   assert.match(await failure.innerText(), /needs its registration code/);

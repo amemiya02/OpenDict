@@ -16,6 +16,8 @@ export default defineConfig({
     // The oldest engines we ship on: WebKitGTK and WKWebView on macOS 14 (Safari 17).
     target: ["es2023", "safari17"],
     outDir: "dist",
+    // Two windows, two pages: the main window and the Mini Window.
+    rollupOptions: { input: { main: "index.html", mini: "mini.html" } },
   },
   test: {
     environment: "jsdom",

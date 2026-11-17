@@ -24,7 +24,10 @@ const RECOLOUR = "invert(0.92) hue-rotate(180deg)";
  *
  * The frame's document can say four things, by message, and nothing else: its height,
  * an `entry://` link the reader clicked (`onLink` gets the headword), a `sound://` link
- * the reader clicked (`onSound` gets a URL beneath this frame's own Dictionary) and a key
+ * The frame's document can say five things, by message, and nothing else: its height,
+ * an `entry://` link the reader clicked (`onLink` gets the headword), a `sound://` link
+ * the reader clicked (`onSound` gets a URL beneath this frame's own Dictionary), Esc
+ * pressed while the focus is in it (`onEscape`, which the Mini Window closes on) and a key
  * the reader pressed in it that is one of the window's shortcuts (lib/keymap.ts), which
  * the frame presses again on itself, so the window answers it as if pressed there.
  * Messages from any other window, of any other shape, or (for links and keys) with no
@@ -40,6 +43,7 @@ export function EntryFrame({
   onSound,
   textSize,
   recolour = false,
+  onEscape,
 }: {
   dictionaryTitle: string;
   src: string;
@@ -48,6 +52,7 @@ export function EntryFrame({
   /** The reader's base text size; the Entry scheme serves documents with it already. */
   textSize: number;
   recolour?: boolean;
+  onEscape?: () => void;
 }) {
   const { t } = useI18n();
   const frame = useRef<HTMLIFrameElement>(null);
@@ -83,6 +88,11 @@ export function EntryFrame({
         if (keys && readerActedHere()) press(keys, frame.current);
         return;
       }
+      case "escape":
+        // Esc is no user activation; that the reader's focus is in this frame is enough
+        // for something as harmless as closing the Mini Window.
+        if (document.activeElement === frame.current) onEscape?.();
+        return;
       case "sound": {
         if (typeof message.href !== "string" || !/^sound:\/\//i.test(message.href) || !readerActedHere()) return;
         const url = soundUrl(src, message.href);

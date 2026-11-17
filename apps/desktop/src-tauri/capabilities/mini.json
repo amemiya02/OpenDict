@@ -1,0 +1,19 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "mini",
+  "description": "The Mini Window may look words up, save them to the Word Book, close itself and hand a word to the main window, nothing else. Entry frames are sandboxed and get nothing.",
+  "windows": ["mini"],
+  "permissions": [
+    "core:default",
+    "allow-look-up",
+    "allow-suggest",
+    "allow-word-books",
+    "allow-toggle-word",
+    "allow-mini-summons",
+    "allow-close-mini",
+    "allow-open-in-main",
+    "allow-appearance",
+    "allow-set-zoom",
+    "core:window:allow-start-dragging"
+  ]
+}

@@ -54,11 +54,13 @@ export function useAppearance() {
     latest.current = appearance;
   });
 
-  useEffect(() => {
+  /** Reads the appearance again (the Mini Window does when summoned: the main window may have changed it). */
+  const reload = useCallback(() => {
     getAppearance().then((loaded) => {
       if (loaded) setAppearance(loaded);
     }, () => {});
   }, []);
+  useEffect(reload, [reload]);
 
   useEffect(() => {
     const root = document.documentElement;
@@ -107,7 +109,7 @@ export function useAppearance() {
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [setZoom]);
 
-  return { appearance, scheme, setTheme, setAllAsAuthored, setTextSize, setZoom };
+  return { appearance, scheme, setTheme, setAllAsAuthored, setTextSize, setZoom, reload };
 }
 
 export type AppearanceControls = ReturnType<typeof useAppearance>;

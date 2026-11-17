@@ -121,11 +121,12 @@ fn content_policy(dictionary_id: &str, allow_network: bool) -> Vec<(header::Head
     ]
 }
 
-/// Reports the document's height to the app so the frame can fit its content, and hands
-/// the app the reader's clicks on `entry://` and `sound://` links, which the frame cannot
-/// follow itself. The app accepts only these three message shapes, only from the frame it
-/// made, and checks every field (see EntryFrame.tsx). A link to an anchor in the same
-/// Entry (`entry://#sense2`) stays in the frame. A click the Dictionary's own scripts
+/// Reports the document's height to the app so the frame can fit its content, hands the
+/// app the reader's clicks on `entry://` and `sound://` links, which the frame cannot
+/// follow itself, passes Esc on (the Mini Window closes on it) and reports shortcut keys
+/// (below). The app accepts only these five message shapes, only from the frame it made,
+/// and checks every field (see EntryFrame.tsx). A link to an anchor in the same Entry
+/// (`entry://#sense2`) stays in the frame. A click the Dictionary's own scripts
 /// already handled (`preventDefault`) is left alone.
 ///
 /// Keys pressed in an Entry stay in its document, so the script also reports the keys of
@@ -162,6 +163,7 @@ parent.postMessage({opendict:"key",key:e.key,code:e.code,altKey:e.altKey,ctrlKey
 const ts=document.currentScript.previousElementSibling;
 addEventListener("message",e=>{const d=e.data;if(e.source!==parent||!d||d.opendict!=="textSize")return;
 const n=d.size;if(Number.isInteger(n)&&n>=10&&n<=32)ts.textContent=":where(html){font-size:"+n+"px}"});
+addEventListener("keydown",e=>{if(e.key==="Escape"&&!e.isComposing&&!e.defaultPrevented)parent.postMessage({opendict:"escape"},"*")});
 })();"#;
 
 /// Wraps Entry HTML in a document of its own. The app sets no type inside it (the
@@ -292,11 +294,7 @@ mod tests {
             .entry("cat", "<p>cat</p>")
             .write_to(library.join("plain.mdx"))
             .unwrap();
-        let state = AppState::load(
-            &folder.path().join("library.json"),
-            Some(library),
-            &folder.path().join("data"),
-        );
+        let state = AppState::load(&folder.path().join("data"), Some(library));
         let id = |title: &str| {
             let view = state.library();
             view.dictionaries

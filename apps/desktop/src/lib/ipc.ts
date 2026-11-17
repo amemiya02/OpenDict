@@ -384,3 +384,113 @@ export function setCurrentGroup(group: string | null): Promise<Library> {
 export function elsewhere(query: string): Promise<Elsewhere | null> {
   return invoke<Elsewhere | null>("elsewhere", { query });
 }
+
+/** Where the reader's data (History, Word Books, settings, indexes) is kept. */
+export interface DataDirectory {
+  path: string;
+  /** Whether it is where a new reader's data starts. */
+  isDefault: boolean;
+  /** Why it cannot be used, if it cannot (it may be on a drive that is not connected). */
+  problem: string | null;
+}
+
+/** Why the data directory did not move; the data stays where it was. */
+export type DataDirectoryError = { kind: "holdsData"; detail: string } | { kind: "failed"; detail: string };
+
+export function getDataDirectory(): Promise<DataDirectory> {
+  return invoke<DataDirectory>("data_directory");
+}
+
+/** Asks the reader for a folder with the system dialog; null when they cancel. */
+export function chooseDataFolder(): Promise<string | null> {
+  return invoke<string | null>("choose_data_folder");
+}
+
+/** Moves the reader's data into `path` and uses it from then on. Rejects with a DataDirectoryError. */
+export async function moveDataDirectory(path: string): Promise<DataDirectory> {
+  try {
+    return await invoke<DataDirectory>("move_data_directory", { path });
+  } catch (error) {
+    throw dataDirectoryError(error);
+  }
+}
+
+/** Uses the data already in `path` (or starts afresh there) from then on. Rejects with a DataDirectoryError. */
+export async function switchDataDirectory(path: string): Promise<DataDirectory> {
+  try {
+    return await invoke<DataDirectory>("use_data_directory", { path });
+  } catch (error) {
+    throw dataDirectoryError(error);
+  }
+}
+
+function dataDirectoryError(error: unknown): DataDirectoryError {
+  const typed = error as Partial<DataDirectoryError> | null;
+  if (typed && typeof typed === "object" && (typed.kind === "holdsData" || typed.kind === "failed")) return typed as DataDirectoryError;
+  return { kind: "failed", detail: String(error) };
+}
+
+/** Calls `handler` with the Word Books whenever a window saves a word or takes one out. */
+export function onWordBooksChanged(handler: (books: WordBooks) => void): Promise<UnlistenFn> {
+  return listen<WordBooks>("word-books", (event) => handler(event.payload));
+}
+
+// The Mini Window (apps/desktop/src-tauri/src/mini/mod.rs).
+
+/** What the Mini Window is to look up. `serial` tells two summonses of the same text apart. */
+export interface Summons {
+  text: string;
+  serial: number;
+}
+
+/** The latest summons, for a Mini Window that loaded after it was sent. */
+export function miniSummons(): Promise<Summons | null> {
+  return invoke<Summons | null>("mini_summons");
+}
+
+/** Calls `handler` each time the Mini Window is summoned (by the shortcut or clipboard watching). */
+export function onSummoned(handler: (summons: Summons) => void): Promise<UnlistenFn> {
+  return listen<Summons>("mini-summoned", (event) => handler(event.payload));
+}
+
+/** Closes the Mini Window and gives focus back to where the reader was. */
+export function closeMini(): Promise<void> {
+  return invoke<void>("close_mini");
+}
+
+/** Closes the Mini Window and looks `headword` up in the main window, brought forward. */
+export function openInMain(headword: string): Promise<void> {
+  return invoke<void>("open_in_main", { headword });
+}
+
+/** Calls `handler` in the main window with a headword the Mini Window hands over. */
+export function onOpenInMain(handler: (headword: string) => void): Promise<UnlistenFn> {
+  return listen<string>("open-in-main", (event) => handler(event.payload));
+}
+
+export type ShortcutRole = "lookUpSelection" | "showMainWindow";
+
+/** The Mini Window's settings. Shortcuts are accelerators such as `Control+Alt+KeyD`; null is off. */
+export interface MiniSettings {
+  lookUpSelection: string | null;
+  showMainWindow: string | null;
+  /** Looks up whatever the reader copies. Off by default. */
+  watchClipboard: boolean;
+  /** Shortcuts another application already has. */
+  unavailable: ShortcutRole[];
+  /** Why the settings file could not be read, if it could not. */
+  problem: string | null;
+}
+
+export function getMiniSettings(): Promise<MiniSettings> {
+  return invoke<MiniSettings>("mini_settings");
+}
+
+/** Changes a global shortcut; null turns it off. Rejects with the reason when it is refused. */
+export function setShortcut(role: ShortcutRole, accelerator: string | null): Promise<MiniSettings> {
+  return invoke<MiniSettings>("set_shortcut", { role, accelerator });
+}
+
+export function setWatchClipboard(on: boolean): Promise<MiniSettings> {
+  return invoke<MiniSettings>("set_watch_clipboard", { on });
+}
