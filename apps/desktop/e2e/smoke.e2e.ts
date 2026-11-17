@@ -812,7 +812,11 @@ test("the command palette switches the theme and the interface language; shortcu
   await page.getByRole("combobox", { name: "調べたい語を入力" }).waitFor({ timeout: 5_000 });
   assert.equal(await page.evaluate(() => document.documentElement.lang), "ja");
   await page.getByRole("heading", { level: 1, name: "【thumb】" }).waitFor({ timeout: 5_000 });
+  // The Mini Window, open or not, switches with it.
+  const mini = await pageOf((url) => url.endsWith("/mini.html"));
+  await mini.waitForFunction(() => document.documentElement.lang === "ja", null, { timeout: 5_000 });
   await run("表示言語：English");
+  await mini.waitForFunction(() => document.documentElement.lang === "en", null, { timeout: 5_000 });
   await page.getByRole("combobox", { name: "Type a word" }).waitFor({ timeout: 5_000 });
 
   // `/` focuses the search field from anywhere.
