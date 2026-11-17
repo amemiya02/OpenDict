@@ -5,20 +5,25 @@ use std::sync::OnceLock;
 use serde::{Deserialize, Serialize};
 
 use crate::error::{Error, Result};
-use crate::format::{DictionaryFormat, DictionaryReader, MdictFormat, OpenError, RawRecord};
+use crate::format::{
+    DictionaryFormat, DictionaryReader, MdictFormat, OpenError, RawRecord, Registration,
+};
 use crate::index::{HeadwordIndex, IndexedHeadword, MemoryIndex, Start, index_key};
 use crate::lemma;
+use crate::registrations::Registrations;
 use crate::scan::{self, Unit};
 
 /// Every Dictionary the reader has made available: the Dictionaries found in their
 /// Library Folders, in Library order, each enabled or not.
 ///
 /// A Library loaded from a file ([`Library::load`]) records its Library Folders, order
-/// and enabled states there after every change. Dictionary files are only ever read.
+/// and enabled states there after every change, and keeps the registration codes the
+/// reader enters in `registrations.json` beside it. Dictionary files are only ever read.
 pub struct Library {
     file: Option<PathBuf>,
     formats: Vec<&'static dyn DictionaryFormat>,
     record: Record,
+    registrations: Registrations,
     folders: Vec<LibraryFolder>,
     dictionaries: Vec<Dictionary>,
     failures: Vec<OpenFailure>,
@@ -170,6 +175,7 @@ impl Library {
             }
         };
         let mut library = Library::new(Some(file.to_owned()), formats, record);
+        library.registrations = Registrations::load(file.with_file_name("registrations.json"))?;
         library.rescan()?;
         Ok(library)
     }
@@ -200,6 +206,7 @@ impl Library {
             file,
             formats: formats.to_vec(),
             record,
+            registrations: Registrations::default(),
             folders: Vec::new(),
             dictionaries: Vec::new(),
             failures: Vec::new(),
@@ -275,7 +282,11 @@ impl Library {
                 {
                     continue;
                 }
-                match format.open(path) {
+                let opened = match self.registrations.get(path) {
+                    Some(registration) => format.open_registered(path, registration),
+                    None => format.open(path),
+                };
+                match opened {
                     Ok(reader) => {
                         let info = describe(id, &unit, reader.as_ref(), &self.record);
                         dictionaries.push(Dictionary::new(info, reader));
@@ -316,6 +327,43 @@ impl Library {
     /// The Dictionary files that were found but could not be opened.
     pub fn failures(&self) -> &[OpenFailure] {
         &self.failures
+    }
+
+    /// Unlocks the Dictionary at `path`, which failed to open for want of its registration
+    /// code, with the code and e-mail (or device ID) the reader entered. When they unlock
+    /// it, they are kept, so it opens on every later scan, and it joins the Library. When
+    /// they do not, nothing is kept and the error says why.
+    pub fn register(&mut self, path: &Path, registration: Registration) -> Result<()> {
+        let waiting = self.failures.iter().any(|failure| {
+            failure.path == path
+                && matches!(
+                    failure.reason,
+                    OpenError::NeedsRegistrationCode | OpenError::WrongRegistrationCode
+                )
+        });
+        let format = self
+            .formats
+            .iter()
+            .find(|format| format.recognises(path))
+            .filter(|_| waiting)
+            .ok_or_else(|| Error::UnknownDictionary(path.display().to_string()))?;
+        match format.open_registered(path, &registration) {
+            Ok(reader) => drop(reader),
+            Err(OpenError::WrongRegistrationCode) => {
+                return Err(Error::WrongRegistration(path.to_owned()));
+            }
+            Err(OpenError::NeedsRegistrationCode) => {
+                return Err(Error::RegistrationCodeNeeded(path.to_owned()));
+            }
+            Err(reason) => {
+                return Err(Error::Dictionary {
+                    dictionary: path.display().to_string(),
+                    reason: reason.to_string(),
+                });
+            }
+        }
+        self.registrations.insert(path, registration)?;
+        self.rescan()
     }
 
     /// Enables or disables a Dictionary. A disabled Dictionary stays in the Library but

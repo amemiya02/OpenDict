@@ -10,12 +10,14 @@ import {
   getLibrary,
   lookUp,
   moveDictionary,
+  registerDictionary,
   removeLibraryFolder,
   rescanLibrary,
   setAllowNetwork,
   setDictionaryEnabled,
   type Entry,
   type Library,
+  type RegisterError,
 } from "./lib/ipc";
 import { useHeadwordColumn } from "./lib/useHeadwordColumn";
 
@@ -149,6 +151,22 @@ export function App() {
     rescan: () => change(rescanLibrary),
     setEnabled: (id, enabled) => change(() => setDictionaryEnabled(id, enabled)),
     move: (id, direction) => change(() => moveDictionary(id, direction)),
+    register: async (path, email, code) => {
+      setBusy(true);
+      setNotice(null);
+      try {
+        const updated = await registerDictionary(path, email, code);
+        setLibrary(updated);
+        const unlocked = updated.dictionaries.find((dictionary) => dictionary.path === path);
+        if (unlocked) setNotice(t.unlocked(unlocked.title));
+        return null;
+      } catch (error) {
+        // The form words the error beside the fields it is about.
+        return error as RegisterError;
+      } finally {
+        setBusy(false);
+      }
+    },
   };
 
   const enabledCount = library?.dictionaries.filter((d) => d.enabled).length ?? 0;

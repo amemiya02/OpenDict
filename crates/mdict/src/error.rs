@@ -26,6 +26,10 @@ pub enum Error {
     #[error("the dictionary is encrypted and needs a registration code")]
     Encrypted,
 
+    /// The registration code and e-mail (or device ID) given do not unlock this file.
+    #[error("the registration code or e-mail does not unlock this dictionary")]
+    WrongRegistration,
+
     /// A part of the file is damaged: a checksum, size or offset does not add up.
     #[error("damaged MDict file: {0}")]
     Corrupt(&'static str),
