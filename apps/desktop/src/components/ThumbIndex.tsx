@@ -84,7 +84,13 @@ export function ThumbIndex({
     };
     scroller.addEventListener("scroll", onScroll, { passive: true });
     for (const type of BY_HAND) scroller.addEventListener(type, byHand, { passive: true });
+    // Entry frames grow as their content loads, which moves the sections without any
+    // scrolling: follow those moves too, so the current notch never goes stale. (An observer
+    // also reports each element once when it starts observing it.)
+    const resized = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(onScroll);
+    for (const child of scroller.children) resized?.observe(child);
     return () => {
+      resized?.disconnect();
       scroller.removeEventListener("scroll", onScroll);
       for (const type of BY_HAND) scroller.removeEventListener(type, byHand);
     };

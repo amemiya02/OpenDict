@@ -188,6 +188,14 @@ export function App() {
     if (view !== "lookup") pageRef.current?.querySelector<HTMLElement>("h1")?.focus();
   }, [view]);
 
+  // A new word, or the same word from another Group, opens at the top of its page, not
+  // wherever the reader had scrolled the last one to.
+  const shown =
+    page.kind === "found" ? `found:${pageKey(page)}` : page.kind === "missing" ? `missing:${page.query}` : page.kind;
+  useEffect(() => {
+    pageRef.current?.scrollTo?.({ top: 0 });
+  }, [shown]);
+
   function setPageNow(next: PageState) {
     pageRequests.current++;
     setPage(next);
