@@ -2,6 +2,7 @@
 
 mod commands;
 mod entry_protocol;
+mod mini;
 mod state;
 mod window;
 
