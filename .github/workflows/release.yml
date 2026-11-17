@@ -57,7 +57,7 @@ jobs:
           if [ -z "$id" ]; then
             gh release create "$GITHUB_REF_NAME" --draft --verify-tag \
               --title "OpenDict ${GITHUB_REF_NAME#v}" \
-              --notes "Installers for Windows, macOS and Linux are attached below. OpenDict is not code-signed yet, so Windows and macOS warn on first launch: see \"Installing\" in the README. Installed copies update themselves."
+              --notes "Installers for Windows, macOS and Linux are attached below. OpenDict is not code-signed yet, so Windows and macOS warn on first launch: see \"Install\" in the README. Installed copies update themselves."
             id=$(find_release)
           fi
           echo "id=$id" >> "$GITHUB_OUTPUT"
