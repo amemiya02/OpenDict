@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { EntryFrame } from "./components/EntryFrame";
-import { sectionId } from "./components/ThumbIndex";
+import { sectionId, ThumbIndex } from "./components/ThumbIndex";
 import { EmptyLibrary, LibraryPage, OutlineButton, type LibraryActions } from "./components/LibraryPage";
 import { SearchField } from "./components/SearchField";
 import { UpdateNotice } from "./components/UpdateNotice";
@@ -82,6 +82,7 @@ export function App() {
   };
 
   const enabledCount = library?.dictionaries.filter((d) => d.enabled).length ?? 0;
+  const asked = page.kind === "found" ? Math.max(enabledCount, page.entries.length) : enabledCount;
 
   return (
     <div className="grid h-full grid-rows-[48px_minmax(0,1fr)_26px]">
@@ -102,13 +103,27 @@ export function App() {
         </div>
       </header>
 
-      <main ref={pageRef} aria-label={t.pageLabel} className="min-h-0 overflow-y-auto pt-[18px] pr-[30px] pb-12 pl-xl">
-        {view === "library" && library ? (
-          <LibraryPage library={library} busy={busy} notice={notice} actions={actions} />
-        ) : (
-          <PageContent page={page} library={library} busy={busy} notice={notice} onAddFolder={actions.addFolder} />
-        )}
-      </main>
+      <div className="grid min-h-0 grid-cols-[minmax(0,1fr)_auto]">
+        <main ref={pageRef} aria-label={t.pageLabel} className="min-h-0 overflow-y-auto pt-[18px] pr-[30px] pb-12 pl-xl">
+          {view === "library" && library ? (
+            <LibraryPage library={library} busy={busy} notice={notice} actions={actions} />
+          ) : (
+            <PageContent page={page} asked={asked} library={library} busy={busy} notice={notice} onAddFolder={actions.addFolder} />
+          )}
+        </main>
+        {view === "lookup" ? (
+          <div className="w-[168px] min-h-0 overflow-hidden max-[1100px]:w-[46px]">
+            {page.kind === "found" ? (
+              <ThumbIndex
+                key={page.headword}
+                notches={page.entries.map((e) => ({ dictionaryId: e.dictionaryId, title: e.dictionaryTitle }))}
+                unanswered={asked - page.entries.length}
+                page={pageRef}
+              />
+            ) : null}
+          </div>
+        ) : null}
+      </div>
 
       <footer className="flex items-center gap-[18px] overflow-hidden border-t border-rule px-xl text-label whitespace-nowrap text-text-secondary tabular-nums select-none">
         <span>{library && !library.problem ? t.libraryCount(enabledCount) : null}</span>
@@ -120,12 +135,15 @@ export function App() {
 
 function PageContent({
   page,
+  asked,
   library,
   busy,
   notice,
   onAddFolder,
 }: {
   page: PageState;
+  /** How many Dictionaries the Lookup ran against. */
+  asked: number;
   library: Library | null;
   busy: boolean;
   notice: string | null;
@@ -139,7 +157,7 @@ function PageContent({
           key={page.headword}
           headword={page.headword}
           entries={page.entries}
-          asked={library?.dictionaries.filter((d) => d.enabled).length ?? page.entries.length}
+          asked={asked}
         />
       );
     case "missing":
@@ -198,7 +216,7 @@ function EntryPage({ headword, entries: initial, asked }: { headword: string; en
       <div className="flex flex-wrap items-baseline gap-x-md gap-y-xs border-b-[3px] border-double border-rule pb-2.5">
         <h1 className="-ml-3.5 font-serif text-display font-bold [overflow-wrap:anywhere]">【{headword}】</h1>
         {pronunciation ? <span className="font-serif text-[16px] text-text-secondary">{pronunciation}</span> : null}
-        <span className="text-[12px] text-text-secondary">{t.answered(entries.length, Math.max(asked, entries.length))}</span>
+        <span className="text-[12px] text-text-secondary">{t.answered(entries.length, asked)}</span>
       </div>
       {entries.map((entry) => {
         const open = !folded.has(entry.dictionaryId);

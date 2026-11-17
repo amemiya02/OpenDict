@@ -44,6 +44,8 @@ export const en = {
   lookupFailed: (reason: string) => `The lookup failed: ${reason}`,
   collapse: "Collapse",
   expand: "Expand",
+  jumpToDictionary: "Jump to dictionary",
+  withoutEntry: (n: number) => `${n} without an entry`,
   allowNetwork: "Allow network access",
   networkAllowed: "This dictionary may use the network. Click to block it.",
   networkBlocked: "This dictionary is kept off the network. Click to allow it.",

@@ -55,6 +55,14 @@
   --spacing-xl: 34px;
 
   --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
+
+  /* A thumb notch seating in from the fore-edge when a Lookup lands. */
+  --animate-seat: seat 0.32s var(--ease-out-expo) backwards;
+  @keyframes seat {
+    from {
+      translate: 100% 0;
+    }
+  }
 }
 
 /* Semantic colours. Day is the open page; night is the closed book (navy bookcloth). */
@@ -74,6 +82,7 @@
   --field-hover: var(--color-paper-shade);
   --notch: var(--color-ink);
   --notch-ink: var(--color-india-paper);
+  --here-ink: var(--color-here-ink);
 }
 
 @media (prefers-color-scheme: dark) {
@@ -92,6 +101,7 @@
     --field-hover: #2a385e;
     --notch: var(--color-cloth-notch);
     --notch-ink: var(--color-night-paper-ink);
+    --here-ink: var(--color-bookcloth-navy);
   }
 }
 
@@ -103,6 +113,7 @@
   --color-hair: var(--hairline);
   --color-rule: var(--rule);
   --color-here: var(--here);
+  --color-here-text: var(--here-ink);
   --color-cover: var(--cover);
   --color-field: var(--field);
   --color-field-text: var(--field-ink);

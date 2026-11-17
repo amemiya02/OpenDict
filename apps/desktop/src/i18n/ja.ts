@@ -45,6 +45,8 @@ export const ja = {
   lookupFailed: (reason: string) => `検索に失敗しました：${reason}`,
   collapse: "折りたたむ",
   expand: "展開する",
+  jumpToDictionary: "辞書へジャンプ",
+  withoutEntry: (n: number) => `${n} 冊は項目なし`,
   allowNetwork: "ネットワークへのアクセスを許可",
   networkAllowed: "この辞書はネットワークを使えます。クリックで遮断します。",
   networkBlocked: "この辞書はネットワークから遮断されています。クリックで許可します。",

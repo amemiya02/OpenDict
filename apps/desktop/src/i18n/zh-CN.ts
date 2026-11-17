@@ -45,6 +45,8 @@ export const zhCN = {
   lookupFailed: (reason: string) => `查词失败：${reason}`,
   collapse: "折叠",
   expand: "展开",
+  jumpToDictionary: "词典跳转",
+  withoutEntry: (n: number) => `${n} 本无此词条`,
   allowNetwork: "允许访问网络",
   networkAllowed: "此词典可以访问网络。点击以禁止。",
   networkBlocked: "此词典无法访问网络。点击以允许。",
