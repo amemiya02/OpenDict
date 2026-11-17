@@ -21,6 +21,10 @@ pub const DATA_DIR_ENV: &str = "OPENDICT_DATA_DIR";
 /// the reader where (used by tests).
 pub const EXPORT_DIR_ENV: &str = "OPENDICT_EXPORT_DIR";
 
+/// Environment variable naming the folder the reader is taken to have chosen when asked
+/// for a folder for their data, without asking (used by tests).
+pub const PICK_DATA_FOLDER_ENV: &str = "OPENDICT_PICK_DATA_FOLDER";
+
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
@@ -89,6 +93,10 @@ pub fn run() {
             commands::history,
             commands::record_lookup,
             commands::clear_history,
+            commands::data_directory,
+            commands::choose_data_folder,
+            commands::move_data_directory,
+            commands::use_data_directory,
             window::window_chrome,
         ])
         .run(tauri::generate_context!())

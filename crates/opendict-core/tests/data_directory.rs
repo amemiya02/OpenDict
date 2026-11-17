@@ -38,7 +38,12 @@ fn fill(data: &DataDirectory, dictionaries: &Path) {
         dictionary_title: "Sample".to_owned(),
     };
     books
-        .toggle(book, "apple", from, UNIX_EPOCH + Duration::from_secs(1_700_000_000))
+        .toggle(
+            book,
+            "apple",
+            from,
+            UNIX_EPOCH + Duration::from_secs(1_700_000_000),
+        )
         .unwrap();
 
     let mut preferences = Preferences::load(&data.preferences_file()).unwrap();
@@ -59,7 +64,11 @@ fn assert_no_data_in(folder: &Path) {
         .into_iter()
         .filter(|name| DATA.contains(&name.as_str()))
         .collect();
-    assert!(left.is_empty(), "data left in {}: {left:?}", folder.display());
+    assert!(
+        left.is_empty(),
+        "data left in {}: {left:?}",
+        folder.display()
+    );
 }
 
 /// The names in `folder`, sorted.
@@ -105,7 +114,10 @@ fn contents(data: &DataDirectory) -> (Vec<String>, Vec<String>, Vec<String>, boo
         .map(|entry| entry.html)
         .collect();
     let id = library.dictionaries().next().unwrap().id.clone();
-    let history = History::load(&data.history_file()).unwrap().headwords().to_vec();
+    let history = History::load(&data.history_file())
+        .unwrap()
+        .headwords()
+        .to_vec();
     let books = WordBooks::load(&data.word_books_file()).unwrap();
     let words = books.books()[0]
         .words
@@ -156,7 +168,11 @@ fn a_folder_that_already_holds_opendict_data_is_not_overwritten() {
     let other = tempfile::tempdir().unwrap();
     let mut data = DataDirectory::locate(home.path()).unwrap();
     fill(&data, dictionaries.path());
-    std::fs::write(other.path().join("history.json"), r#"{"headwords":["theirs"]}"#).unwrap();
+    std::fs::write(
+        other.path().join("history.json"),
+        r#"{"headwords":["theirs"]}"#,
+    )
+    .unwrap();
     std::fs::write(other.path().join("notes.txt"), "not OpenDict's").unwrap();
 
     let error = relocate(&mut data, other.path()).unwrap_err();
@@ -171,7 +187,10 @@ fn a_folder_that_already_holds_opendict_data_is_not_overwritten() {
         r#"{"headwords":["theirs"]}"#
     );
     assert_eq!(data.path(), home.path());
-    assert_eq!(DataDirectory::locate(home.path()).unwrap().path(), home.path());
+    assert_eq!(
+        DataDirectory::locate(home.path()).unwrap().path(),
+        home.path()
+    );
     assert_eq!(contents(&data), expected());
 }
 
@@ -205,13 +224,20 @@ fn the_data_can_move_again_and_back_home() {
     relocate(&mut data, first.path()).unwrap();
     relocate(&mut data, second.path()).unwrap();
     assert_no_data_in(first.path());
-    assert_eq!(DataDirectory::locate(home.path()).unwrap().path(), second.path());
+    assert_eq!(
+        DataDirectory::locate(home.path()).unwrap().path(),
+        second.path()
+    );
 
     relocate(&mut data, home.path()).unwrap();
     assert_no_data_in(second.path());
     let after_restart = DataDirectory::locate(home.path()).unwrap();
     assert!(after_restart.is_default());
-    assert_eq!(names(home.path()), DATA, "only the reader's data is in the home folder");
+    assert_eq!(
+        names(home.path()),
+        DATA,
+        "only the reader's data is in the home folder"
+    );
     assert_eq!(contents(&after_restart), expected());
 }
 
@@ -302,10 +328,16 @@ fn a_move_that_fails_part_way_leaves_the_data_where_it_was_and_nothing_in_the_ne
     let error = relocate(&mut data, &to).unwrap_err();
     drop(locked);
 
-    assert!(matches!(&error, opendict_core::Error::DataDirectory { .. }), "{error:?}");
+    assert!(
+        matches!(&error, opendict_core::Error::DataDirectory { .. }),
+        "{error:?}"
+    );
     assert!(!to.exists(), "the half copy is cleared away");
     assert_eq!(data.path(), home.path());
-    assert_eq!(DataDirectory::locate(home.path()).unwrap().path(), home.path());
+    assert_eq!(
+        DataDirectory::locate(home.path()).unwrap().path(),
+        home.path()
+    );
     assert_eq!(names(home.path()), DATA);
     assert_eq!(contents(&data), expected());
 
@@ -339,7 +371,10 @@ fn a_cancelled_move_leaves_the_data_where_it_was() {
     assert!(synced.path().exists(), "a folder that was there stays");
     assert_eq!(names(synced.path()), Vec::<String>::new());
     assert_eq!(data.path(), home.path());
-    assert_eq!(DataDirectory::locate(home.path()).unwrap().path(), home.path());
+    assert_eq!(
+        DataDirectory::locate(home.path()).unwrap().path(),
+        home.path()
+    );
     assert_eq!(contents(&data), expected());
 }
 
@@ -374,7 +409,10 @@ fn a_move_cut_short_by_a_crash_leaves_the_data_where_it_was_and_can_be_tried_aga
 
     relocate(&mut data, synced.path()).unwrap();
     assert_eq!(contents(&data), expected());
-    assert_eq!(DataDirectory::locate(home.path()).unwrap().path(), synced.path());
+    assert_eq!(
+        DataDirectory::locate(home.path()).unwrap().path(),
+        synced.path()
+    );
     assert_eq!(names(synced.path()), DATA);
 }
 
@@ -385,7 +423,12 @@ fn hold_against_removal(folder: &Path) -> Option<Box<dyn std::any::Any>> {
     {
         use std::os::windows::fs::OpenOptionsExt;
         const FILE_SHARE_READ: u32 = 1;
-        let file = std::fs::read_dir(folder).unwrap().next().unwrap().unwrap().path();
+        let file = std::fs::read_dir(folder)
+            .unwrap()
+            .next()
+            .unwrap()
+            .unwrap()
+            .path();
         let held = std::fs::OpenOptions::new()
             .read(true)
             .share_mode(FILE_SHARE_READ)
@@ -435,7 +478,10 @@ fn data_that_cannot_be_removed_from_the_old_place_is_reported_and_does_not_block
     drop(held);
 
     assert_eq!(moved.left_behind, [home.path().join("indexes")]);
-    assert_eq!(DataDirectory::locate(home.path()).unwrap().path(), synced.path());
+    assert_eq!(
+        DataDirectory::locate(home.path()).unwrap().path(),
+        synced.path()
+    );
     assert_eq!(contents(&data), expected());
 
     relocate(&mut data, home.path()).unwrap();

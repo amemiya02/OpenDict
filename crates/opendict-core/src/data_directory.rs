@@ -167,10 +167,7 @@ impl DataDirectory {
 
         let mut copy = Copy {
             done: 0,
-            total: present
-                .iter()
-                .map(|name| size(&self.path.join(name)))
-                .sum(),
+            total: present.iter().map(|name| size(&self.path.join(name))).sum(),
             progress,
         };
         let mut outcome = Ok(ControlFlow::Continue(()));
@@ -297,7 +294,10 @@ fn resolve(path: &Path) -> PathBuf {
     let mut existing = path;
     loop {
         if let Ok(resolved) = existing.canonicalize() {
-            return rest.iter().rev().fold(resolved, |path, name| path.join(name));
+            return rest
+                .iter()
+                .rev()
+                .fold(resolved, |path, name| path.join(name));
         }
         match (existing.parent(), existing.file_name()) {
             (Some(parent), Some(name)) => {

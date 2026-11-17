@@ -7,8 +7,8 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 pub use opendict_core::Theme;
 use opendict_core::{
-    DataDirectory, Error as CoreError, ExportFormat, History, IndexState, Library, Move,
-    OpenError, Preferences, Registration, SavedFrom, Suggestion, WordBookId, WordBooks,
+    DataDirectory, Error as CoreError, ExportFormat, History, IndexState, Library, Move, OpenError,
+    Preferences, Registration, SavedFrom, Suggestion, WordBookId, WordBooks,
 };
 use serde::{Deserialize, Serialize};
 
@@ -308,7 +308,10 @@ impl AppState {
     /// Uses the data already in `folder` (starting afresh if there is none) from then
     /// on; the data used until now stays where it is. Indexing stops for the switch;
     /// start it again afterwards.
-    pub fn use_data_directory(&self, folder: &Path) -> Result<DataDirectoryView, DataDirectoryError> {
+    pub fn use_data_directory(
+        &self,
+        folder: &Path,
+    ) -> Result<DataDirectoryView, DataDirectoryError> {
         let home = self.inner.home.clone();
         self.reload_data(|data| {
             *data = Ok(DataDirectory::use_folder(&home, folder)
@@ -321,7 +324,9 @@ impl AppState {
     /// the reader's data again from wherever it is afterwards.
     fn reload_data(
         &self,
-        change: impl FnOnce(&mut Result<DataDirectory, DataDirectoryView>) -> Result<(), DataDirectoryError>,
+        change: impl FnOnce(
+            &mut Result<DataDirectory, DataDirectoryView>,
+        ) -> Result<(), DataDirectoryError>,
     ) -> Result<DataDirectoryView, DataDirectoryError> {
         self.cancel_indexing();
         self.wait_for_indexing();
@@ -884,7 +889,10 @@ struct Loaded {
 }
 
 impl Loaded {
-    fn from(data: &Result<DataDirectory, DataDirectoryView>, override_folder: Option<&Path>) -> Loaded {
+    fn from(
+        data: &Result<DataDirectory, DataDirectoryView>,
+        override_folder: Option<&Path>,
+    ) -> Loaded {
         let data = match data {
             Ok(data) => data,
             Err(view) => {
@@ -1279,7 +1287,10 @@ mod tests {
         state.rescan().unwrap();
 
         assert_eq!(state.look_up("serendipity").unwrap().len(), 1);
-        assert!(!data.path().join("library.json").exists(), "the reader's Library file is not touched");
+        assert!(
+            !data.path().join("library.json").exists(),
+            "the reader's Library file is not touched"
+        );
         assert!(
             !data.path().join("indexes").exists(),
             "nor is anything stored beside it"
@@ -1682,7 +1693,10 @@ mod tests {
         assert!(view.problem.is_some());
         assert!(state.library().problem.is_some());
         assert!(state.history().is_err());
-        assert!(state.record_lookup("lost").is_err(), "nothing is written elsewhere");
+        assert!(
+            state.record_lookup("lost").is_err(),
+            "nothing is written elsewhere"
+        );
         let view = state
             .use_data_directory(&synced.path().join("Unplugged"))
             .unwrap();
