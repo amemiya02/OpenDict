@@ -69,6 +69,7 @@ export const zhCN = {
   lemmatized: "形态还原",
   startHint: "输入词头。↑ ↓ 选词，Enter 查词。",
   lookupFailed: (reason: string) => `查词失败：${reason}`,
+  pronounce: "发音",
   allowNetwork: "允许访问网络",
   networkAllowed: "此词典可以访问网络。点击以禁止。",
   networkBlocked: "此词典无法访问网络。点击以允许。",

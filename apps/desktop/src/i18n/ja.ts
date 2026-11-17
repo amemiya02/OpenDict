@@ -69,6 +69,7 @@ export const ja = {
   lemmatized: "原形に変換",
   startHint: "語を入力してください。↑ ↓ で見出し語を選び、Enter で引きます。",
   lookupFailed: (reason: string) => `検索に失敗しました：${reason}`,
+  pronounce: "発音",
   allowNetwork: "ネットワークへのアクセスを許可",
   networkAllowed: "この辞書はネットワークを使えます。クリックで遮断します。",
   networkBlocked: "この辞書はネットワークから遮断されています。クリックで許可します。",

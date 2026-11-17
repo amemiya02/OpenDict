@@ -68,6 +68,7 @@ export const en = {
   lemmatized: "Lemmatized",
   startHint: "Type a word. ↑ and ↓ move through the headwords; Enter looks one up.",
   lookupFailed: (reason: string) => `The lookup failed: ${reason}`,
+  pronounce: "Pronounce",
   allowNetwork: "Allow network access",
   networkAllowed: "This dictionary may use the network. Click to block it.",
   networkBlocked: "This dictionary is kept off the network. Click to allow it.",

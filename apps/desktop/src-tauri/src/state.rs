@@ -43,6 +43,9 @@ pub struct EntryView {
     pub src: String,
     /// Whether the reader allowed this Dictionary network access.
     pub allow_network: bool,
+    /// The first audio the Entry offers, as the path of its `sound://` link, for the
+    /// Pronounce action. The interface plays it from the Dictionary's prefix at `src`.
+    pub pronunciation: Option<String>,
 }
 
 /// What the headword column offers for a query: the Lookup result shape settled by the
@@ -250,6 +253,7 @@ impl AppState {
             .map(|entry| EntryView {
                 src: entry_protocol::entry_url(&entry.dictionary_id, headword),
                 allow_network: self.allows_network(&entry.dictionary_id),
+                pronunciation: entry.sounds().into_iter().next(),
                 dictionary_id: entry.dictionary_id,
                 dictionary_title: entry.dictionary_title,
             })
@@ -710,7 +714,8 @@ mod tests {
                 "dictionaryId": id,
                 "dictionaryTitle": "Sample Dictionary",
                 "src": entry_protocol::entry_url(id, "serendipity"),
-                "allowNetwork": false
+                "allowNetwork": false,
+                "pronunciation": null
             }])
         );
     }

@@ -10,6 +10,7 @@ mod index;
 mod indexing;
 mod lemma;
 mod library;
+mod links;
 mod preferences;
 mod registrations;
 mod scan;
