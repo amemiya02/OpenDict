@@ -18,8 +18,8 @@ const MAX_HEIGHT = 200_000;
  * The frame's document can say three things, by message, and nothing else: its height,
  * an `entry://` link the reader clicked (`onLink` gets the headword) and a `sound://` link
  * the reader clicked (`onSound` gets a URL beneath this frame's own Dictionary). Messages
- * from any other window, of any other shape, or (for links) with no reader action behind
- * them are dropped.
+ * from any other window, of any other shape, or (for links) with no reader action in this
+ * frame behind them are dropped.
  */
 export function EntryFrame({
   dictionaryTitle,
@@ -36,6 +36,15 @@ export function EntryFrame({
   const frame = useRef<HTMLIFrameElement>(null);
   const [height, setHeight] = useState(INITIAL_HEIGHT);
 
+  /**
+   * Whether the reader has just clicked (or pressed a key) inside this frame: focus is in
+   * it and the reader acted a moment ago. A script cannot fake either, so a Dictionary
+   * cannot start Lookups or sounds on its own, say as soon as its Entry loads.
+   */
+  function readerActedHere(): boolean {
+    return frame.current !== null && document.activeElement === frame.current && readerJustActed();
+  }
+
   const onMessage = useEffectEvent((event: MessageEvent) => {
     if (!frame.current || event.source !== frame.current.contentWindow) return;
     const data: unknown = event.data;
@@ -47,13 +56,13 @@ export function EntryFrame({
         setHeight(Math.min(Math.max(Math.ceil(message.height), 0), MAX_HEIGHT));
         return;
       case "link": {
-        if (typeof message.href !== "string" || !readerJustActed()) return;
+        if (typeof message.href !== "string" || !readerActedHere()) return;
         const headword = linkedHeadword(message.href);
         if (headword !== null) onLink?.(headword);
         return;
       }
       case "sound": {
-        if (typeof message.href !== "string" || !/^sound:\/\//i.test(message.href) || !readerJustActed()) return;
+        if (typeof message.href !== "string" || !/^sound:\/\//i.test(message.href) || !readerActedHere()) return;
         const url = soundUrl(src, message.href);
         if (url !== null) onSound?.(url);
         return;

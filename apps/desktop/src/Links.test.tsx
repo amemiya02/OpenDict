@@ -58,6 +58,12 @@ function frame(title: string) {
   return screen.getByTitle(`Entry from ${title}`) as HTMLIFrameElement;
 }
 
+/** The reader clicks into a frame: focus moves to it. */
+function clickInto(title: string) {
+  act(() => frame(title).focus());
+  return frame(title).contentWindow;
+}
+
 function post(data: unknown, source: MessageEventSource | null) {
   act(() => {
     window.dispatchEvent(new MessageEvent("message", { data, source }));
@@ -68,7 +74,7 @@ describe("links inside Entries", () => {
   it("an entry:// link looks the linked headword up", async () => {
     await lookUpSerendipity();
 
-    post({ opendict: "link", href: "entry://serendipitous" }, frame("Quiet").contentWindow);
+    post({ opendict: "link", href: "entry://serendipitous" }, clickInto("Quiet"));
 
     expect(await screen.findByRole("heading", { level: 1, name: "【serendipitous】" })).toBeTruthy();
     expect(lookedUp).toEqual(["serendipity", "serendipitous"]);
@@ -76,6 +82,7 @@ describe("links inside Entries", () => {
 
   it("ignores link messages that are not a frame's own, or are not links", async () => {
     await lookUpSerendipity();
+    clickInto("Quiet");
 
     post({ opendict: "link", href: "entry://serendipitous" }, window);
     post({ opendict: "link", href: "entry://serendipitous" }, null);
@@ -87,11 +94,16 @@ describe("links inside Entries", () => {
     expect(lookedUp).toEqual(["serendipity"]);
   });
 
-  it("ignores links a script sends when the reader has not just acted", async () => {
+  it("ignores links a script sends without the reader clicking in its frame", async () => {
     await lookUpSerendipity();
-    vi.stubGlobal("navigator", { ...navigator, userActivation: { isActive: false, hasBeenActive: true } });
 
+    // Focus is still in the search field: the reader has not clicked into any Entry.
     post({ opendict: "link", href: "entry://serendipitous" }, frame("Quiet").contentWindow);
+    // The reader clicked into another Dictionary's Entry.
+    clickInto("Spoken");
+    post({ opendict: "sound", href: "sound://a.mp3" }, frame("Quiet").contentWindow);
+    // The reader clicked into this one, but not just now.
+    vi.stubGlobal("navigator", { ...navigator, userActivation: { isActive: false, hasBeenActive: true } });
     post({ opendict: "sound", href: "sound://a.mp3" }, frame("Spoken").contentWindow);
 
     expect(lookedUp).toEqual(["serendipity"]);
@@ -103,8 +115,8 @@ describe("audio", () => {
   it("a sound:// link plays the file from its own Dictionary", async () => {
     await lookUpSerendipity();
 
-    post({ opendict: "sound", href: "sound://us/serendipity.mp3" }, frame("Spoken").contentWindow);
-    post({ opendict: "sound", href: "sound://a.mp3" }, frame("Quiet").contentWindow);
+    post({ opendict: "sound", href: "sound://us/serendipity.mp3" }, clickInto("Spoken"));
+    post({ opendict: "sound", href: "sound://a.mp3" }, clickInto("Quiet"));
 
     expect(played).toEqual([`${base("73")}us/serendipity.mp3`, `${base("71")}a.mp3`]);
   });
@@ -112,7 +124,7 @@ describe("audio", () => {
   it("a sound:// link cannot reach another Dictionary's files", async () => {
     await lookUpSerendipity();
 
-    post({ opendict: "sound", href: "sound://../71/a.mp3" }, frame("Spoken").contentWindow);
+    post({ opendict: "sound", href: "sound://../71/a.mp3" }, clickInto("Spoken"));
     post({ opendict: "sound", href: "sound://%2e%2e/71/a.mp3" }, frame("Spoken").contentWindow);
 
     expect(played).toEqual([]);
@@ -129,7 +141,7 @@ describe("audio", () => {
 
   it("offers no Pronounce action when no Entry has audio", async () => {
     await lookUpSerendipity();
-    post({ opendict: "link", href: "entry://serendipitous" }, frame("Quiet").contentWindow);
+    post({ opendict: "link", href: "entry://serendipitous" }, clickInto("Quiet"));
     await screen.findByRole("heading", { level: 1, name: "【serendipitous】" });
 
     expect(screen.queryByRole("button", { name: /Pronounce/ })).toBeNull();

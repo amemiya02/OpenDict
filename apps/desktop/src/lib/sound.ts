@@ -13,10 +13,9 @@ export function playSound(url: string): void {
 }
 
 /**
- * Whether the reader has just clicked or pressed a key. A click inside an Entry frame
- * counts for the app too, so link and sound messages a Dictionary's script sends on its
- * own, with no reader action behind them, are refused. Where the browser cannot tell,
- * they are allowed.
+ * Whether the reader has just clicked or pressed a key (transient user activation). A
+ * click inside an Entry frame counts for the app too. Where the browser cannot tell
+ * (no `navigator.userActivation`), this says yes.
  */
 export function readerJustActed(): boolean {
   const activation = (navigator as { userActivation?: { isActive: boolean } }).userActivation;
