@@ -86,4 +86,18 @@ jobs:
           cache-dependency-path: apps/desktop/package-lock.json
       - run: npm ci
       - run: npx tauri build --debug --no-bundle
+      # Windows Server images may lack the WebView2 runtime the app needs; without it the
+      # app waits on an error dialog and never opens a webview.
+      - name: Install the WebView2 runtime if missing
+        shell: pwsh
+        run: |
+          $keys = 'HKLM:\SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}',
+                  'HKLM:\SOFTWARE\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}'
+          $found = @($keys | Where-Object { (Test-Path $_) -and ((Get-ItemProperty $_).pv -notin @($null, '', '0.0.0.0')) })
+          if ($found.Count -gt 0) { "WebView2 runtime $((Get-ItemProperty $found[0]).pv)"; exit 0 }
+          $setup = Join-Path $env:RUNNER_TEMP 'MicrosoftEdgeWebview2Setup.exe'
+          Invoke-WebRequest 'https://go.microsoft.com/fwlink/p/?LinkId=2124703' -OutFile $setup
+          Start-Process $setup -ArgumentList '/silent', '/install' -Wait
+          $found = @($keys | Where-Object { Test-Path $_ })
+          "WebView2 runtime installed: $((Get-ItemProperty $found[0]).pv)"
       - run: npm run e2e

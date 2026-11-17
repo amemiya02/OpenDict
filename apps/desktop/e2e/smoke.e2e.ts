@@ -108,6 +108,11 @@ before(async () => {
         throw new Error(`the app at ${appPath} exited before its webview opened (code ${app.exitCode}, signal ${app.signalCode})`, { cause: error });
       }
       if (Date.now() > deadline) {
+        // What is running, and whether a dialog (an error, a missing runtime) holds the app.
+        try {
+          console.error(execFileSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command",
+            "Get-Process | Where-Object { $_.ProcessName -match 'opendict|msedgewebview2|WerFault' } | Format-Table ProcessName,Id,MainWindowTitle -AutoSize | Out-String -Width 200"], { encoding: "utf8" }));
+        } catch { /* only a diagnostic */ }
         throw new Error(`the app at ${appPath} is running but its webview opened no debugging port ${port} within 60 s`, { cause: error });
       }
       await new Promise((r) => setTimeout(r, 500));
