@@ -16,6 +16,21 @@ export interface Entry {
   sound: string | null;
   /** How the headword is said, as this Entry gives it, if it shows that plainly (plain text). */
   pronunciation: string | null;
+  /** In the dark theme, whether the Entry keeps its Dictionary's own white page rather than being recoloured. */
+  asAuthored: boolean;
+}
+
+export type Theme = "system" | "light" | "dark";
+
+/** How the page reads; the shell keeps it in the reader's preferences. */
+export interface Appearance {
+  theme: Theme;
+  /** In the dark theme, every Dictionary shows as authored unless the reader chose otherwise for it. */
+  allAsAuthored: boolean;
+  /** The base text size of Entries, in CSS pixels: the size of text a Dictionary does not size itself. */
+  textSize: number;
+  /** Page zoom, in percent. */
+  zoom: number;
 }
 
 /** One headword in the headword column. */
@@ -102,6 +117,26 @@ export interface Library {
   indexing: Indexing | null;
   /** Why the Library could not be loaded at all, if it could not. */
   problem: string | null;
+  /** The reader's Groups, in the order they were created. */
+  groups: Group[];
+  /** The key of the Group Lookups run against; null for the whole Library. */
+  currentGroup: string | null;
+}
+
+/** A named, ordered subset of the Library. */
+export interface Group {
+  /** Stays the same when the Group is renamed. */
+  id: string;
+  name: string;
+  /** Keys of its Dictionaries, in Group order. */
+  dictionaries: string[];
+}
+
+/** Another Group (null: the whole Library) that has a word the Current Group lacks. */
+export interface Elsewhere {
+  group: string | null;
+  /** The headword it offers for what the reader typed. */
+  headword: string;
 }
 
 /** The window's native chrome, as the shell built it (apps/desktop/src-tauri/src/window.rs). */
@@ -189,6 +224,34 @@ export function setAllowNetwork(dictionaryId: string, allow: boolean): Promise<v
   return invoke<void>("set_allow_network", { dictionaryId, allow });
 }
 
+export function getAppearance(): Promise<Appearance> {
+  return invoke<Appearance>("appearance");
+}
+
+/** Saves the theme; the shell also gives it to the windows. */
+export function setTheme(theme: Theme): Promise<void> {
+  return invoke<void>("set_theme", { theme });
+}
+
+export function setAsAuthored(dictionaryId: string, asAuthored: boolean): Promise<void> {
+  return invoke<void>("set_as_authored", { dictionaryId, asAuthored });
+}
+
+/** Shows every Dictionary as authored, or recoloured, in the dark theme, replacing choices for single ones. */
+export function setAllAsAuthored(asAuthored: boolean): Promise<void> {
+  return invoke<void>("set_all_as_authored", { asAuthored });
+}
+
+/** Resolves to the size as saved, within the shell's limits. */
+export function setTextSize(size: number): Promise<number> {
+  return invoke<number>("set_text_size", { size });
+}
+
+/** Zooms the window's page; resolves to the zoom as saved, within the shell's limits. */
+export function setZoom(percent: number): Promise<number> {
+  return invoke<number>("set_zoom", { percent });
+}
+
 /** A Headword saved in a Word Book. */
 export interface SavedWord {
   headword: string;
@@ -273,6 +336,38 @@ export function recordLookup(headword: string): Promise<string[]> {
 
 export function clearHistory(): Promise<void> {
   return invoke<void>("clear_history");
+}
+
+export function createGroup(name: string): Promise<Library> {
+  return invoke<Library>("create_group", { name });
+}
+
+export function renameGroup(id: string, name: string): Promise<Library> {
+  return invoke<Library>("rename_group", { id, name });
+}
+
+/** Deletes a Group; its Dictionaries stay in the Library. */
+export function deleteGroup(id: string): Promise<Library> {
+  return invoke<Library>("delete_group", { id });
+}
+
+/** Puts a Dictionary into a Group (at the end of its order) or takes it out. */
+export function setInGroup(group: string, dictionary: string, member: boolean): Promise<Library> {
+  return invoke<Library>("set_in_group", { group, dictionary, member });
+}
+
+export function moveInGroup(group: string, dictionary: string, direction: "up" | "down"): Promise<Library> {
+  return invoke<Library>("move_in_group", { group, dictionary, direction });
+}
+
+/** Makes `group` the Current Group; null makes Lookups run against the whole Library. */
+export function setCurrentGroup(group: string | null): Promise<Library> {
+  return invoke<Library>("set_current_group", { group });
+}
+
+/** Another Group that has `query` when the Current Group does not, or null. */
+export function elsewhere(query: string): Promise<Elsewhere | null> {
+  return invoke<Elsewhere | null>("elsewhere", { query });
 }
 
 /** Calls `handler` with the Word Books whenever a window saves a word or takes one out. */

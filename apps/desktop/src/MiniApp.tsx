@@ -19,6 +19,7 @@ import {
 } from "./lib/ipc";
 import { MOD, withMod } from "./lib/platform";
 import { playSound } from "./lib/sound";
+import { useAppearance } from "./lib/useAppearance";
 
 type MiniPage =
   | { kind: "idle" }
@@ -42,6 +43,9 @@ export function MiniApp() {
   const field = useRef<HTMLInputElement>(null);
   const pageRef = useRef<HTMLElement>(null);
   const lastSerial = useRef(0);
+  // The reader's theme, text size and zoom, as in the main window.
+  const appearance = useAppearance();
+  const { reload } = appearance;
 
   const currentBook = wordBooks?.books.find((book) => book.id === wordBooks.current) ?? null;
   const headword = page.kind === "found" ? page.headword : null;
@@ -74,6 +78,7 @@ export function MiniApp() {
   const summoned = useEffectEvent((summons: Summons) => {
     if (summons.serial <= lastSerial.current) return;
     lastSerial.current = summons.serial;
+    reload();
     setText(summons.text);
     void lookUpText(summons.text);
     // Ready to correct the word, or to type another over it.
@@ -82,7 +87,9 @@ export function MiniApp() {
   });
 
   useEffect(() => {
-    const stops = [onSummoned((summons) => summoned(summons)), onWordBooksChanged((books) => setWordBooks(books))];
+    const stops = [onSummoned((summons) => summoned(summons)), onWordBooksChanged((books) => setWordBooks(books))].map((listening) =>
+      listening.catch(() => null),
+    );
     // A summons sent before this window had loaded.
     miniSummons().then(
       (summons) => {
@@ -92,7 +99,7 @@ export function MiniApp() {
     );
     getWordBooks().then((books) => setWordBooks(Array.isArray(books?.books) ? books : null), () => {});
     return () => {
-      for (const stop of stops) stop.then((unlisten) => unlisten(), () => {});
+      for (const stop of stops) void stop.then((unlisten) => unlisten?.());
     };
   }, []);
 
@@ -158,7 +165,13 @@ export function MiniApp() {
 
       <div className="grid min-h-0 grid-cols-[minmax(0,1fr)_auto]">
         <main ref={pageRef} aria-label={t.pageLabel} className="min-h-0 overflow-y-auto pt-2.5 pr-3.5 pb-lg pl-[18px]">
-          <MiniPageContent page={page} onLookUp={openHere} onEscape={close} />
+          <MiniPageContent
+            page={page}
+            onLookUp={openHere}
+            onEscape={close}
+            textSize={appearance.appearance.textSize}
+            dark={appearance.scheme === "dark"}
+          />
         </main>
         <div className="w-[30px] min-h-0 overflow-hidden">
           {page.kind === "found" ? (
@@ -204,7 +217,20 @@ export function MiniApp() {
   );
 }
 
-function MiniPageContent({ page, onLookUp, onEscape }: { page: MiniPage; onLookUp: (headword: string) => void; onEscape: () => void }) {
+function MiniPageContent({
+  page,
+  onLookUp,
+  onEscape,
+  textSize,
+  dark,
+}: {
+  page: MiniPage;
+  onLookUp: (headword: string) => void;
+  onEscape: () => void;
+  textSize: number;
+  /** In the dark theme Entries are recoloured unless their Dictionary is shown as authored. */
+  dark: boolean;
+}) {
   const { t } = useI18n();
   switch (page.kind) {
     case "idle":
@@ -240,7 +266,15 @@ function MiniPageContent({ page, onLookUp, onEscape }: { page: MiniPage; onLookU
             >
               <h2 className="-ml-[7px] flex h-[30px] items-center truncate text-title font-bold">【{entry.dictionaryTitle}】</h2>
               <div className="pb-2.5">
-                <EntryFrame dictionaryTitle={entry.dictionaryTitle} src={entry.src} onLink={onLookUp} onSound={playSound} onEscape={onEscape} />
+                <EntryFrame
+                  dictionaryTitle={entry.dictionaryTitle}
+                  src={entry.src}
+                  onLink={onLookUp}
+                  onSound={playSound}
+                  onEscape={onEscape}
+                  textSize={textSize}
+                  recolour={dark && !entry.asAuthored}
+                />
               </div>
             </section>
           ))}

@@ -24,6 +24,8 @@ function fakeShell(calls: { command: string; args: unknown }[] = []) {
         indexing: null,
         failures: [],
         problem: null,
+        groups: [],
+        currentGroup: null,
       };
     if (command === "look_up") return (args as { headword: string }).headword === "serendipity" ? [sample] : [];
     if (command === "suggest") {

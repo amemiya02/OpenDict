@@ -5,6 +5,7 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+pub use opendict_core::Theme;
 use opendict_core::{
     Error as CoreError, ExportFormat, History, IndexState, Library, Move, OpenError, Preferences,
     Registration, SavedFrom, Suggestion, WordBookId, WordBooks,
@@ -51,6 +52,23 @@ pub struct EntryView {
     pub sound: Option<String>,
     /// How the headword is said, where the Entry shows that plainly. Plain text.
     pub pronunciation: Option<String>,
+    /// In the dark theme, whether the Entry keeps its Dictionary's own white page rather
+    /// than being recoloured.
+    pub as_authored: bool,
+}
+
+/// How the page reads: the reader's theme, text size and zoom.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AppearanceView {
+    pub theme: Theme,
+    /// In the dark theme, every Dictionary shows as authored unless the reader chose
+    /// otherwise for it.
+    pub all_as_authored: bool,
+    /// The base text size of Entries, in CSS pixels.
+    pub text_size: u32,
+    /// Page zoom, in percent.
+    pub zoom: u32,
 }
 
 /// What the headword column offers for a query: the Lookup result shape settled by the
@@ -92,6 +110,28 @@ pub struct LibraryView {
     pub indexing: Option<IndexingView>,
     /// Why the Library could not be loaded at all, if it could not.
     pub problem: Option<String>,
+    /// The reader's Groups, in the order they were created.
+    pub groups: Vec<GroupView>,
+    /// The key of the Group Lookups run against; `None` for the whole Library.
+    pub current_group: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GroupView {
+    pub id: String,
+    pub name: String,
+    /// Keys of its Dictionaries, in Group order.
+    pub dictionaries: Vec<String>,
+}
+
+/// Another Group (`None`: the whole Library) that has a word the Current Group lacks, and
+/// the headword it offers for it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ElsewhereView {
+    pub group: Option<String>,
+    pub headword: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -207,6 +247,15 @@ pub enum Direction {
     Down,
 }
 
+impl From<Direction> for Move {
+    fn from(direction: Direction) -> Move {
+        match direction {
+            Direction::Up => Move::Up,
+            Direction::Down => Move::Down,
+        }
+    }
+}
+
 /// How often indexing progress is passed on while a Dictionary is being indexed.
 const PROGRESS_INTERVAL: Duration = Duration::from_millis(100);
 
@@ -291,6 +340,7 @@ impl AppState {
             .map(|entry| EntryView {
                 src: entry_protocol::entry_url(&entry.dictionary_id, headword),
                 allow_network: self.allows_network(&entry.dictionary_id),
+                as_authored: self.as_authored(&entry.dictionary_id),
                 sound: entry.sounds().into_iter().next(),
                 pronunciation: opendict_core::pronunciation(&entry.html),
                 dictionary_id: entry.dictionary_id,
@@ -385,15 +435,78 @@ impl AppState {
     }
 
     pub fn set_allow_network(&self, dictionary_id: &str, allow: bool) -> Result<(), String> {
+        self.change_preferences(|p| p.set_allows_network(dictionary_id, allow))
+    }
+
+    /// The reading preferences. If the preferences cannot be read, the defaults.
+    pub fn appearance(&self) -> AppearanceView {
+        let preferences = self
+            .inner
+            .preferences
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        match preferences.as_ref() {
+            Ok(p) => AppearanceView {
+                theme: p.theme(),
+                all_as_authored: p.all_as_authored(),
+                text_size: p.text_size(),
+                zoom: p.zoom(),
+            },
+            Err(_) => AppearanceView {
+                theme: Theme::System,
+                all_as_authored: false,
+                text_size: opendict_core::DEFAULT_TEXT_SIZE,
+                zoom: opendict_core::DEFAULT_ZOOM,
+            },
+        }
+    }
+
+    /// Whether, in the dark theme, the Dictionary shows as authored. If the preferences
+    /// cannot be read, every Dictionary is recoloured.
+    pub fn as_authored(&self, dictionary_id: &str) -> bool {
+        let preferences = self
+            .inner
+            .preferences
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        preferences
+            .as_ref()
+            .is_ok_and(|p| p.as_authored(dictionary_id))
+    }
+
+    pub fn set_as_authored(&self, dictionary_id: &str, as_authored: bool) -> Result<(), String> {
+        self.change_preferences(|p| p.set_as_authored(dictionary_id, as_authored))
+    }
+
+    pub fn set_all_as_authored(&self, as_authored: bool) -> Result<(), String> {
+        self.change_preferences(|p| p.set_all_as_authored(as_authored))
+    }
+
+    pub fn set_theme(&self, theme: Theme) -> Result<(), String> {
+        self.change_preferences(|p| p.set_theme(theme))
+    }
+
+    /// Returns the size as set, within readable limits.
+    pub fn set_text_size(&self, pixels: u32) -> Result<u32, String> {
+        self.change_preferences(|p| p.set_text_size(pixels))
+    }
+
+    /// Returns the zoom as set, within limits.
+    pub fn set_zoom(&self, percent: u32) -> Result<u32, String> {
+        self.change_preferences(|p| p.set_zoom(percent))
+    }
+
+    fn change_preferences<T>(
+        &self,
+        change: impl FnOnce(&mut Preferences) -> opendict_core::Result<T>,
+    ) -> Result<T, String> {
         let mut preferences = self
             .inner
             .preferences
             .lock()
             .unwrap_or_else(|e| e.into_inner());
         match preferences.as_mut() {
-            Ok(p) => p
-                .set_allows_network(dictionary_id, allow)
-                .map_err(|e| e.to_string()),
+            Ok(p) => change(p).map_err(|e| e.to_string()),
             Err(reason) => Err(reason.clone()),
         }
     }
@@ -571,11 +684,58 @@ impl AppState {
     }
 
     pub fn move_dictionary(&self, id: &str, direction: Direction) -> Result<LibraryView, String> {
-        let step = match direction {
-            Direction::Up => Move::Up,
-            Direction::Down => Move::Down,
+        self.change(|library| library.move_dictionary(id, direction.into()))
+    }
+
+    pub fn create_group(&self, name: &str) -> Result<LibraryView, String> {
+        self.change(|library| library.create_group(name).map(drop))
+    }
+
+    pub fn rename_group(&self, id: &str, name: &str) -> Result<LibraryView, String> {
+        self.change(|library| library.rename_group(id, name))
+    }
+
+    pub fn delete_group(&self, id: &str) -> Result<LibraryView, String> {
+        self.change(|library| library.delete_group(id))
+    }
+
+    pub fn set_in_group(
+        &self,
+        group: &str,
+        dictionary: &str,
+        member: bool,
+    ) -> Result<LibraryView, String> {
+        self.change(|library| library.set_in_group(group, dictionary, member))
+    }
+
+    pub fn move_in_group(
+        &self,
+        group: &str,
+        dictionary: &str,
+        direction: Direction,
+    ) -> Result<LibraryView, String> {
+        self.change(|library| library.move_in_group(group, dictionary, direction.into()))
+    }
+
+    /// Makes `group` the Current Group (`None`: the whole Library).
+    pub fn set_current_group(&self, group: Option<&str>) -> Result<LibraryView, String> {
+        self.change(|library| library.set_current_group(group))
+    }
+
+    /// Another Group that has `query` when the Current Group does not. Without a Library
+    /// there is none.
+    pub fn elsewhere(&self, query: &str) -> Result<Option<ElsewhereView>, String> {
+        let guard = self.lock();
+        let Ok(library) = &*guard else {
+            return Ok(None);
         };
-        self.change(|library| library.move_dictionary(id, step))
+        let found = library
+            .elsewhere(query)
+            .map_err(|error| error.to_string())?;
+        Ok(found.map(|found| ElsewhereView {
+            group: found.group,
+            headword: found.headword,
+        }))
     }
 
     /// Indexes every Dictionary that needs it, one at a time on a background thread, so
@@ -689,6 +849,8 @@ fn view(library: &Result<Library, String>, indexing: Option<IndexingView>) -> Li
                 failures: Vec::new(),
                 indexing: None,
                 problem: Some(problem.clone()),
+                groups: Vec::new(),
+                current_group: None,
             };
         }
     };
@@ -728,6 +890,16 @@ fn view(library: &Result<Library, String>, indexing: Option<IndexingView>) -> Li
             .collect(),
         indexing,
         problem: None,
+        groups: library
+            .groups()
+            .into_iter()
+            .map(|group| GroupView {
+                id: group.id,
+                name: group.name,
+                dictionaries: group.dictionaries,
+            })
+            .collect(),
+        current_group: library.current_group().map(str::to_owned),
     }
 }
 
@@ -863,7 +1035,8 @@ mod tests {
         assert_eq!(
             serde_json::to_value(state.library()).unwrap(),
             json!({
-                "folders": [], "dictionaries": [], "failures": [], "indexing": null, "problem": null
+                "folders": [], "dictionaries": [], "failures": [], "indexing": null, "problem": null,
+                "groups": [], "currentGroup": null
             })
         );
         assert_eq!(state.look_up("serendipity").unwrap(), []);
@@ -909,7 +1082,8 @@ mod tests {
                 "src": entry_protocol::entry_url(id, "serendipity"),
                 "allowNetwork": false,
                 "sound": null,
-                "pronunciation": null
+                "pronunciation": null,
+                "asAuthored": false
             }])
         );
     }
@@ -1293,5 +1467,131 @@ mod tests {
             .collect();
 
         assert_eq!(said, [Some("/ˈserɪf/".to_owned()), None]);
+    }
+
+    /// A Library of two indexed Dictionaries, "A Sample" (apple) and "B Sample" (apple,
+    /// banana), and their keys.
+    fn two_dictionaries(data: &Path, folder: &Path) -> (AppState, String, String) {
+        for (file, title, words) in [
+            ("a.mdx", "A Sample", &["apple"][..]),
+            ("b.mdx", "B Sample", &["apple", "banana"][..]),
+        ] {
+            words
+                .iter()
+                .fold(MdxBuilder::new().title(title), |builder, word| {
+                    builder.entry(word, "<p>a word (sample)</p>")
+                })
+                .write_to(folder.join(file))
+                .unwrap();
+        }
+        let state = AppState::load(&data.join("library.json"), None, data);
+        let view = state.add_folder(folder).unwrap();
+        index(&state);
+        let (a, b) = (
+            view.dictionaries[0].id.clone(),
+            view.dictionaries[1].id.clone(),
+        );
+        (state, a, b)
+    }
+
+    #[test]
+    fn groups_and_the_current_group_reach_the_interface_with_the_library() {
+        let data = tempfile::tempdir().unwrap();
+        let folder = tempfile::tempdir().unwrap();
+        let (state, a, b) = two_dictionaries(data.path(), folder.path());
+
+        let view = state.create_group("Reading").unwrap();
+        let group = view.groups[0].id.clone();
+        state.set_in_group(&group, &b, true).unwrap();
+        state.set_in_group(&group, &a, true).unwrap();
+        state.move_in_group(&group, &a, Direction::Up).unwrap();
+        state.rename_group(&group, "Close reading").unwrap();
+        let view = state.set_current_group(Some(&group)).unwrap();
+
+        let view = serde_json::to_value(view).unwrap();
+        assert_eq!(
+            view["groups"],
+            json!([{ "id": group, "name": "Close reading", "dictionaries": [a, b] }])
+        );
+        assert_eq!(view["currentGroup"], json!(group));
+        let titles: Vec<String> = state
+            .look_up("apple")
+            .unwrap()
+            .into_iter()
+            .map(|entry| entry.dictionary_title)
+            .collect();
+        assert_eq!(titles, ["A Sample", "B Sample"]);
+
+        state.set_in_group(&group, &b, false).unwrap();
+        assert_eq!(state.look_up("banana").unwrap(), []);
+        assert_eq!(
+            serde_json::to_value(state.elsewhere("banana").unwrap()).unwrap(),
+            json!({ "group": null, "headword": "banana" })
+        );
+
+        let view = state.delete_group(&group).unwrap();
+        assert!(view.groups.is_empty() && view.current_group.is_none());
+        assert_eq!(state.look_up("banana").unwrap().len(), 1);
+        assert_eq!(state.elsewhere("banana").unwrap(), None);
+    }
+
+    #[test]
+    fn a_group_needs_a_name_of_its_own() {
+        let data = tempfile::tempdir().unwrap();
+        let state = AppState::load(&data.path().join("library.json"), None, data.path());
+        state.create_group("Reading").unwrap();
+
+        assert!(state.create_group(" Reading ").is_err());
+        assert!(state.create_group("").is_err());
+    }
+
+    #[test]
+    fn the_reading_preferences_are_kept_in_the_data_directory() {
+        let data = tempfile::tempdir().unwrap();
+        let library_file = data.path().join("library.json");
+        let state = AppState::load(&library_file, None, data.path());
+        assert_eq!(
+            state.appearance(),
+            AppearanceView {
+                theme: Theme::System,
+                all_as_authored: false,
+                text_size: 16,
+                zoom: 100
+            }
+        );
+
+        state.set_theme(Theme::Dark).unwrap();
+        state.set_all_as_authored(true).unwrap();
+        assert_eq!(state.set_text_size(99).unwrap(), 32);
+        assert_eq!(state.set_zoom(150).unwrap(), 150);
+
+        let again = AppState::load(&library_file, None, data.path());
+        assert_eq!(
+            again.appearance(),
+            AppearanceView {
+                theme: Theme::Dark,
+                all_as_authored: true,
+                text_size: 32,
+                zoom: 150
+            }
+        );
+    }
+
+    #[test]
+    fn the_interface_sends_and_receives_themes_as_words() {
+        assert_eq!(
+            serde_json::to_value(Theme::System).unwrap(),
+            json!("system")
+        );
+        assert_eq!(
+            serde_json::from_value::<Theme>(json!("dark")).unwrap(),
+            Theme::Dark
+        );
+        let data = tempfile::tempdir().unwrap();
+        let state = AppState::load(&data.path().join("library.json"), None, data.path());
+        assert_eq!(
+            serde_json::to_value(state.appearance()).unwrap(),
+            json!({"theme": "system", "allAsAuthored": false, "textSize": 16, "zoom": 100})
+        );
     }
 }

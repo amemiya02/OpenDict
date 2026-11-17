@@ -311,7 +311,7 @@ test("a Dictionary reaches the network only once the reader allows it from its s
   await new Promise((r) => setTimeout(r, 1000));
   assert.ok(!sinkRequests.some((url) => url.startsWith("/allowed.png")), "blocked by default");
 
-  const networkSwitch = page.getByRole("region", { name: "Networked Probe", exact: true }).locator("button[aria-pressed]");
+  const networkSwitch = page.getByRole("region", { name: "Networked Probe", exact: true }).getByRole("button", { name: "Allow network access" });
   assert.equal(await networkSwitch.getAttribute("aria-pressed"), "false");
   await networkSwitch.click();
 
@@ -442,6 +442,75 @@ test("the headword column suggests as the reader types and the keyboard browses 
   if (process.env.OPENDICT_E2E_COLUMN_SCREENSHOT) await page.screenshot({ path: process.env.OPENDICT_E2E_COLUMN_SCREENSHOT });
 });
 
+test("in the dark theme Entries are recoloured unless shown as authored; text size and zoom adjust; all are kept", async () => {
+  const openReading = async () => {
+    await page.getByRole("button", { name: "Library", exact: true }).click();
+    const reading = page.getByRole("region", { name: "Reading" });
+    await reading.waitFor({ timeout: 10_000 });
+    return reading;
+  };
+  const invoke = <T>(command: string, args: Record<string, unknown> = {}) =>
+    page.evaluate(
+      ([command, args]) =>
+        (window as unknown as { __TAURI_INTERNALS__: { invoke: (cmd: string, args: unknown) => Promise<unknown> } }).__TAURI_INTERNALS__.invoke(command, args),
+      [command, args] as const,
+    ) as Promise<T>;
+  const frameFilter = () =>
+    page.evaluate(() => getComputedStyle(document.querySelector('section[aria-label="Sample English Dictionary"] iframe')!).filter);
+
+  let reading = await openReading();
+  await reading.getByRole("radio", { name: "Dark" }).check();
+  await page.waitForFunction(() => document.documentElement.dataset.theme === "dark");
+  assert.equal(await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue("--paper").trim()), "#111a30", "bookcloth navy");
+  // The shell gave the window the theme as well, so its native frame (and Mica) match the page.
+  assert.equal(await invoke("plugin:window|theme", { label: "main" }), "dark");
+  await reading.getByRole("button", { name: "Larger text" }).click();
+  await reading.getByRole("button", { name: "Larger text" }).click();
+  await reading.getByText("18 px").waitFor({ timeout: 5_000 });
+  if (process.env.OPENDICT_E2E_SCREENSHOT) await page.screenshot({ path: process.env.OPENDICT_E2E_SCREENSHOT.replace(/\.png$/, "-reading-dark.png") });
+
+  await lookUp("serendipity");
+  const frame = await entryFrame("Sample English Dictionary");
+  assert.match(await frameFilter(), /invert/, "recoloured by default");
+  // From outside: the Entry document keeps its own colours, and takes the reader's text size.
+  assert.equal(await frame.evaluate(() => getComputedStyle(document.documentElement).fontSize), "18px");
+  if (process.env.OPENDICT_E2E_SCREENSHOT) await page.screenshot({ path: process.env.OPENDICT_E2E_SCREENSHOT.replace(/\.png$/, "-dark.png") });
+
+  const section = page.getByRole("region", { name: "Sample English Dictionary", exact: true });
+  await section.getByRole("button", { name: "Show as authored" }).click();
+  await page.waitForFunction(
+    () => getComputedStyle(document.querySelector('section[aria-label="Sample English Dictionary"] iframe')!).filter === "none",
+    null,
+    { timeout: 5_000 },
+  );
+  if (process.env.OPENDICT_E2E_SCREENSHOT) await page.screenshot({ path: process.env.OPENDICT_E2E_SCREENSHOT.replace(/\.png$/, "-as-authored.png") });
+
+  // Page zoom: the whole window, Entry frames included.
+  const ratio = await page.evaluate(() => devicePixelRatio);
+  await page.getByRole("main").click({ position: { x: 5, y: 5 } });
+  await page.keyboard.press("Control+Equal");
+  await page.waitForFunction((before) => Math.abs(devicePixelRatio / before - 1.1) < 0.02, ratio, { timeout: 5_000 });
+
+  // Everything is kept in the reader's preferences.
+  assert.deepEqual(await invoke("appearance"), { theme: "dark", allAsAuthored: false, textSize: 18, zoom: 110 });
+  const entries = await invoke<{ dictionaryTitle: string; asAuthored: boolean }[]>("look_up", { headword: "serendipity" });
+  assert.equal(entries.find((e) => e.dictionaryTitle === "Sample English Dictionary")?.asAuthored, true);
+
+  // Back as it was, for the tests after this one.
+  await page.keyboard.press("Control+Digit0");
+  await page.waitForFunction((before) => Math.abs(devicePixelRatio - before) < 0.01, ratio, { timeout: 5_000 });
+  await section.getByRole("button", { name: "Show as authored" }).click();
+  reading = await openReading();
+  await reading.getByRole("button", { name: "Smaller text" }).click();
+  await reading.getByRole("button", { name: "Smaller text" }).click();
+  await reading.getByRole("radio", { name: "Light" }).check();
+  await page.waitForFunction(() => document.documentElement.dataset.theme === "light");
+  if (process.env.OPENDICT_E2E_SCREENSHOT) await page.screenshot({ path: process.env.OPENDICT_E2E_SCREENSHOT.replace(/\.png$/, "-reading-light.png") });
+  await reading.getByRole("radio", { name: "Follow system" }).check();
+  assert.deepEqual(await invoke("appearance"), { theme: "system", allAsAuthored: false, textSize: 16, zoom: 100 });
+  await lookUp("serendipity"); // back on the page
+});
+
 test("a word saved with Ctrl+D goes into the Word Book, keeps a note and exports to CSV", async () => {
   await lookUp("serendipity");
   await page.getByRole("button", { name: "Add to Word Book", pressed: false }).waitFor({ timeout: 10_000 });
@@ -490,6 +559,45 @@ test("History lists committed Lookups, and Back and Forward retrace them", async
   assert.deepEqual(history.slice(0, 2), ["cat", "apple"]);
   if (process.env.OPENDICT_E2E_HISTORY_SCREENSHOT) await page.screenshot({ path: process.env.OPENDICT_E2E_HISTORY_SCREENSHOT });
   await page.getByRole("button", { name: "Suggestions" }).click();
+});
+
+test("a Group made in the Library is switched from the cover band, and a miss points back to the whole Library", async () => {
+  const page = browser!.contexts()[0]!.pages()[0]!;
+  const search = page.getByRole("combobox", { name: "Type a word" });
+  const onPage = (headword: string) =>
+    page.waitForFunction((word) => document.querySelector("h1")?.textContent === `【${word}】`, headword, { timeout: 10_000 });
+
+  await page.getByRole("button", { name: "Library", exact: true }).click();
+  await page.getByRole("button", { name: "New Group…" }).click();
+  await page.getByLabel("Group name", { exact: true }).fill("日本語");
+  await page.getByLabel("Group name", { exact: true }).press("Enter");
+  const tick = page.getByRole("checkbox", { name: "サンプル国語辞典 is in Group 日本語" });
+  await tick.click();
+  await page.getByRole("checkbox", { name: "サンプル国語辞典 is in Group 日本語", checked: true }).waitFor({ timeout: 10_000 });
+  await page.getByRole("list", { name: "日本語" }).waitFor({ timeout: 10_000 });
+  if (process.env.OPENDICT_E2E_GROUPS_SCREENSHOT) {
+    await page.screenshot({ path: process.env.OPENDICT_E2E_GROUPS_SCREENSHOT.replace(/\.png$/, "-library.png"), fullPage: true });
+  }
+
+  const switcher = page.getByRole("combobox", { name: "Current Group" });
+  await search.fill("thumb");
+  await search.press("Enter");
+  await onPage("thumb");
+  await switcher.selectOption({ label: "日本語" });
+  // The word stays; only the Group's one Dictionary answers now.
+  await page.getByText("in 1 of 1 dictionary").waitFor({ timeout: 10_000 });
+  await onPage("thumb");
+  assert.equal(await page.getByRole("region").count(), 1);
+
+  await search.fill("serendipity");
+  const offer = page.getByRole("button", { name: "“serendipity” is in Group “All dictionaries”" });
+  await offer.waitFor({ timeout: 10_000 });
+  if (process.env.OPENDICT_E2E_GROUPS_SCREENSHOT) await page.screenshot({ path: process.env.OPENDICT_E2E_GROUPS_SCREENSHOT });
+  await offer.click();
+  // The no-match page has the same heading: wait for the Entries themselves.
+  await page.getByRole("region", { name: "Sample English Dictionary" }).waitFor({ timeout: 10_000 });
+  await onPage("serendipity");
+  assert.equal(await switcher.inputValue(), "");
 });
 
 test("the window has the system's own title bar controls, Mica on Windows 11, and stays usable when narrow", async () => {

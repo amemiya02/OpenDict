@@ -1,11 +1,13 @@
 import { useEffect, useEffectEvent, useRef, useState, type ReactNode } from "react";
 import { EntryFrame } from "./components/EntryFrame";
+import { GroupSwitcher } from "./components/GroupSwitcher";
 import { COLUMN_ID, HeadwordColumn, optionId, type ColumnItem, type ColumnList } from "./components/HeadwordColumn";
 import { MiniWindowSettings } from "./components/MiniWindowSettings";
 import { NavButtons } from "./components/NavButtons";
 import { RecentLookups } from "./components/RecentLookups";
 import { sectionId, ThumbIndex } from "./components/ThumbIndex";
 import { EmptyLibrary, LibraryPage, OutlineButton, type LibraryActions } from "./components/LibraryPage";
+import { ReadingSettings } from "./components/ReadingSettings";
 import { SearchField } from "./components/SearchField";
 import { UpdateNotice } from "./components/UpdateNotice";
 import { WordBookPage, type WordBookActions } from "./components/WordBookPage";
@@ -16,18 +18,26 @@ import {
   addLibraryFolder,
   cancelIndexing,
   clearHistory,
+  createGroup,
+  deleteGroup,
+  elsewhere,
   getHistory,
   getLibrary,
   indexLibrary,
   lookUp,
   moveDictionary,
+  moveInGroup,
   recordLookup,
   registerDictionary,
   onLibraryChanged,
   removeLibraryFolder,
+  renameGroup,
   rescanLibrary,
   setAllowNetwork,
+  setAsAuthored,
+  setCurrentGroup,
   setDictionaryEnabled,
+  setInGroup,
   chooseWordBook,
   createWordBook,
   deleteWordBook,
@@ -40,13 +50,16 @@ import {
   windowChrome,
   onOpenInMain,
   onWordBooksChanged,
+  type Elsewhere,
   type Entry,
+  type Group,
   type Library,
   type RegisterError,
   type WindowChrome,
   type Suggestion,
   type WordBooks,
 } from "./lib/ipc";
+import { useAppearance, type Scheme } from "./lib/useAppearance";
 import { MOD, withMod } from "./lib/platform";
 import { canStep, emptyTrail, step, visit } from "./lib/trail";
 import { useHeadwordColumn } from "./lib/useHeadwordColumn";
@@ -54,7 +67,8 @@ import { wildcardHint } from "./lib/wildcard";
 
 type PageState =
   | { kind: "idle" }
-  | { kind: "found"; headword: string; entries: Entry[] }
+  /** `group` is the Current Group the Entries came from (null: the whole Library). */
+  | { kind: "found"; headword: string; entries: Entry[]; group: string | null }
   /** Nothing found for `query`; `next` are the headwords after where it would stand. */
   | { kind: "missing"; query: string; next: Suggestion[] }
   | { kind: "failed"; reason: string };
@@ -94,11 +108,18 @@ export function App() {
     page.kind === "found" && currentBook ? currentBook.words.findIndex((word) => word.headword === page.headword) : -1;
   const pageRef = useRef<HTMLElement>(null);
   const column = useHeadwordColumn();
+  const appearance = useAppearance();
   const { refresh } = column;
   /** Counts page requests, so only the latest one lands. */
   const pageRequests = useRef(0);
   /** The text in the search field, for refreshing the column after a Library change. */
   const typed = useRef("");
+  /** The Current Group as the shell last reported it (null: the whole Library). */
+  const currentGroup = library?.currentGroup ?? null;
+  const groupRef = useRef(currentGroup);
+  useEffect(() => {
+    groupRef.current = currentGroup;
+  }, [currentGroup]);
 
   // The column opens on the headword index, to browse.
   useEffect(() => {
@@ -168,7 +189,11 @@ export function App() {
     try {
       const entries = await lookUp(headword);
       if (ticket !== pageRequests.current) return;
-      setPage(entries.length > 0 ? { kind: "found", headword, entries } : { kind: "missing", query: headword, next: [] });
+      setPage(
+        entries.length > 0
+          ? { kind: "found", headword, entries, group: groupRef.current }
+          : { kind: "missing", query: headword, next: [] },
+      );
       if (entries.length > 0) onFound?.();
     } catch (error) {
       if (ticket === pageRequests.current) setPage({ kind: "failed", reason: String(error) });
@@ -252,9 +277,11 @@ export function App() {
   // a word to the Word Book.
   const openedFromMini = useEffectEvent((headword: string) => followLink(headword));
   useEffect(() => {
-    const stops = [onOpenInMain((headword) => openedFromMini(headword)), onWordBooksChanged((books) => setWordBooks(books))];
+    const stops = [onOpenInMain((headword) => openedFromMini(headword)), onWordBooksChanged((books) => setWordBooks(books))].map((listening) =>
+      listening.catch(() => null),
+    );
     return () => {
-      for (const stop of stops) stop.then((unlisten) => unlisten(), () => {});
+      for (const stop of stops) void stop.then((unlisten) => unlisten?.());
     };
   }, []);
 
@@ -285,6 +312,37 @@ export function App() {
     const headword =
       list === "history" ? history[index] : list === "wordBook" ? currentBook?.words[index]?.headword : column.select(index);
     if (headword) void commit(headword);
+  }
+
+  /**
+   * Makes `group` the Current Group (null: the whole Library); every Lookup after this runs
+   * against it. The word on the page stays when the new Group has it; when it does not, the
+   * page says so and points to where it is. With `word`, that word is looked up in the new
+   * Group instead (the no-match page's way to another Group). The cover band's switcher
+   * calls this, and so can the command palette.
+   */
+  async function switchGroup(group: string | null, word?: string) {
+    setNotice(null);
+    let updated: Library;
+    try {
+      updated = await setCurrentGroup(group);
+    } catch (error) {
+      setNotice(t.libraryActionFailed(String(error)));
+      return;
+    }
+    groupRef.current = updated.currentGroup;
+    setLibrary(updated);
+    if (word !== undefined) {
+      column.refresh(word).catch(() => {});
+      await commit(word);
+      return;
+    }
+    if (view === "lookup" && page.kind === "missing") {
+      await changeQuery(typed.current);
+      return;
+    }
+    column.refresh(typed.current).catch(() => {});
+    if (view === "lookup" && page.kind === "found") await show(page.headword);
   }
 
   /** Back (-1) or Forward (1) through the words visited. Retracing is not a new Lookup. */
@@ -415,6 +473,46 @@ export function App() {
     }
   }
 
+  /** Changes one Entry on the page, if it is still there. */
+  function updateEntry(dictionaryId: string, change: Partial<Entry>) {
+    setPage((current) =>
+      current.kind === "found"
+        ? { ...current, entries: current.entries.map((e) => (e.dictionaryId === dictionaryId ? { ...e, ...change } : e)) }
+        : current,
+    );
+  }
+
+  async function toggleNetwork(entry: Entry) {
+    const allow = !entry.allowNetwork;
+    try {
+      await setAllowNetwork(entry.dictionaryId, allow);
+    } catch {
+      return; // the switch stays as it was: the preference was not saved
+    }
+    updateEntry(entry.dictionaryId, { allowNetwork: allow });
+  }
+
+  async function toggleAsAuthored(entry: Entry) {
+    const asAuthored = !entry.asAuthored;
+    try {
+      await setAsAuthored(entry.dictionaryId, asAuthored);
+    } catch {
+      return;
+    }
+    updateEntry(entry.dictionaryId, { asAuthored });
+  }
+
+  const reading = {
+    ...appearance,
+    /** Every Dictionary at once, the ones on the page included. */
+    setAllAsAuthored: async (asAuthored: boolean) => {
+      await appearance.setAllAsAuthored(asAuthored);
+      setPage((current) =>
+        current.kind === "found" ? { ...current, entries: current.entries.map((e) => ({ ...e, asAuthored })) } : current,
+      );
+    },
+  };
+
   const actions: LibraryActions = {
     addFolder: () => change(addLibraryFolder, () => setView("library")),
     removeFolder: (path) => change(() => removeLibraryFolder(path)),
@@ -438,13 +536,20 @@ export function App() {
       }
     },
     index: () => change(indexLibrary),
+    createGroup: (name) => change(() => createGroup(name)),
+    renameGroup: (id, name) => change(() => renameGroup(id, name)),
+    deleteGroup: (id) => change(() => deleteGroup(id)),
+    setInGroup: (group, dictionary, member) => change(() => setInGroup(group, dictionary, member)),
+    moveInGroup: (group, dictionary, direction) => change(() => moveInGroup(group, dictionary, direction)),
     cancelIndexing: () => {
       cancelIndexing().catch((error: unknown) => setNotice(t.libraryActionFailed(String(error))));
     },
   };
 
-  const enabledCount = library?.dictionaries.filter((d) => d.enabled).length ?? 0;
-  const asked = page.kind === "found" ? Math.max(enabledCount, page.entries.length) : enabledCount;
+  const groups = library?.groups ?? [];
+  const group = groups.find((g) => g.id === currentGroup) ?? null;
+  const answeringCount = library ? answering(library, group).length : 0;
+  const asked = page.kind === "found" ? Math.max(answeringCount, page.entries.length) : answeringCount;
   const { items, selected, miss, near, lemma } = column.state;
   const note = lemma ? (
     <>
@@ -469,6 +574,7 @@ export function App() {
       >
         <div className="flex w-[264px] flex-none items-center gap-sm pr-3.5 pl-lg max-[860px]:w-[200px] max-[620px]:w-auto max-[620px]:pr-1.5 macos:pl-20">
           <span className="font-serif text-[17px] font-bold max-[620px]:hidden">{t.appName}</span>
+          <GroupSwitcher groups={groups} current={currentGroup} onSwitch={(id) => void switchGroup(id)} />
           <button
             type="button"
             aria-label={t.toggleColumn}
@@ -535,6 +641,7 @@ export function App() {
           {view === "library" && library ? (
             <>
               <LibraryPage library={library} busy={busy} notice={notice} actions={actions} />
+              <ReadingSettings controls={reading} />
               <MiniWindowSettings />
             </>
           ) : view === "wordBook" ? (
@@ -547,8 +654,14 @@ export function App() {
               busy={busy}
               notice={notice}
               onAddFolder={actions.addFolder}
+              reading={{ scheme: appearance.scheme, textSize: appearance.appearance.textSize }}
+              onToggleNetwork={(entry) => void toggleNetwork(entry)}
+              onToggleAsAuthored={(entry) => void toggleAsAuthored(entry)}
               onLookUp={followLink}
               onSearch={search}
+              groups={groups}
+              currentGroup={currentGroup}
+              onGoTo={(id, headword) => void switchGroup(id, headword)}
               recent={<RecentLookups words={history} onPick={(word) => void commit(word)} />}
               saved={page.kind === "found" && savedHere(page.headword)}
               onToggleSave={() => void toggleSave()}
@@ -559,7 +672,7 @@ export function App() {
           <div className="w-[168px] min-h-0 overflow-hidden max-[1100px]:w-[46px]">
             {page.kind === "found" ? (
               <ThumbIndex
-                key={page.headword}
+                key={pageKey(page)}
                 notches={page.entries.map((e) => ({ dictionaryId: e.dictionaryId, title: e.dictionaryTitle }))}
                 unanswered={asked - page.entries.length}
                 page={pageRef}
@@ -570,7 +683,8 @@ export function App() {
       </div>
 
       <footer className="flex items-center bg-paper gap-[18px] overflow-hidden border-t border-rule px-xl text-label whitespace-nowrap text-text-secondary tabular-nums select-none">
-        <span>{library && !library.problem ? t.libraryCount(enabledCount) : null}</span>
+        {group ? <span>{t.currentGroupIs(group.name)}</span> : null}
+        <span>{library && !library.problem ? t.libraryCount(answeringCount) : null}</span>
         {said ? (
           <span role="status" className="min-w-0 truncate">
             {said}
@@ -589,8 +703,14 @@ function PageContent({
   busy,
   notice,
   onAddFolder,
+  reading,
+  onToggleNetwork,
+  onToggleAsAuthored,
   onLookUp,
   onSearch,
+  groups,
+  currentGroup,
+  onGoTo,
   recent,
   saved,
   onToggleSave,
@@ -602,8 +722,15 @@ function PageContent({
   busy: boolean;
   notice: string | null;
   onAddFolder: () => void;
+  reading: Reading;
+  onToggleNetwork: (entry: Entry) => void;
+  onToggleAsAuthored: (entry: Entry) => void;
   onLookUp: (headword: string) => void;
   onSearch: (text: string) => void;
+  groups: Group[];
+  currentGroup: string | null;
+  /** Makes `group` current (null: the whole Library) and looks `headword` up there. */
+  onGoTo: (group: string | null, headword: string) => void;
   /** Recent lookups, offered on the empty page. */
   recent: ReactNode;
   /** Whether the word on the page is in the chosen Word Book. */
@@ -615,17 +742,29 @@ function PageContent({
     case "found":
       return (
         <EntryPage
-          key={page.headword}
+          key={pageKey(page)}
           headword={page.headword}
           entries={page.entries}
           asked={asked}
+          reading={reading}
+          onToggleNetwork={onToggleNetwork}
+          onToggleAsAuthored={onToggleAsAuthored}
           onLookUp={onLookUp}
           saved={saved}
           onToggleSave={onToggleSave}
         />
       );
     case "missing":
-      return <NoMatch query={page.query} next={page.next} onSearch={onSearch} />;
+      return (
+        <NoMatch
+          query={page.query}
+          next={page.next}
+          onSearch={onSearch}
+          groups={groups}
+          currentGroup={currentGroup}
+          onGoTo={onGoTo}
+        />
+      );
     case "failed":
       return <Lead>{t.lookupFailed(page.reason)}</Lead>;
     case "idle":
@@ -655,6 +794,12 @@ function PageContent({
   }
 }
 
+/** What the page needs to know of the reader's appearance settings. */
+interface Reading {
+  scheme: Scheme;
+  textSize: number;
+}
+
 /**
  * The page head and one section per answering Dictionary. `asked` is how many Dictionaries
  * the Lookup ran against. An `entry://` link in any Entry looks its headword up; a
@@ -662,21 +807,27 @@ function PageContent({
  */
 function EntryPage({
   headword,
-  entries: initial,
+  entries,
   asked,
   onLookUp,
+  reading,
+  onToggleNetwork,
+  onToggleAsAuthored,
   saved,
   onToggleSave,
 }: {
   headword: string;
   entries: Entry[];
   asked: number;
+  reading: Reading;
+  onToggleNetwork: (entry: Entry) => void;
+  onToggleAsAuthored: (entry: Entry) => void;
   onLookUp: (headword: string) => void;
   saved: boolean;
   onToggleSave: () => void;
 }) {
   const { t } = useI18n();
-  const [entries, setEntries] = useState(initial);
+  const dark = reading.scheme === "dark";
   const pronunciation = entries.find((entry) => entry.pronunciation)?.pronunciation;
   const sound = firstSound(entries);
   const [folded, setFolded] = useState<ReadonlySet<string>>(new Set());
@@ -704,16 +855,6 @@ function EntryPage({
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [sound]);
 
-  async function toggleNetwork(entry: Entry) {
-    const allow = !entry.allowNetwork;
-    try {
-      await setAllowNetwork(entry.dictionaryId, allow);
-    } catch {
-      return; // the switch stays as it was: the preference was not saved
-    }
-    setEntries((current) => current.map((e) => (e.dictionaryId === entry.dictionaryId ? { ...e, allowNetwork: allow } : e)));
-  }
-
   return (
     <article>
       <div className="flex flex-wrap items-baseline gap-x-md gap-y-xs border-b-[3px] border-double border-rule pb-2.5">
@@ -727,6 +868,8 @@ function EntryPage({
       </div>
       {entries.map((entry) => {
         const open = !folded.has(entry.dictionaryId);
+        // In the dark theme an Entry is recoloured, or keeps its own white page as authored.
+        const whitePage = dark && entry.asAuthored;
         const body = `${sectionId(entry.dictionaryId)}-body`;
         return (
           <section
@@ -738,19 +881,24 @@ function EntryPage({
           >
             <div className="flex h-9 items-center gap-sm">
               <h2 className="-ml-[7px] min-w-0 flex-1 truncate text-title font-bold">【{entry.dictionaryTitle}】</h2>
-              <NetworkSwitch allowed={entry.allowNetwork} onToggle={() => void toggleNetwork(entry)} />
+              {dark ? <AsAuthoredSwitch on={entry.asAuthored} onToggle={() => onToggleAsAuthored(entry)} /> : null}
+              <NetworkSwitch allowed={entry.allowNetwork} onToggle={() => onToggleNetwork(entry)} />
               <FoldButton open={open} controls={body} onToggle={() => toggleFold(entry.dictionaryId)} />
             </div>
             {/* Folded, the Entry stays loaded out of sight, so unfolding shows it as it was. */}
             <div id={body} hidden={!open} className="pb-3.5">
-              {/* A new frame when the switch changes, so the document reloads under its new policy. */}
-              <EntryFrame
-                key={String(entry.allowNetwork)}
-                dictionaryTitle={entry.dictionaryTitle}
-                src={entry.src}
-                onLink={onLookUp}
-                onSound={playSound}
-              />
+              <div className={whitePage ? "max-w-[860px] rounded-sharp bg-india-paper px-3 pt-2.5 pb-3" : undefined}>
+                {/* A new frame when the switch changes, so the document reloads under its new policy. */}
+                <EntryFrame
+                  key={String(entry.allowNetwork)}
+                  dictionaryTitle={entry.dictionaryTitle}
+                  src={entry.src}
+                  onLink={onLookUp}
+                  onSound={playSound}
+                  textSize={reading.textSize}
+                  recolour={dark && !entry.asAuthored}
+                />
+              </div>
             </div>
           </section>
         );
@@ -790,12 +938,43 @@ function PronounceButton({ onClick }: { onClick: () => void }) {
 }
 
 /**
- * The page when nothing was found: it says so, suggests a wildcard pattern, and lists the
- * headwords that follow where the word would stand, so a miss is never a dead end.
+ * The page when nothing was found: it says so, offers another Group that has the word,
+ * suggests a wildcard pattern, and lists the headwords that follow where the word would
+ * stand, so a miss is never a dead end.
  */
-function NoMatch({ query, next, onSearch }: { query: string; next: Suggestion[]; onSearch: (text: string) => void }) {
+function NoMatch({
+  query,
+  next,
+  onSearch,
+  groups,
+  currentGroup,
+  onGoTo,
+}: {
+  query: string;
+  next: Suggestion[];
+  onSearch: (text: string) => void;
+  groups: Group[];
+  currentGroup: string | null;
+  onGoTo: (group: string | null, headword: string) => void;
+}) {
   const { t } = useI18n();
   const pattern = wildcardHint(query);
+  const [found, setFound] = useState<{ query: string; group: string | null; where: Elsewhere | null } | null>(null);
+  useEffect(() => {
+    let stale = false;
+    elsewhere(query).then(
+      (where) => {
+        if (!stale) setFound({ query, group: currentGroup, where });
+      },
+      () => {}, // nowhere to point to
+    );
+    return () => {
+      stale = true;
+    };
+  }, [query, currentGroup]);
+  // Only the answer for this query in this Group counts.
+  const where = found && found.query === query && found.group === currentGroup ? found.where : null;
+  const whereName = where ? (where.group === null ? t.wholeLibrary : groups.find((g) => g.id === where.group)?.name) : undefined;
   return (
     <article>
       <div className="flex flex-wrap items-baseline gap-x-md gap-y-xs border-b-[3px] border-double border-rule pb-2.5">
@@ -804,6 +983,11 @@ function NoMatch({ query, next, onSearch }: { query: string; next: Suggestion[];
       </div>
       <Lead>{t.notFound(query)}</Lead>
       <div className="flex max-w-[860px] flex-wrap items-center gap-x-2.5 gap-y-sm pb-xs text-text-secondary">
+        {where && whereName !== undefined ? (
+          <OutlineButton onClick={() => onGoTo(where.group, where.headword)}>
+            {t.inGroupElsewhere(whereName, where.headword)}
+          </OutlineButton>
+        ) : null}
         <span>{t.wildcardTip}</span>
         <OutlineButton onClick={() => onSearch(pattern)}>
           {t.tryPattern} <b className="font-serif text-[14px]">{pattern}</b>
@@ -856,6 +1040,26 @@ function SaveButton({ saved, onToggle }: { saved: boolean; onToggle: () => void 
   );
 }
 
+/** The dark theme's switch in the section header: pressed when the Entry keeps its own white page. */
+function AsAuthoredSwitch({ on, onToggle }: { on: boolean; onToggle: () => void }) {
+  const { t } = useI18n();
+  return (
+    <button
+      type="button"
+      aria-pressed={on}
+      aria-label={t.asAuthored}
+      title={on ? t.shownAsAuthored : t.shownRecoloured}
+      onClick={onToggle}
+      className="grid size-6.5 flex-none place-items-center rounded-sharp text-text-secondary hover:bg-shade hover:text-text aria-pressed:bg-text aria-pressed:text-paper"
+    >
+      <svg className="size-4 fill-none stroke-current stroke-[1.2]" viewBox="0 0 16 16" aria-hidden="true">
+        <path d="M4 2.5h5.5L12 5v8.5H4z" />
+        <path d="M9.5 2.5V5H12" />
+      </svg>
+    </button>
+  );
+}
+
 /** An icon button in the section header: pressed when the Dictionary may use the network. */
 function NetworkSwitch({ allowed, onToggle }: { allowed: boolean; onToggle: () => void }) {
   const { t } = useI18n();
@@ -901,6 +1105,17 @@ function FoldButton({ open, controls, onToggle }: { open: boolean; controls: str
 
 function Lead({ children, muted = false }: { children: ReactNode; muted?: boolean }) {
   return <p className={`max-w-[860px] py-lg text-[14px] ${muted ? "text-text-secondary" : ""}`}>{children}</p>;
+}
+
+/** The enabled Dictionaries Lookups run against: the Group's, or the whole Library's. */
+function answering(library: Library, group: Group | null) {
+  const enabled = library.dictionaries.filter((d) => d.enabled);
+  return group ? enabled.filter((d) => group.dictionaries.includes(d.id)) : enabled;
+}
+
+/** A found page is new when its word or its Group is: its frames and notches start afresh. */
+function pageKey(page: { headword: string; group: string | null }) {
+  return `${page.group ?? ""}\u0000${page.headword}`;
 }
 
 /** History as the shell sent it; anything but a list of words counts as none. */

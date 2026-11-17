@@ -88,8 +88,24 @@
   --here-ink: var(--color-here-ink);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
+/*
+ * The dark theme. The interface writes the scheme on screen (the reader's choice, or the
+ * system's) to <html data-theme>; until it has, the system's preference decides. The `dark:`
+ * utilities follow the same rule.
+ */
+@custom-variant dark {
+  &:where([data-theme="dark"], [data-theme="dark"] *) {
+    @slot;
+  }
+  @media (prefers-color-scheme: dark) {
+    &:where(:root:not([data-theme]), :root:not([data-theme]) *) {
+      @slot;
+    }
+  }
+}
+
+:root {
+  @variant dark {
     --paper: var(--color-bookcloth-navy);
     --paper-shade: var(--color-bookcloth-raised);
     --ink: var(--color-night-paper-ink);

@@ -1,7 +1,7 @@
 import { useState, type FormEvent, type ReactNode } from "react";
 import { useI18n } from "../i18n";
 import { formatCount, formatSize, markOf } from "../lib/format";
-import type { Dictionary, FailureReason, Indexing, Library, OpenFailure, RegisterError } from "../lib/ipc";
+import type { Dictionary, FailureReason, Group, Indexing, Library, OpenFailure, RegisterError } from "../lib/ipc";
 import type { Catalogue } from "../i18n/en";
 
 export interface LibraryActions {
@@ -15,6 +15,11 @@ export interface LibraryActions {
   /** Indexes the Dictionaries still waiting for their index. */
   index: () => void;
   cancelIndexing: () => void;
+  createGroup: (name: string) => void;
+  renameGroup: (id: string, name: string) => void;
+  deleteGroup: (id: string) => void;
+  setInGroup: (group: string, dictionary: string, member: boolean) => void;
+  moveInGroup: (group: string, dictionary: string, direction: "up" | "down") => void;
 }
 
 /**
@@ -36,6 +41,7 @@ export function LibraryPage({
   const { t } = useI18n();
   const empty = library.dictionaries.length === 0 && library.failures.length === 0;
   const waiting = library.dictionaries.filter((d) => d.index.state === "pending").length;
+  const [naming, setNaming] = useState(false);
 
   return (
     <article aria-busy={busy}>
@@ -53,10 +59,26 @@ export function LibraryPage({
         <OutlineButton onClick={actions.rescan} disabled={busy || library.folders.length === 0}>
           {t.rescan}
         </OutlineButton>
+        <OutlineButton onClick={() => setNaming(true)} disabled={busy || naming}>
+          {t.newGroup}
+        </OutlineButton>
         <span role="status" className="text-label text-text-secondary">
           {busy ? t.working : notice}
         </span>
       </div>
+
+      {naming ? (
+        <GroupNameForm
+          groups={library.groups}
+          submitLabel={t.create}
+          busy={busy}
+          onSubmit={(name) => {
+            setNaming(false);
+            actions.createGroup(name);
+          }}
+          onCancel={() => setNaming(false)}
+        />
+      ) : null}
 
       {library.indexing ? (
         <IndexingProgress indexing={library.indexing} onCancel={actions.cancelIndexing} />
@@ -99,8 +121,25 @@ export function LibraryPage({
       {library.dictionaries.length > 0 ? (
         <>
           <SubHeading>{t.dictionaries}</SubHeading>
-          <DictionaryTable dictionaries={library.dictionaries} busy={busy} actions={actions} />
+          <DictionaryTable dictionaries={library.dictionaries} groups={library.groups} busy={busy} actions={actions} />
           <p className="max-w-[860px] pt-2.5 text-[12px] text-text-secondary">{t.libraryNote}</p>
+        </>
+      ) : null}
+
+      {library.groups.length > 0 ? (
+        <>
+          <SubHeading>{t.groups}</SubHeading>
+          {library.groups.map((group) => (
+            <GroupSection
+              key={group.id}
+              group={group}
+              groups={library.groups}
+              dictionaries={library.dictionaries}
+              busy={busy}
+              actions={actions}
+            />
+          ))}
+          <p className="max-w-[860px] border-t border-hair pt-2.5 text-[12px] text-text-secondary">{t.groupsNote}</p>
         </>
       ) : null}
 
@@ -120,10 +159,13 @@ export function LibraryPage({
 
 function DictionaryTable({
   dictionaries,
+  groups,
   busy,
   actions,
 }: {
   dictionaries: Dictionary[];
+  /** One column each, ticked for the Dictionaries in the Group. */
+  groups: Group[];
   busy: boolean;
   actions: LibraryActions;
 }) {
@@ -149,6 +191,11 @@ function DictionaryTable({
           <th scope="col" className={`${head} pr-[18px] text-right`}>
             {t.columnSize}
           </th>
+          {groups.map((group) => (
+            <th key={group.id} scope="col" className={`${head} max-w-[120px] truncate px-sm text-center`}>
+              {group.name}
+            </th>
+          ))}
         </tr>
       </thead>
       <tbody>
@@ -195,10 +242,214 @@ function DictionaryTable({
             </th>
             <td className={`${cell} pr-[18px] text-right`}>{formatCount(dictionary.entryCount, locale)}</td>
             <td className={`${cell} pr-[18px] text-right`}>{formatSize(dictionary.size, locale)}</td>
+            {groups.map((group) => (
+              <td key={group.id} className={`${cell} px-sm text-center`}>
+                <input
+                  type="checkbox"
+                  aria-label={t.inGroup(dictionary.title, group.name)}
+                  checked={group.dictionaries.includes(dictionary.id)}
+                  disabled={busy}
+                  onChange={(event) => actions.setInGroup(group.id, dictionary.id, event.target.checked)}
+                  className="m-0 size-[15px] align-middle accent-[var(--ink)]"
+                />
+              </td>
+            ))}
           </tr>
         ))}
       </tbody>
     </table>
+  );
+}
+
+/**
+ * One Group: its name with Rename and Delete, then its Dictionaries in Group order, each
+ * with its own up and down. Membership is set in the table above.
+ */
+function GroupSection({
+  group,
+  groups,
+  dictionaries,
+  busy,
+  actions,
+}: {
+  group: Group;
+  groups: Group[];
+  dictionaries: Dictionary[];
+  busy: boolean;
+  actions: LibraryActions;
+}) {
+  const { t } = useI18n();
+  const [mode, setMode] = useState<"idle" | "renaming" | "deleting">("idle");
+  const members = group.dictionaries
+    .map((id) => dictionaries.find((dictionary) => dictionary.id === id))
+    .filter((dictionary): dictionary is Dictionary => dictionary !== undefined);
+  const small =
+    "h-6.5 flex-none rounded-sharp px-2 text-[12px] text-text-secondary hover:bg-shade hover:text-text disabled:opacity-50";
+  return (
+    <section aria-label={group.name} className="max-w-[860px] border-t border-hair pb-1.5">
+      <div className="flex min-h-[34px] flex-wrap items-center gap-x-3.5">
+        <h3 className="min-w-0 truncate font-semibold">{group.name}</h3>
+        <span className="text-[12px] text-text-secondary tabular-nums">{t.libraryCount(members.length)}</span>
+        <span className="ml-auto flex gap-0.5">
+          <button
+            type="button"
+            aria-label={t.renameGroup(group.name)}
+            disabled={busy || mode !== "idle"}
+            onClick={() => setMode("renaming")}
+            className={small}
+          >
+            {t.rename}
+          </button>
+          <button
+            type="button"
+            aria-label={t.deleteGroup(group.name)}
+            disabled={busy || mode !== "idle"}
+            onClick={() => setMode("deleting")}
+            className={small}
+          >
+            {t.delete}
+          </button>
+        </span>
+      </div>
+      {mode === "renaming" ? (
+        <GroupNameForm
+          initial={group.name}
+          groups={groups}
+          renaming={group.id}
+          submitLabel={t.save}
+          busy={busy}
+          onSubmit={(name) => {
+            setMode("idle");
+            if (name !== group.name) actions.renameGroup(group.id, name);
+          }}
+          onCancel={() => setMode("idle")}
+        />
+      ) : null}
+      {mode === "deleting" ? (
+        <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1.5 pb-1.5 text-[12px]">
+          <span className="text-text-secondary">{t.deleteGroupQuestion(group.name)}</span>
+          <button type="button" onClick={() => setMode("idle")} className={small}>
+            {t.keep}
+          </button>
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => {
+              setMode("idle");
+              actions.deleteGroup(group.id);
+            }}
+            className={`${small} border border-rule text-text`}
+          >
+            {t.delete}
+          </button>
+        </div>
+      ) : null}
+      {members.length > 0 ? (
+        <ol aria-label={group.name}>
+          {members.map((dictionary, i) => (
+            <li key={dictionary.id} className={`flex h-[30px] items-center gap-1 ${dictionary.enabled ? "" : "text-text-secondary"}`}>
+              <IconButton
+                label={t.moveUpIn(group.name, dictionary.title)}
+                disabled={busy || i === 0}
+                onClick={() => actions.moveInGroup(group.id, dictionary.id, "up")}
+              >
+                <path d="M4 10l4-4 4 4" />
+              </IconButton>
+              <IconButton
+                label={t.moveDownIn(group.name, dictionary.title)}
+                disabled={busy || i === members.length - 1}
+                onClick={() => actions.moveInGroup(group.id, dictionary.id, "down")}
+              >
+                <path d="M4 6l4 4 4-4" />
+              </IconButton>
+              <Mark title={dictionary.title} />
+              <span className="min-w-0 truncate">{dictionary.title}</span>
+            </li>
+          ))}
+        </ol>
+      ) : (
+        <p className="pb-1 text-[12px] text-text-secondary">{t.groupEmpty}</p>
+      )}
+    </section>
+  );
+}
+
+/** A Group's name, typed in place: for a new Group or a renamed one. */
+function GroupNameForm({
+  initial = "",
+  groups,
+  renaming,
+  submitLabel,
+  busy,
+  onSubmit,
+  onCancel,
+}: {
+  initial?: string;
+  groups: Group[];
+  /** The key of the Group being renamed, whose own name is not taken. */
+  renaming?: string;
+  submitLabel: string;
+  busy: boolean;
+  onSubmit: (name: string) => void;
+  onCancel: () => void;
+}) {
+  const { t } = useI18n();
+  const [name, setName] = useState(initial);
+  const trimmed = name.trim();
+  const taken = groups.some((group) => group.name === trimmed && group.id !== renaming);
+
+  function submit(event: FormEvent) {
+    event.preventDefault();
+    if (trimmed !== "" && !taken) onSubmit(trimmed);
+  }
+
+  return (
+    <form onSubmit={submit} className="max-w-[860px] pt-2.5 pb-1.5">
+      <div className="flex flex-wrap items-end gap-x-3 gap-y-1.5">
+        <label className="flex flex-col gap-0.5 text-label text-text-secondary">
+          {t.groupName}
+          <input
+            type="text"
+            // The form opens because the reader asked to type a name.
+            autoFocus
+            spellCheck={false}
+            value={name}
+            onChange={(event) => setName(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Escape") onCancel();
+            }}
+            className="h-7 w-[240px] min-w-0 rounded-sharp border border-hair bg-transparent px-2 text-body text-text outline-offset-1 focus-visible:border-rule focus-visible:outline focus-visible:outline-1 focus-visible:outline-rule"
+          />
+        </label>
+        <span className="flex gap-1.5">
+          <button
+            type="submit"
+            disabled={busy || trimmed === "" || taken}
+            className="h-7 rounded-sharp border border-rule px-2.5 text-body text-text hover:bg-shade active:translate-y-px disabled:opacity-50 disabled:hover:bg-transparent"
+          >
+            {submitLabel}
+          </button>
+          <OutlineButton onClick={onCancel}>{t.cancel}</OutlineButton>
+        </span>
+      </div>
+      {taken ? (
+        <p role="alert" className="pt-1.5 text-[12px] font-semibold">
+          {t.groupNameTaken}
+        </p>
+      ) : null}
+    </form>
+  );
+}
+
+/** A Dictionary's one-character mark, cut like a thumb notch. */
+function Mark({ title }: { title: string }) {
+  return (
+    <b
+      aria-hidden="true"
+      className="mr-1.5 inline-grid size-[22px] flex-none place-items-center rounded-l-[11px] bg-notch align-middle font-serif text-[12px] font-bold text-notch-text"
+    >
+      {markOf(title)}
+    </b>
   );
 }
 

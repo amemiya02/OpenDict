@@ -25,6 +25,8 @@ function fakeShell(initialHistory: string[] = []) {
           failures: [],
           indexing: null,
           problem: null,
+          groups: [],
+          currentGroup: null,
         };
       case "suggest": {
         const key = (args.query as string).trim().toLowerCase();
@@ -174,7 +176,7 @@ describe("History", () => {
   it("still looks words up when History cannot be read or written", async () => {
     mockIPC((command, payload) => {
       if (command === "history" || command === "record_lookup") throw new Error("History file damaged");
-      if (command === "library") return { folders: [], dictionaries: [{ id: "a", title: "A", path: "/a.mdx", entryCount: 1, size: 1, enabled: true, index: { state: "ready" } }], failures: [], indexing: null, problem: null };
+      if (command === "library") return { folders: [], dictionaries: [{ id: "a", title: "A", path: "/a.mdx", entryCount: 1, size: 1, enabled: true, index: { state: "ready" } }], failures: [], indexing: null, problem: null, groups: [], currentGroup: null };
       if (command === "suggest") return { items: [{ headword: "apple", count: 1 }], lemma: null, near: false, miss: false, browse: false };
       if (command === "look_up") {
         const headword = (payload as { headword: string }).headword;

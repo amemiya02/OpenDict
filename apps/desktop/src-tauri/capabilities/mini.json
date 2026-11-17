@@ -12,6 +12,8 @@
     "allow-mini-summons",
     "allow-close-mini",
     "allow-open-in-main",
+    "allow-appearance",
+    "allow-set-zoom",
     "core:window:allow-start-dragging"
   ]
 }

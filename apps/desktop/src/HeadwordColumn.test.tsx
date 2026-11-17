@@ -25,6 +25,8 @@ function fakeShell(index: Suggestion[], lemmas: Record<string, string> = {}) {
     failures: [],
     indexing: null,
     problem: null,
+    groups: [],
+    currentGroup: null,
   };
   mockIPC((command, payload) => {
     const args = (payload ?? {}) as Record<string, unknown>;

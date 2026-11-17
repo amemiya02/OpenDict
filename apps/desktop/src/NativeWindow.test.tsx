@@ -22,6 +22,8 @@ function fakeShell(chrome: Chrome = { platform: "windows", material: null }) {
           failures: [],
           indexing: null,
           problem: null,
+          groups: [],
+          currentGroup: null,
         };
       case "suggest": {
         const query = (args.query as string).trim();

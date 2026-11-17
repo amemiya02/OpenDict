@@ -4,7 +4,7 @@
 
 use std::path::PathBuf;
 
-use tauri::{AppHandle, Emitter, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_dialog::DialogExt;
 
 use opendict_core::ExportFormat;
@@ -13,8 +13,8 @@ use crate::EXPORT_DIR_ENV;
 use crate::mini::settings::Role;
 use crate::mini::{self, Mini, MiniSettingsView, Summons};
 use crate::state::{
-    AppState, Direction, EntryView, LibraryView, RegisterError, SuggestionView, SuggestionsView,
-    WordBooksView,
+    AppState, AppearanceView, Direction, ElsewhereView, EntryView, LibraryView, RegisterError,
+    SuggestionView, SuggestionsView, Theme, WordBooksView,
 };
 
 /// Unlocks a Dictionary that needs a registration code with the code and e-mail the
@@ -140,6 +140,63 @@ pub async fn move_dictionary(
     state.move_dictionary(&id, direction)
 }
 
+#[tauri::command]
+pub fn create_group(state: State<'_, AppState>, name: String) -> Result<LibraryView, String> {
+    state.create_group(&name)
+}
+
+#[tauri::command]
+pub fn rename_group(
+    state: State<'_, AppState>,
+    id: String,
+    name: String,
+) -> Result<LibraryView, String> {
+    state.rename_group(&id, &name)
+}
+
+#[tauri::command]
+pub fn delete_group(state: State<'_, AppState>, id: String) -> Result<LibraryView, String> {
+    state.delete_group(&id)
+}
+
+#[tauri::command]
+pub fn set_in_group(
+    state: State<'_, AppState>,
+    group: String,
+    dictionary: String,
+    member: bool,
+) -> Result<LibraryView, String> {
+    state.set_in_group(&group, &dictionary, member)
+}
+
+#[tauri::command]
+pub fn move_in_group(
+    state: State<'_, AppState>,
+    group: String,
+    dictionary: String,
+    direction: Direction,
+) -> Result<LibraryView, String> {
+    state.move_in_group(&group, &dictionary, direction)
+}
+
+/// Makes `group` the Current Group; `null` makes Lookups run against the whole Library.
+#[tauri::command]
+pub fn set_current_group(
+    state: State<'_, AppState>,
+    group: Option<String>,
+) -> Result<LibraryView, String> {
+    state.set_current_group(group.as_deref())
+}
+
+/// Another Group that has `query` when the Current Group does not, for the no-match page.
+#[tauri::command]
+pub fn elsewhere(
+    state: State<'_, AppState>,
+    query: String,
+) -> Result<Option<ElsewhereView>, String> {
+    state.elsewhere(&query)
+}
+
 /// The headwords of committed Lookups, newest first.
 #[tauri::command]
 pub fn history(state: State<'_, AppState>) -> Result<Vec<String>, String> {
@@ -165,6 +222,71 @@ pub fn set_allow_network(
     allow: bool,
 ) -> Result<(), String> {
     state.set_allow_network(&dictionary_id, allow)
+}
+
+#[tauri::command]
+pub fn appearance(state: State<'_, AppState>) -> AppearanceView {
+    state.appearance()
+}
+
+/// Remembers the theme and gives it to the windows, so their native frames and the
+/// interface's `prefers-color-scheme` follow it.
+#[tauri::command]
+pub fn set_theme(app: AppHandle, state: State<'_, AppState>, theme: Theme) -> Result<(), String> {
+    state.set_theme(theme)?;
+    apply_theme(&app, theme);
+    Ok(())
+}
+
+#[tauri::command]
+pub fn set_as_authored(
+    state: State<'_, AppState>,
+    dictionary_id: String,
+    as_authored: bool,
+) -> Result<(), String> {
+    state.set_as_authored(&dictionary_id, as_authored)
+}
+
+#[tauri::command]
+pub fn set_all_as_authored(state: State<'_, AppState>, as_authored: bool) -> Result<(), String> {
+    state.set_all_as_authored(as_authored)
+}
+
+/// Remembers the base text size of Entries; returns it as set, within limits.
+#[tauri::command]
+pub fn set_text_size(state: State<'_, AppState>, size: u32) -> Result<u32, String> {
+    state.set_text_size(size)
+}
+
+/// Remembers the page zoom and zooms the windows; returns it as set, within limits.
+#[tauri::command]
+pub fn set_zoom(app: AppHandle, state: State<'_, AppState>, percent: u32) -> Result<u32, String> {
+    let zoom = state.set_zoom(percent)?;
+    apply_zoom(&app, zoom);
+    Ok(zoom)
+}
+
+/// Gives the windows the reader's theme; `System` lets them follow the operating system.
+/// Each window takes it itself, so its native frame and material (Mica) match the page and
+/// its webview's `prefers-color-scheme` follows.
+pub fn apply_theme(app: &AppHandle, theme: Theme) {
+    let theme = match theme {
+        Theme::System => None,
+        Theme::Light => Some(tauri::Theme::Light),
+        Theme::Dark => Some(tauri::Theme::Dark),
+    };
+    app.set_theme(theme);
+    for window in app.webview_windows().values() {
+        let _ = window.set_theme(theme);
+    }
+}
+
+/// Zooms every window's page, Entry frames included, to `percent`.
+pub fn apply_zoom(app: &AppHandle, percent: u32) {
+    for window in app.webview_windows().values() {
+        // A platform without page zoom keeps the page at its own size.
+        let _ = window.set_zoom(f64::from(percent) / 100.0);
+    }
 }
 
 #[tauri::command]

@@ -33,6 +33,8 @@ function fakeShell(start: Partial<MiniSettings> = {}, refuse: Record<string, str
             failures: [],
             indexing: null,
             problem: null,
+            groups: [],
+            currentGroup: null,
           };
         case "suggest": {
           const query = (args.query as string).trim();

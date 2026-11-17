@@ -30,6 +30,8 @@ function fakeShell(answers: Record<string, Suggestions>) {
           failures: [],
           indexing: null,
           problem: null,
+          groups: [],
+          currentGroup: null,
         };
       case "suggest":
         return answers[(args.query as string).trim()] ?? answer({ browse: true });

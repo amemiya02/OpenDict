@@ -1,4 +1,4 @@
-import { useEffect, useEffectEvent, useRef, useState } from "react";
+import { useCallback, useEffect, useEffectEvent, useRef, useState } from "react";
 import { useI18n } from "../i18n";
 import { linkedHeadword, soundUrl } from "../lib/entryLinks";
 import { readerJustActed } from "../lib/sound";
@@ -7,6 +7,12 @@ import { readerJustActed } from "../lib/sound";
 const INITIAL_HEIGHT = 120;
 /** A frame never grows past this, whatever its document claims. */
 const MAX_HEIGHT = 200_000;
+/**
+ * The dark theme's recolouring: the frame is inverted as a picture, so dark type on the
+ * Entry's (transparent) page turns paper-coloured on the navy page, and hues stay roughly
+ * where they were. 0.92 rather than 1 lands black type on Night Paper Ink, not pure white.
+ */
+const RECOLOUR = "invert(0.92) hue-rotate(180deg)";
 
 /**
  * The only element that ever shows Entry content. The document comes from the Entry
@@ -21,18 +27,26 @@ const MAX_HEIGHT = 200_000;
  * pressed while the focus is in it (`onEscape`, which the Mini Window closes on). Messages
  * from any other window, of any other shape, or (for links) with no reader action in this
  * frame behind them are dropped.
+ *
+ * It also tells the document the reader's base text size when it changes, and in the
+ * dark theme recolours the frame from outside with a filter, never touching the document.
  */
 export function EntryFrame({
   dictionaryTitle,
   src,
   onLink,
   onSound,
+  textSize,
+  recolour = false,
   onEscape,
 }: {
   dictionaryTitle: string;
   src: string;
   onLink?: (headword: string) => void;
   onSound?: (url: string) => void;
+  /** The reader's base text size; the Entry scheme serves documents with it already. */
+  textSize: number;
+  recolour?: boolean;
   onEscape?: () => void;
 }) {
   const { t } = useI18n();
@@ -84,14 +98,29 @@ export function EntryFrame({
     return () => window.removeEventListener("message", listener);
   }, []);
 
+  // The document was served with the size of the moment; later changes reach it as a
+  // message, so the Entry keeps its place and state. The origin is opaque, hence "*":
+  // the message holds nothing but the number.
+  const postTextSize = useCallback(() => {
+    frame.current?.contentWindow?.postMessage({ opendict: "textSize", size: textSize }, "*");
+  }, [textSize]);
+  const served = useRef(textSize);
+  useEffect(() => {
+    if (served.current === textSize) return;
+    served.current = textSize;
+    postTextSize();
+  }, [textSize, postTextSize]);
+
   return (
     <iframe
       ref={frame}
       sandbox="allow-scripts"
       title={t.entryFrameTitle(dictionaryTitle)}
       src={src}
-      style={{ height: `${height}px` }}
-      className="block w-full max-w-[860px] border-0 bg-transparent"
+      onLoad={postTextSize}
+      style={{ height: `${height}px`, filter: recolour ? RECOLOUR : undefined }}
+      // Light, like the document inside: with matching schemes the frame stays transparent.
+      className="block w-full max-w-[860px] border-0 bg-transparent [color-scheme:light]"
     />
   );
 }

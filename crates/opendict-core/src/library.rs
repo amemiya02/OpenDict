@@ -20,9 +20,10 @@ use crate::scan::{self, Stamp, Unit};
 /// Every Dictionary the reader has made available: the Dictionaries found in their
 /// Library Folders, in Library order, each enabled or not.
 ///
-/// A Library loaded from a file ([`Library::load`]) records its Library Folders, order
-/// and enabled states there after every change, and keeps the registration codes the
-/// reader enters in `registrations.json` beside it. Dictionary files are only ever read.
+/// A Library loaded from a file ([`Library::load`]) records its Library Folders, order,
+/// enabled states, Groups and Current Group there after every change, and keeps the
+/// registration codes the reader enters in `registrations.json` beside it. Dictionary
+/// files are only ever read.
 pub struct Library {
     file: Option<PathBuf>,
     /// Where indexes are stored: `indexes` beside the Library file. `None` for a Library
@@ -45,6 +46,21 @@ struct Record {
     /// so a Dictionary on a drive that is briefly missing keeps its place.
     order: Vec<String>,
     disabled: Vec<String>,
+    /// The reader's Groups, in the order they were created.
+    groups: Vec<GroupRecord>,
+    /// The Group Lookups run against; none means the whole Library.
+    current_group: Option<String>,
+}
+
+/// A Group as the Library file keeps it.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct GroupRecord {
+    id: String,
+    name: String,
+    /// Dictionary keys in Group order. Keys of Dictionaries not found right now stay, so
+    /// a Dictionary on a drive that is briefly missing keeps its place in the Group.
+    dictionaries: Vec<String>,
 }
 
 struct Dictionary {
@@ -202,6 +218,26 @@ pub struct Lemma {
     pub to: String,
 }
 
+/// A named, ordered subset of the Library. A Dictionary may belong to several Groups,
+/// with its own place in each.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Group {
+    /// The Group's key. It stays the same when the Group is renamed.
+    pub id: String,
+    pub name: String,
+    /// The keys of its Dictionaries found in the Library now, in Group order.
+    pub dictionaries: Vec<String>,
+}
+
+/// Another set of Dictionaries that has the word the Current Group lacks.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Elsewhere {
+    /// The Group's key, or `None` for the whole Library.
+    pub group: Option<String>,
+    /// The headword that set offers for the query.
+    pub headword: String,
+}
+
 /// A step in Library order.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Move {
@@ -227,7 +263,7 @@ impl Library {
 
     /// Like [`Library::load`], reading only the given formats.
     pub fn load_with(file: &Path, formats: &[&'static dyn DictionaryFormat]) -> Result<Library> {
-        let record = match std::fs::read_to_string(file) {
+        let mut record: Record = match std::fs::read_to_string(file) {
             Ok(text) => serde_json::from_str(&text).map_err(|error| Error::LibraryFile {
                 file: file.to_owned(),
                 reason: error.to_string(),
@@ -240,6 +276,12 @@ impl Library {
                 });
             }
         };
+        // A Current Group the file names but does not hold would leave nothing to answer.
+        if let Some(current) = &record.current_group
+            && !record.groups.iter().any(|group| &group.id == current)
+        {
+            record.current_group = None;
+        }
         let mut library = Library::new(Some(file.to_owned()), formats, record);
         library.registrations = Registrations::load(file.with_file_name("registrations.json"))?;
         library.rescan()?;
@@ -589,15 +631,349 @@ impl Library {
         self.save()
     }
 
-    /// The Entries for exactly `headword`, one per enabled Dictionary that has it, in
-    /// Library order. Redirects (`@@@LINK=`) are followed; several records under the
+    /// The reader's Groups, in the order they were created.
+    pub fn groups(&self) -> Vec<Group> {
+        self.record
+            .groups
+            .iter()
+            .map(|group| Group {
+                id: group.id.clone(),
+                name: group.name.clone(),
+                dictionaries: group
+                    .dictionaries
+                    .iter()
+                    .filter(|id| self.dictionaries.iter().any(|d| d.info.id == **id))
+                    .cloned()
+                    .collect(),
+            })
+            .collect()
+    }
+
+    /// Creates an empty Group named `name` and returns its key. The name must not be
+    /// blank or the name of another Group.
+    pub fn create_group(&mut self, name: &str) -> Result<String> {
+        let name = self.group_name(name, None)?;
+        let next = self
+            .record
+            .groups
+            .iter()
+            .filter_map(|group| group.id.strip_prefix('g')?.parse::<u64>().ok())
+            .max()
+            .map_or(1, |last| last + 1);
+        let id = format!("g{next}");
+        self.record.groups.push(GroupRecord {
+            id: id.clone(),
+            name,
+            dictionaries: Vec::new(),
+        });
+        self.save()?;
+        Ok(id)
+    }
+
+    /// Renames a Group. The name must not be blank or the name of another Group.
+    pub fn rename_group(&mut self, id: &str, name: &str) -> Result<()> {
+        let name = self.group_name(name, Some(id))?;
+        self.group_mut(id)?.name = name;
+        self.save()
+    }
+
+    /// Deletes a Group. Its Dictionaries stay in the Library. When it was the Current
+    /// Group, Lookups run against the whole Library again.
+    pub fn delete_group(&mut self, id: &str) -> Result<()> {
+        self.group_mut(id)?;
+        self.record.groups.retain(|group| group.id != id);
+        if self.record.current_group.as_deref() == Some(id) {
+            self.record.current_group = None;
+        }
+        self.save()
+    }
+
+    /// Puts a Dictionary into a Group (at the end of its order) or takes it out. Putting
+    /// in a member, or taking out a non-member, changes nothing.
+    pub fn set_in_group(&mut self, group: &str, dictionary: &str, member: bool) -> Result<()> {
+        if !self.dictionaries.iter().any(|d| d.info.id == dictionary) {
+            return Err(Error::UnknownDictionary(dictionary.to_owned()));
+        }
+        let members = &mut self.group_mut(group)?.dictionaries;
+        let present = members.iter().any(|id| id == dictionary);
+        if member && !present {
+            members.push(dictionary.to_owned());
+        } else if !member && present {
+            members.retain(|id| id != dictionary);
+        }
+        self.save()
+    }
+
+    /// Moves a Dictionary one place up or down in a Group's order. Moving the first one up
+    /// or the last one down changes nothing; nor does it change Library order.
+    pub fn move_in_group(&mut self, group: &str, dictionary: &str, step: Move) -> Result<()> {
+        let found: Vec<String> = self
+            .dictionaries
+            .iter()
+            .map(|d| d.info.id.clone())
+            .collect();
+        let members = &mut self.group_mut(group)?.dictionaries;
+        // Places in the record of the members found now: absent ones are stepped over.
+        let places: Vec<usize> = (0..members.len())
+            .filter(|&at| found.contains(&members[at]))
+            .collect();
+        let from = places
+            .iter()
+            .position(|&at| members[at] == dictionary)
+            .ok_or_else(|| Error::UnknownDictionary(dictionary.to_owned()))?;
+        let to = match step {
+            Move::Up => from.checked_sub(1),
+            Move::Down => Some(from + 1).filter(|&to| to < places.len()),
+        };
+        let Some(to) = to else {
+            return Ok(());
+        };
+        members.swap(places[from], places[to]);
+        self.save()
+    }
+
+    /// The key of the Current Group, or `None` when Lookups run against the whole Library.
+    pub fn current_group(&self) -> Option<&str> {
+        self.record.current_group.as_deref()
+    }
+
+    /// Makes `group` the Current Group (`None`: the whole Library). Every Lookup after
+    /// this runs against it, in its order.
+    pub fn set_current_group(&mut self, group: Option<&str>) -> Result<()> {
+        if let Some(id) = group {
+            self.group_mut(id)?;
+        }
+        self.record.current_group = group.map(str::to_owned);
+        self.save()
+    }
+
+    /// Another Group that has what the reader typed, for when the Current Group does not:
+    /// the first of the other Groups, in the order they were created, whose Dictionaries
+    /// file the query, its base form or a headword starting with it; failing those, the
+    /// whole Library. `None` when none has it, and for a pattern or an empty query.
+    pub fn elsewhere(&self, query: &str) -> Result<Option<Elsewhere>> {
+        let key = index_key(query.trim());
+        if key.is_empty() || Pattern::parse(&key).is_some() {
+            return Ok(None);
+        }
+        let current = self.current_group();
+        let candidates = self
+            .record
+            .groups
+            .iter()
+            .map(|group| Some(group.id.as_str()))
+            .chain(std::iter::once(None))
+            .filter(|&group| group != current);
+        for group in candidates {
+            let answering = self.answering_in(group);
+            if answering.dictionaries.is_empty() {
+                continue;
+            }
+            if let Some(headword) = answering.offer(&key)? {
+                return Ok(Some(Elsewhere {
+                    group: group.map(str::to_owned),
+                    headword,
+                }));
+            }
+        }
+        Ok(None)
+    }
+
+    /// The Dictionaries Lookups run against now: the Current Group's.
+    fn answering(&self) -> Answering<'_> {
+        self.answering_in(self.current_group())
+    }
+
+    /// The enabled Dictionaries of `group` in its order, or of the whole Library in
+    /// Library order. A Group that no longer exists has none.
+    fn answering_in(&self, group: Option<&str>) -> Answering<'_> {
+        let enabled = |id: &str| {
+            self.dictionaries
+                .iter()
+                .find(|d| d.info.id == id && d.info.enabled)
+        };
+        let dictionaries = match group {
+            None => self
+                .dictionaries
+                .iter()
+                .filter(|d| d.info.enabled)
+                .collect(),
+            Some(group) => self
+                .record
+                .groups
+                .iter()
+                .find(|known| known.id == group)
+                .map(|known| {
+                    known
+                        .dictionaries
+                        .iter()
+                        .filter_map(|id| enabled(id))
+                        .collect()
+                })
+                .unwrap_or_default(),
+        };
+        Answering { dictionaries }
+    }
+
+    fn group_mut(&mut self, id: &str) -> Result<&mut GroupRecord> {
+        self.record
+            .groups
+            .iter_mut()
+            .find(|group| group.id == id)
+            .ok_or_else(|| Error::UnknownGroup(id.to_owned()))
+    }
+
+    /// `name` trimmed, if it is not blank and no Group but `renaming` has it.
+    fn group_name(&self, name: &str, renaming: Option<&str>) -> Result<String> {
+        let name = name.trim();
+        let taken = self
+            .record
+            .groups
+            .iter()
+            .any(|group| group.name == name && Some(group.id.as_str()) != renaming);
+        if name.is_empty() || taken {
+            return Err(Error::GroupName(name.to_owned()));
+        }
+        Ok(name.to_owned())
+    }
+
+    /// The Entries for exactly `headword`, one per enabled Dictionary in the Current Group
+    /// that has it, in Current Group order. Redirects (`@@@LINK=`) are followed; several records under the
     /// headword in one Dictionary are kept together in one Entry.
     pub fn look_up(&self, headword: &str) -> Result<Vec<Entry>> {
         let mut entries = Vec::new();
-        for dictionary in self.dictionaries.iter().filter(|d| d.info.enabled) {
+        for dictionary in self.answering().dictionaries {
             entries.extend(dictionary.entry(headword)?);
         }
         Ok(entries)
+    }
+
+    /// Up to `limit` suggestions for `query`, from the Current Group: the headwords whose
+    /// key starts with the query's, then the headwords that follow them in index order,
+    /// like a page of a printed index. A query with wildcards (`*` for any run of
+    /// characters, `?` for one) offers only its matches. An empty query browses the index
+    /// from its start. Each suggestion counts the Dictionaries in the Current Group that
+    /// file it, and a base form is offered only when the Current Group files it.
+    pub fn suggest(&self, query: &str, limit: usize) -> Result<Suggestions> {
+        self.answering().suggest(query, limit)
+    }
+
+    /// Up to `limit` headwords that follow `headword` in index order, from the Current
+    /// Group: the column continued as the reader scrolls.
+    pub fn headwords_after(&self, headword: &str, limit: usize) -> Result<Vec<Suggestion>> {
+        self.answering().headwords_after(headword, limit)
+    }
+
+    /// Up to `limit` more suggestions for `query`, after `headword`: the column continued as
+    /// the reader scrolls. A pattern's column continues with its matches; any other column
+    /// continues through the index.
+    pub fn suggest_after(
+        &self,
+        query: &str,
+        headword: &str,
+        limit: usize,
+    ) -> Result<Vec<Suggestion>> {
+        self.answering().suggest_after(query, headword, limit)
+    }
+
+    /// The Entry for exactly `headword` in the Dictionary with `dictionary_id`, if that
+    /// Dictionary is in the Library and has the headword.
+    pub fn entry(&self, dictionary_id: &str, headword: &str) -> Result<Option<Entry>> {
+        match self.dictionary(dictionary_id) {
+            Some(dictionary) => dictionary.entry(headword),
+            None => Ok(None),
+        }
+    }
+
+    /// The bytes of a file the Dictionary's Entries refer to, by the relative path an Entry
+    /// uses (`img/cat.png`): from its MDD files or from beside its main file. `None` when
+    /// the Dictionary has no such file; never a file from outside the Dictionary.
+    pub fn resource(&self, dictionary_id: &str, path: &str) -> Result<Option<Vec<u8>>> {
+        let Some(dictionary) = self.dictionary(dictionary_id) else {
+            return Ok(None);
+        };
+        dictionary
+            .reader
+            .resource(path)
+            .map_err(|error| dictionary.error(error))
+    }
+
+    /// An enabled Dictionary: a disabled one answers nothing, not even by its key.
+    fn dictionary(&self, id: &str) -> Option<&Dictionary> {
+        self.dictionaries
+            .iter()
+            .find(|d| d.info.id == id && d.info.enabled)
+    }
+
+    fn find_mut(&mut self, id: &str) -> Result<&mut Dictionary> {
+        self.dictionaries
+            .iter_mut()
+            .find(|dictionary| dictionary.info.id == id)
+            .ok_or_else(|| Error::UnknownDictionary(id.to_owned()))
+    }
+
+    /// Writes the current Library order into the record: the Dictionaries found now, then
+    /// the keys of those not found now. Returns whether the record changed.
+    fn record_order(&mut self) -> bool {
+        let mut order: Vec<String> = self
+            .dictionaries
+            .iter()
+            .map(|dictionary| dictionary.info.id.clone())
+            .collect();
+        let absent: Vec<String> = self
+            .record
+            .order
+            .iter()
+            .filter(|id| !order.contains(id))
+            .cloned()
+            .collect();
+        order.extend(absent);
+        let changed = order != self.record.order;
+        self.record.order = order;
+        changed
+    }
+
+    fn save(&self) -> Result<()> {
+        let Some(file) = &self.file else {
+            return Ok(());
+        };
+        let failed = |reason: String| Error::LibraryFile {
+            file: file.clone(),
+            reason,
+        };
+        if let Some(parent) = file.parent() {
+            std::fs::create_dir_all(parent).map_err(|error| failed(error.to_string()))?;
+        }
+        let text = serde_json::to_string_pretty(&self.record)
+            .map_err(|error| failed(error.to_string()))?;
+        // Write beside the file, then replace it, so a crash never leaves half a record.
+        let partial = file.with_extension("json.partial");
+        std::fs::write(&partial, text).map_err(|error| failed(error.to_string()))?;
+        std::fs::rename(&partial, file).map_err(|error| failed(error.to_string()))
+    }
+}
+
+/// The Dictionaries a Lookup runs against: the enabled Dictionaries of one Group in that
+/// Group's order, or of the whole Library in Library order.
+struct Answering<'a> {
+    dictionaries: Vec<&'a Dictionary>,
+}
+
+impl Answering<'_> {
+    /// The headword these Dictionaries offer first for the query `key`, as the column
+    /// would: the query itself when it is a headword, else its base form, else the first
+    /// headword starting with it. Close spellings are not looked for.
+    fn offer(&self, key: &str) -> Result<Option<String>> {
+        let first = self.merged(Start::AtKey(key), 1)?.into_iter().next();
+        if let Some((headword, _)) = first.as_ref().filter(|(h, _)| h.key == key) {
+            return Ok(Some(headword.headword.clone()));
+        }
+        if let Some((base, _)) = self.base_headword(key, false)? {
+            return Ok(Some(base.headword));
+        }
+        Ok(first
+            .filter(|(h, _)| h.key.starts_with(key))
+            .map(|(h, _)| h.headword))
     }
 
     /// Up to `limit` suggestions for `query`, from enabled Dictionaries: the headwords
@@ -605,7 +981,7 @@ impl Library {
     /// order, like a page of a printed index. A query with wildcards (`*` for any run of
     /// characters, `?` for one) offers only its matches. An empty query browses the index
     /// from its start.
-    pub fn suggest(&self, query: &str, limit: usize) -> Result<Suggestions> {
+    fn suggest(&self, query: &str, limit: usize) -> Result<Suggestions> {
         let typed = query.trim();
         let key = index_key(typed);
         // A pattern offers only its matches; Lemmatization does not apply to it.
@@ -727,7 +1103,7 @@ impl Library {
 
     /// Up to `limit` headwords that follow `headword` in index order, from enabled
     /// Dictionaries: the column continued as the reader scrolls.
-    pub fn headwords_after(&self, headword: &str, limit: usize) -> Result<Vec<Suggestion>> {
+    fn headwords_after(&self, headword: &str, limit: usize) -> Result<Vec<Suggestion>> {
         let after = IndexedHeadword::new(headword);
         Ok(self
             .merged(Start::After(&after), limit)?
@@ -739,12 +1115,7 @@ impl Library {
     /// Up to `limit` more suggestions for `query`, after `headword`: the column continued as
     /// the reader scrolls. A pattern's column continues with its matches; any other column
     /// continues through the index.
-    pub fn suggest_after(
-        &self,
-        query: &str,
-        headword: &str,
-        limit: usize,
-    ) -> Result<Vec<Suggestion>> {
+    fn suggest_after(&self, query: &str, headword: &str, limit: usize) -> Result<Vec<Suggestion>> {
         let after = IndexedHeadword::new(headword);
         let items = match Pattern::parse(&index_key(query.trim())) {
             Some(pattern) if pattern.matches(&after.key) => {
@@ -784,7 +1155,7 @@ impl Library {
         scan: &dyn Fn(&IndexedHeadword) -> Scan,
     ) -> Result<BTreeMap<IndexedHeadword, usize>> {
         let mut counts: BTreeMap<IndexedHeadword, usize> = BTreeMap::new();
-        for dictionary in self.dictionaries.iter().filter(|d| d.info.enabled) {
+        for dictionary in &self.dictionaries {
             let headwords =
                 dictionary
                     .scan(start, limit, scan)
@@ -797,82 +1168,6 @@ impl Library {
             }
         }
         Ok(counts)
-    }
-
-    /// The Entry for exactly `headword` in the Dictionary with `dictionary_id`, if that
-    /// Dictionary is in the Library and has the headword.
-    pub fn entry(&self, dictionary_id: &str, headword: &str) -> Result<Option<Entry>> {
-        match self.dictionary(dictionary_id) {
-            Some(dictionary) => dictionary.entry(headword),
-            None => Ok(None),
-        }
-    }
-
-    /// The bytes of a file the Dictionary's Entries refer to, by the relative path an Entry
-    /// uses (`img/cat.png`): from its MDD files or from beside its main file. `None` when
-    /// the Dictionary has no such file; never a file from outside the Dictionary.
-    pub fn resource(&self, dictionary_id: &str, path: &str) -> Result<Option<Vec<u8>>> {
-        let Some(dictionary) = self.dictionary(dictionary_id) else {
-            return Ok(None);
-        };
-        dictionary
-            .reader
-            .resource(path)
-            .map_err(|error| dictionary.error(error))
-    }
-
-    /// An enabled Dictionary: a disabled one answers nothing, not even by its key.
-    fn dictionary(&self, id: &str) -> Option<&Dictionary> {
-        self.dictionaries
-            .iter()
-            .find(|d| d.info.id == id && d.info.enabled)
-    }
-
-    fn find_mut(&mut self, id: &str) -> Result<&mut Dictionary> {
-        self.dictionaries
-            .iter_mut()
-            .find(|dictionary| dictionary.info.id == id)
-            .ok_or_else(|| Error::UnknownDictionary(id.to_owned()))
-    }
-
-    /// Writes the current Library order into the record: the Dictionaries found now, then
-    /// the keys of those not found now. Returns whether the record changed.
-    fn record_order(&mut self) -> bool {
-        let mut order: Vec<String> = self
-            .dictionaries
-            .iter()
-            .map(|dictionary| dictionary.info.id.clone())
-            .collect();
-        let absent: Vec<String> = self
-            .record
-            .order
-            .iter()
-            .filter(|id| !order.contains(id))
-            .cloned()
-            .collect();
-        order.extend(absent);
-        let changed = order != self.record.order;
-        self.record.order = order;
-        changed
-    }
-
-    fn save(&self) -> Result<()> {
-        let Some(file) = &self.file else {
-            return Ok(());
-        };
-        let failed = |reason: String| Error::LibraryFile {
-            file: file.clone(),
-            reason,
-        };
-        if let Some(parent) = file.parent() {
-            std::fs::create_dir_all(parent).map_err(|error| failed(error.to_string()))?;
-        }
-        let text = serde_json::to_string_pretty(&self.record)
-            .map_err(|error| failed(error.to_string()))?;
-        // Write beside the file, then replace it, so a crash never leaves half a record.
-        let partial = file.with_extension("json.partial");
-        std::fs::write(&partial, text).map_err(|error| failed(error.to_string()))?;
-        std::fs::rename(&partial, file).map_err(|error| failed(error.to_string()))
     }
 }
 

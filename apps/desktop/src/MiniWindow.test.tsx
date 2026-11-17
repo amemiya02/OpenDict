@@ -15,6 +15,7 @@ function entry(dictionaryId: string, dictionaryTitle: string, headword: string):
     allowNetwork: false,
     sound: null,
     pronunciation: dictionaryId === "learner" ? "/sɜːv/" : null,
+    asAuthored: false,
   };
 }
 

@@ -49,11 +49,16 @@ pub fn run() {
             };
             let library_file = data_dir.join("library.json");
             let state = AppState::load(&library_file, override_folder, &data_dir);
+            let appearance = state.appearance();
             commands::start_indexing(app.handle(), &state);
             app.manage(state);
             let chrome = window::build_main(app)?;
             app.manage(chrome);
             mini::set_up(app, &data_dir)?;
+            // The reader's theme and zoom from the last session, as soon as the windows are
+            // there (the Mini Window too): their frames and Mica follow the theme.
+            commands::apply_theme(app.handle(), appearance.theme);
+            commands::apply_zoom(app.handle(), appearance.zoom);
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -70,6 +75,12 @@ pub fn run() {
             commands::index_library,
             commands::cancel_indexing,
             commands::set_allow_network,
+            commands::appearance,
+            commands::set_theme,
+            commands::set_as_authored,
+            commands::set_all_as_authored,
+            commands::set_text_size,
+            commands::set_zoom,
             commands::word_books,
             commands::toggle_word,
             commands::create_word_book,
@@ -82,6 +93,13 @@ pub fn run() {
             commands::history,
             commands::record_lookup,
             commands::clear_history,
+            commands::create_group,
+            commands::rename_group,
+            commands::delete_group,
+            commands::set_in_group,
+            commands::move_in_group,
+            commands::set_current_group,
+            commands::elsewhere,
             window::window_chrome,
             commands::mini_summons,
             commands::close_mini,
