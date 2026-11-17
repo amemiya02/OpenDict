@@ -1,0 +1,14 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "design-preview",
+      "runtimeExecutable": "node",
+      "runtimeArgs": [
+        "-e",
+        "const h=require('http'),f=require('fs'),p=require('path'),root=process.cwd();const T={'.html':'text/html; charset=utf-8','.css':'text/css; charset=utf-8','.js':'text/javascript; charset=utf-8','.mjs':'text/javascript; charset=utf-8','.svg':'image/svg+xml','.png':'image/png','.webp':'image/webp','.json':'application/json','.woff2':'font/woff2'};h.createServer((q,r)=>{let u=decodeURIComponent(q.url.split('?')[0]);if(u.endsWith('/'))u+='index.html';const fp=p.join(root,p.normalize(u));if(!fp.startsWith(root)){r.writeHead(403);return r.end()}f.readFile(fp,(e,d)=>{if(e){r.writeHead(404);r.end('not found')}else{r.writeHead(200,{'content-type':T[p.extname(fp)]||'application/octet-stream','cache-control':'no-store'});r.end(d)}})}).listen(6990,'127.0.0.1',()=>console.log('design preview on http://127.0.0.1:6990'))"
+      ],
+      "port": 6990
+    }
+  ]
+}

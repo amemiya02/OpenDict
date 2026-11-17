@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<script>try { document.querySelector('meta[name="color-scheme"]').content = localStorage.getItem("color-scheme") ?? "light dark"; } catch (e) {}</script>
+<title>OpenDict · Mini Window</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Charis+SIL:wght@400;700&family=Noto+Serif+JP:wght@400;700&family=Noto+Serif+SC:wght@400;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="opendict.css">
+</head>
+<body class="scene">
+
+<!-- Stage scenery: a stand-in for whatever application the reader is in. Not part of OpenDict. -->
+<header class="scene-bar chrome">
+  <strong data-t="mini_demo"></strong>
+  <span data-t="mini_how"></span>
+  <span data-t="mini_group"></span>
+  <a class="btn" href="index.html" data-t="mini_back"></a>
+</header>
+
+<article class="doc" lang="en">
+  <h1>On Reading Slowly</h1>
+  <p>Most of what I know about patience I learned from dictionaries. A good one never hurries you. You arrive with a word you only half understand, <button class="w" type="button">ephemeral</button>, say, and leave ten minutes later having met its neighbours, its ancestors, and two or three <button class="w" type="button">serendipities</button> you were not looking for.</p>
+  <p>The habit is <button class="w" type="button">serious</button> work disguised as idling. Every <button class="w" type="button">series</button> of lookups is a small walk. Some days the walk is <button class="w" type="button">serene</button>; on others it <button class="w" type="button">runs</button> away with the afternoon, and the page you meant to finish waits where you left it.</p>
+  <p lang="ja">昨日は公園の<button class="w" type="button">木漏れ日</button>の下でお弁当を<button class="w" type="button">食べた</button>。あの時間は<button class="w" type="button">儚く</button>、けれど忘れがたい。</p>
+</article>
+
+<dialog class="mini" id="mini" aria-labelledby="mini-title">
+  <header class="mini-bar chrome">
+    <form class="find" id="mfind" role="search">
+      <button class="ico" type="submit" data-t-aria="lookup"><svg class="i" viewBox="0 0 16 16" aria-hidden="true"><circle cx="7" cy="7" r="4.5"/><path d="M10.5 10.5 14 14"/></svg></button>
+      <label class="vh" for="mq" data-t="search_ph"></label>
+      <input id="mq" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" data-t-ph="search_ph">
+    </form>
+    <button class="ico" type="button" id="mini-close" data-t-aria="close"><svg class="i" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8"/></svg></button>
+  </header>
+  <div class="mini-main">
+    <div class="mini-page" id="mini-page" tabindex="0" role="region" data-t-aria="page_label">
+      <div id="mini-sheet"></div>
+    </div>
+    <nav class="mini-rail chrome" id="mini-rail" data-t-aria="rail"></nav>
+  </div>
+  <footer class="mini-foot chrome">
+    <button class="btn" type="button" id="mini-save" aria-pressed="false"></button>
+    <a class="btn" id="mini-open" href="index.html" data-t="mini_open"></a>
+    <span class="hint"><kbd>Esc</kbd><span data-t="close"></span></span>
+  </footer>
+</dialog>
+
+<script type="module" src="mini.js"></script>
+</body>
+</html>

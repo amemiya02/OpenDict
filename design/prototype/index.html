@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<script>try { document.querySelector('meta[name="color-scheme"]').content = localStorage.getItem("color-scheme") ?? "light dark"; } catch (e) {}</script>
+<title>OpenDict</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Charis+SIL:wght@400;700&family=Noto+Serif+JP:wght@400;700&family=Noto+Serif+SC:wght@400;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="opendict.css">
+</head>
+<body>
+<div class="app" id="app" data-view="lookup">
+
+  <header class="bar chrome">
+    <div class="brand">
+      <span class="wordmark">OpenDict</span>
+      <label class="vh" for="group" data-t="group"></label>
+      <select class="group" id="group"></select>
+    </div>
+    <div class="nav">
+      <button class="ico side-toggle" type="button" id="toggle-side" data-t-aria="toggle_side" aria-pressed="false"><svg class="i" viewBox="0 0 16 16" aria-hidden="true"><rect x="2.5" y="3" width="11" height="10"/><path d="M6.5 3v10"/></svg></button>
+      <button class="ico" id="back" data-t-aria="back" title="Alt+←" disabled><svg class="i" viewBox="0 0 16 16" aria-hidden="true"><path d="M10 3 5 8l5 5"/></svg></button>
+      <button class="ico" id="fwd" data-t-aria="forward" title="Alt+→" disabled><svg class="i" viewBox="0 0 16 16" aria-hidden="true"><path d="M6 3l5 5-5 5"/></svg></button>
+    </div>
+    <form class="find" id="find" role="search">
+      <button class="ico" type="submit" data-t-aria="lookup"><svg class="i" viewBox="0 0 16 16" aria-hidden="true"><circle cx="7" cy="7" r="4.5"/><path d="M10.5 10.5 14 14"/></svg></button>
+      <label class="vh" for="q" data-t="search_ph"></label>
+      <input id="q" type="text" role="combobox" aria-controls="list" aria-expanded="true" aria-autocomplete="list" autocomplete="off" autocapitalize="off" spellcheck="false" data-t-ph="search_ph">
+      <button class="hint" type="button" id="open-palette"><kbd data-mod></kbd><kbd>K</kbd><span data-t="cmd"></span></button>
+    </form>
+    <div class="wc" aria-hidden="true">
+      <span><svg class="i" viewBox="0 0 16 16"><path d="M3 8h10"/></svg></span>
+      <span><svg class="i" viewBox="0 0 16 16"><rect x="3.5" y="3.5" width="9" height="9"/></svg></span>
+      <span><svg class="i" viewBox="0 0 16 16"><path d="M4 4l8 8M12 4l-8 8"/></svg></span>
+    </div>
+  </header>
+
+  <aside class="side chrome">
+    <div class="run" id="run" aria-hidden="true"></div>
+    <p class="note" id="note" hidden></p>
+    <ul class="list" id="list" role="listbox" data-t-aria="suggest"></ul>
+    <p class="list-empty" id="list-empty" hidden></p>
+    <div class="tabs">
+      <button type="button" data-left="suggest" data-t="suggest" aria-pressed="true"></button>
+      <button type="button" data-left="history" data-t="history" aria-pressed="false"></button>
+      <button type="button" data-left="wordbook" data-t="wordbook" aria-pressed="false"></button>
+      <button type="button" id="open-library" data-t="library" aria-pressed="false"></button>
+    </div>
+  </aside>
+
+  <div class="main">
+    <main class="page" id="page" tabindex="0" data-t-aria="page_label">
+      <div class="sheet" id="sheet"></div>
+    </main>
+    <nav class="rail chrome" id="rail" data-t-aria="rail"></nav>
+  </div>
+
+  <footer class="status chrome">
+    <span id="st-group"></span>
+    <span id="st-count"></span>
+    <span data-t="sample_note"></span>
+    <span class="live" id="live" role="status"></span>
+  </footer>
+</div>
+
+<dialog class="palette" id="palette" closedby="any" data-t-aria="cmd_title">
+  <div class="pal-in">
+    <label class="vh" for="pq" data-t="palette_ph"></label>
+    <input id="pq" type="text" role="combobox" aria-controls="pal-list" aria-expanded="true" aria-autocomplete="list" autocomplete="off" spellcheck="false" autofocus data-t-ph="palette_ph">
+    <form method="dialog"><button class="hint" data-t-aria="close"><kbd>Esc</kbd></button></form>
+  </div>
+  <ul id="pal-list" role="listbox" data-t-aria="cmd_title"></ul>
+</dialog>
+
+<script type="module" src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,549 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-11-17T00:20:12.414Z",
+  "title": "Design System: OpenDict",
+  "extensions": {
+    "colorMeta": {
+      "vermilion": {
+        "role": "primary",
+        "displayName": "Rubric Vermilion",
+        "canonical": "#c9361d",
+        "oklch": "oklch(55.5% 0.1876 32.1)",
+        "tonalRamp": [
+          "#1c0201",
+          "#470c04",
+          "#781c0c",
+          "#ac2c16",
+          "#d4523b",
+          "#ea8571",
+          "#feb4a4",
+          "#ffe3d9"
+        ]
+      },
+      "vermilion-night": {
+        "role": "primary",
+        "displayName": "Rubric Vermilion (night)",
+        "canonical": "#f0553a",
+        "oklch": "oklch(65.5% 0.1954 32.2)",
+        "tonalRamp": [
+          "#1d0200",
+          "#490a02",
+          "#7a1807",
+          "#af270f",
+          "#d74f37",
+          "#ed836e",
+          "#ffb3a3",
+          "#ffe2d8"
+        ]
+      },
+      "india-paper": {
+        "role": "neutral",
+        "displayName": "India Paper",
+        "canonical": "#f5f5f0",
+        "oklch": "oklch(96.9% 0.0066 106.5)",
+        "tonalRamp": [
+          "#0b0b0a",
+          "#252523",
+          "#42423f",
+          "#61615e",
+          "#83837f",
+          "#a5a5a2",
+          "#c9c9c7",
+          "#eeeeed"
+        ]
+      },
+      "paper-shade": {
+        "role": "neutral",
+        "displayName": "Paper Shade",
+        "canonical": "#e8e8e0",
+        "oklch": "oklch(92.9% 0.0107 106.6)",
+        "tonalRamp": [
+          "#0b0b0a",
+          "#252522",
+          "#42423e",
+          "#62625b",
+          "#83837c",
+          "#a5a5a0",
+          "#c9c9c6",
+          "#eeeeec"
+        ]
+      },
+      "ink": {
+        "role": "neutral",
+        "displayName": "Press Ink",
+        "canonical": "#141518",
+        "oklch": "oklch(19.6% 0.0062 271.1)",
+        "tonalRamp": [
+          "#0b0b0c",
+          "#242526",
+          "#414244",
+          "#606164",
+          "#818286",
+          "#a4a5a8",
+          "#c8c9cb",
+          "#eeeef0"
+        ]
+      },
+      "ink-secondary": {
+        "role": "neutral",
+        "displayName": "Faded Ink",
+        "canonical": "#55575f",
+        "oklch": "oklch(45.8% 0.0132 274.7)",
+        "tonalRamp": [
+          "#0b0b0d",
+          "#242528",
+          "#404247",
+          "#5f6168",
+          "#80828a",
+          "#a3a5ab",
+          "#c8c9cd",
+          "#eeeef1"
+        ]
+      },
+      "hairline": {
+        "role": "neutral",
+        "displayName": "Hairline Grey",
+        "canonical": "#cfcfc7",
+        "oklch": "oklch(85.2% 0.0109 106.6)",
+        "tonalRamp": [
+          "#0b0b0a",
+          "#252522",
+          "#42423e",
+          "#62625b",
+          "#83837c",
+          "#a5a5a0",
+          "#c9c9c5",
+          "#eeefec"
+        ]
+      },
+      "here-ink": {
+        "role": "neutral",
+        "displayName": "Notch White",
+        "canonical": "#ffffff",
+        "oklch": "oklch(100.0% 0.0000 89.9)",
+        "tonalRamp": [
+          "#0b0b0b",
+          "#252525",
+          "#424242",
+          "#616161",
+          "#828282",
+          "#a5a5a5",
+          "#c9c9c9",
+          "#eeeeee"
+        ]
+      },
+      "cover-black": {
+        "role": "neutral",
+        "displayName": "Cover Black",
+        "canonical": "#16171a",
+        "oklch": "oklch(20.5% 0.0061 271.1)",
+        "tonalRamp": [
+          "#0b0b0c",
+          "#242526",
+          "#414244",
+          "#606164",
+          "#818286",
+          "#a4a5a8",
+          "#c8c9cb",
+          "#eeeeef"
+        ]
+      },
+      "cover-edge": {
+        "role": "neutral",
+        "displayName": "Cover Edge",
+        "canonical": "#3a3c43",
+        "oklch": "oklch(35.7% 0.0124 273.1)",
+        "tonalRamp": [
+          "#0b0b0d",
+          "#242528",
+          "#404247",
+          "#5f6168",
+          "#808289",
+          "#a3a5aa",
+          "#c8c9cd",
+          "#eeeef1"
+        ]
+      },
+      "on-cover": {
+        "role": "neutral",
+        "displayName": "Cover Type",
+        "canonical": "#f0f0ea",
+        "oklch": "oklch(95.3% 0.0080 106.5)",
+        "tonalRamp": [
+          "#0b0b0a",
+          "#252523",
+          "#42423f",
+          "#61615d",
+          "#83837e",
+          "#a5a5a1",
+          "#c9c9c6",
+          "#eeeeed"
+        ]
+      },
+      "on-cover-muted": {
+        "role": "neutral",
+        "displayName": "Cover Type, muted",
+        "canonical": "#a6a8af",
+        "oklch": "oklch(73.2% 0.0103 273.3)",
+        "tonalRamp": [
+          "#0b0b0c",
+          "#242527",
+          "#414246",
+          "#5f6167",
+          "#808288",
+          "#a3a5aa",
+          "#c8c9cc",
+          "#eeeef0"
+        ]
+      },
+      "bookcloth-navy": {
+        "role": "neutral",
+        "displayName": "Bookcloth Navy",
+        "canonical": "#111a30",
+        "oklch": "oklch(22.2% 0.0452 266.0)",
+        "tonalRamp": [
+          "#090b10",
+          "#202530",
+          "#3a4253",
+          "#566179",
+          "#77829b",
+          "#9ca5b9",
+          "#c2c9d8",
+          "#eaeef7"
+        ]
+      },
+      "bookcloth-raised": {
+        "role": "neutral",
+        "displayName": "Bookcloth Raised",
+        "canonical": "#1b2745",
+        "oklch": "oklch(27.8% 0.0581 266.2)",
+        "tonalRamp": [
+          "#080b12",
+          "#1f2533",
+          "#384258",
+          "#53617f",
+          "#7482a2",
+          "#99a5bf",
+          "#c1c9dc",
+          "#e9eefa"
+        ]
+      },
+      "night-cover": {
+        "role": "neutral",
+        "displayName": "Night Cover",
+        "canonical": "#0a1020",
+        "oklch": "oklch(17.6% 0.0346 267.3)",
+        "tonalRamp": [
+          "#090b0f",
+          "#21252d",
+          "#3c424f",
+          "#596173",
+          "#7a8296",
+          "#9ea5b5",
+          "#c4c9d4",
+          "#eceef5"
+        ]
+      },
+      "night-field": {
+        "role": "neutral",
+        "displayName": "Night Field",
+        "canonical": "#1e2a4a",
+        "oklch": "oklch(29.2% 0.0609 267.1)",
+        "tonalRamp": [
+          "#080b12",
+          "#1f2534",
+          "#384159",
+          "#536181",
+          "#7482a4",
+          "#99a5c0",
+          "#c1c9dd",
+          "#e9eefa"
+        ]
+      },
+      "night-paper-ink": {
+        "role": "neutral",
+        "displayName": "Night Paper Ink",
+        "canonical": "#ece9df",
+        "oklch": "oklch(93.4% 0.0137 93.0)",
+        "tonalRamp": [
+          "#0c0b09",
+          "#262521",
+          "#44423c",
+          "#636159",
+          "#85827a",
+          "#a7a59e",
+          "#cac9c4",
+          "#efeeec"
+        ]
+      },
+      "night-ink-secondary": {
+        "role": "neutral",
+        "displayName": "Night Faded Ink",
+        "canonical": "#a6adc0",
+        "oklch": "oklch(74.8% 0.0284 269.6)",
+        "tonalRamp": [
+          "#0a0b0f",
+          "#22252c",
+          "#3e424d",
+          "#5b6170",
+          "#7c8292",
+          "#a0a5b2",
+          "#c5c9d2",
+          "#eceef4"
+        ]
+      },
+      "night-hairline": {
+        "role": "neutral",
+        "displayName": "Night Hairline",
+        "canonical": "#2a3757",
+        "oklch": "oklch(34.1% 0.0591 266.5)",
+        "tonalRamp": [
+          "#080b12",
+          "#1f2533",
+          "#384258",
+          "#536180",
+          "#7482a3",
+          "#99a5bf",
+          "#c1c9dc",
+          "#e9eefa"
+        ]
+      },
+      "night-rule": {
+        "role": "neutral",
+        "displayName": "Night Rule",
+        "canonical": "#8791ad",
+        "oklch": "oklch(65.8% 0.0433 269.7)",
+        "tonalRamp": [
+          "#090b10",
+          "#21252f",
+          "#3c4152",
+          "#586178",
+          "#79829a",
+          "#9da5b8",
+          "#c4c9d7",
+          "#ebeef7"
+        ]
+      },
+      "cloth-notch": {
+        "role": "neutral",
+        "displayName": "Cloth Notch",
+        "canonical": "#33426a",
+        "oklch": "oklch(38.6% 0.0712 267.4)",
+        "tonalRamp": [
+          "#080b13",
+          "#1e2536",
+          "#36415c",
+          "#516086",
+          "#7181a9",
+          "#97a5c5",
+          "#bfc9e0",
+          "#e9eefc"
+        ]
+      }
+    },
+    "typographyMeta": {
+      "display": {
+        "displayName": "Headword",
+        "purpose": "The headword at the head of the page, in 【 】."
+      },
+      "headline": {
+        "displayName": "Mini headword",
+        "purpose": "The headword in the Mini Window."
+      },
+      "search": {
+        "displayName": "Query",
+        "purpose": "Text typed in the search field."
+      },
+      "index": {
+        "displayName": "Index",
+        "purpose": "Headword column rows and headword lists."
+      },
+      "title": {
+        "displayName": "Dictionary name",
+        "purpose": "Each Dictionary section header."
+      },
+      "body": {
+        "displayName": "Interface",
+        "purpose": "Controls, Library, command palette."
+      },
+      "label": {
+        "displayName": "Label",
+        "purpose": "Counts, status line, notch captions, keyboard hints."
+      }
+    },
+    "shadows": [
+      {
+        "name": "window-float",
+        "value": "0 16px 44px -10px rgb(0 0 0 / .42), 0 3px 8px rgb(0 0 0 / .16)",
+        "purpose": "The Mini Window only: an OS window over another application."
+      },
+      {
+        "name": "palette-backdrop",
+        "value": "rgb(8 10 14 / .42)",
+        "purpose": "Backdrop behind the command palette."
+      }
+    ],
+    "motion": [
+      {
+        "name": "ease-out-expo",
+        "value": "cubic-bezier(.16, 1, .3, 1)",
+        "purpose": "The single easing curve for every transition."
+      },
+      {
+        "name": "notch-seat",
+        "value": "320ms, 28ms stagger per notch",
+        "purpose": "Thumb notches seat in from the window edge when a Lookup lands."
+      },
+      {
+        "name": "entry-swap",
+        "value": "120ms cross-fade (view transition)",
+        "purpose": "Swapping one page of Entries for the next."
+      },
+      {
+        "name": "fold",
+        "value": "180ms",
+        "purpose": "Dictionary fold chevron rotation; notch hover pull."
+      },
+      {
+        "name": "overlay-in",
+        "value": "160ms palette drop, 200ms Mini Window rise",
+        "purpose": "Command palette and Mini Window entrance."
+      },
+      {
+        "name": "reduced-motion",
+        "value": "all of the above off",
+        "purpose": "prefers-reduced-motion: reduce removes every animation and transition."
+      }
+    ],
+    "breakpoints": [
+      {
+        "name": "notches-only",
+        "value": "1100px",
+        "purpose": "Thumb index drops its captions."
+      },
+      {
+        "name": "narrow-column",
+        "value": "860px",
+        "purpose": "Headword column narrows to 200px."
+      },
+      {
+        "name": "overlay-column",
+        "value": "620px",
+        "purpose": "Headword column becomes an overlay with a toggle."
+      }
+    ]
+  },
+  "components": [
+    {
+      "name": "Outline Button",
+      "kind": "button",
+      "refersTo": "button-outline",
+      "description": "The only button style: page actions such as Pronounce and Add to Word Book.",
+      "html": "<button class=\"ds-btn\"><svg viewBox=\"0 0 16 16\" width=\"16\" height=\"16\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.5\" stroke-linejoin=\"round\" aria-hidden=\"true\"><path d=\"M4 2.5h8v11L8 10.5l-4 3z\"/></svg><span>加入生词本</span><kbd class=\"ds-kbd\">Ctrl D</kbd></button>",
+      "css": ".ds-btn{display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 10px;border:1px solid var(--ink, #141518);border-radius:2px;background:transparent;color:var(--ink, #141518);font:13px/1.45 \"Segoe UI Variable Text\", \"Segoe UI\", system-ui, -apple-system, \"Microsoft YaHei UI\", \"PingFang SC\", \"Hiragino Sans\", \"Yu Gothic UI\", sans-serif;cursor:default}.ds-btn:hover{background:var(--paper2, #e8e8e0)}.ds-btn:active{transform:translateY(1px)}.ds-btn:focus-visible{outline:2px solid #c9361d;outline-offset:2px}.ds-kbd{font-size:11px;line-height:16px;padding:0 5px;border:1px solid #cfcfc7;border-radius:2px}"
+    },
+    {
+      "name": "Outline Button, toggled on",
+      "kind": "button",
+      "refersTo": "button-outline-pressed",
+      "description": "A two-state action that is currently on, e.g. a word already in the Word Book.",
+      "html": "<button class=\"ds-btn-on\" aria-pressed=\"true\"><svg viewBox=\"0 0 16 16\" width=\"16\" height=\"16\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.5\" stroke-linejoin=\"round\" aria-hidden=\"true\"><path d=\"M4 2.5h8v11L8 10.5l-4 3z\"/></svg><span>已在生词本</span></button>",
+      "css": ".ds-btn-on{display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 10px;border:1px solid #141518;border-radius:2px;background:#141518;color:#f5f5f0;font:13px/1.45 \"Segoe UI Variable Text\", \"Segoe UI\", system-ui, -apple-system, \"Microsoft YaHei UI\", \"PingFang SC\", \"Hiragino Sans\", \"Yu Gothic UI\", sans-serif}.ds-btn-on:hover{background:#2a2c31}.ds-btn-on:focus-visible{outline:2px solid #c9361d;outline-offset:2px}"
+    },
+    {
+      "name": "Search Field",
+      "kind": "input",
+      "refersTo": "search-field",
+      "description": "The search field set into the cover band; the query is typed in the serif.",
+      "html": "<div class=\"ds-cover\"><label class=\"ds-find\"><svg viewBox=\"0 0 16 16\" width=\"16\" height=\"16\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.5\" stroke-linecap=\"round\" aria-hidden=\"true\"><circle cx=\"7\" cy=\"7\" r=\"4.5\"/><path d=\"M10.5 10.5 14 14\"/></svg><input value=\"serendipities\" aria-label=\"Search\"><span class=\"ds-hint\"><kbd>Ctrl</kbd><kbd>K</kbd> 命令</span></label></div>",
+      "css": ".ds-cover{display:flex;align-items:center;height:48px;padding:0 16px;background:#16171a}.ds-find{display:flex;align-items:center;gap:8px;width:420px;height:32px;padding:0 8px;background:#f5f5f0;color:#141518;border-radius:2px}.ds-find svg{color:#55575f}.ds-find input{flex:1;min-width:0;border:0;outline:0;background:none;font:17px \"Charis SIL\", \"Noto Serif SC\", \"Noto Serif JP\", \"Songti SC\", \"Yu Mincho\", serif;caret-color:#c9361d}.ds-find:focus-within{outline:1px solid #f0f0ea;outline-offset:1px}.ds-hint{display:inline-flex;gap:4px;font:12px \"Segoe UI Variable Text\", \"Segoe UI\", system-ui, -apple-system, \"Microsoft YaHei UI\", \"PingFang SC\", \"Hiragino Sans\", \"Yu Gothic UI\", sans-serif;color:#55575f}.ds-hint kbd{font:11px/16px \"Segoe UI Variable Text\", \"Segoe UI\", system-ui, -apple-system, \"Microsoft YaHei UI\", \"PingFang SC\", \"Hiragino Sans\", \"Yu Gothic UI\", sans-serif;padding:0 5px;border:1px solid #cfcfc7;border-radius:2px}"
+    },
+    {
+      "name": "Headword Column",
+      "kind": "nav",
+      "refersTo": "index-row",
+      "description": "Guide words over a double rule, then serif headword rows; the selected row carries the vermilion square.",
+      "html": "<div class=\"ds-col\"><div class=\"ds-run\"><span>serendipity</span><span>sew</span></div><ul><li class=\"on\"><i></i>serendipity<small>4</small></li><li>serene<small>4</small></li><li>serenity<small>2</small></li><li>serf<small>2</small></li></ul></div>",
+      "css": ".ds-col{width:264px;background:#f5f5f0;color:#141518}.ds-run{display:flex;justify-content:space-between;margin:0 16px;padding:12px 0 6px;border-bottom:3px double #141518;font:700 13px \"Charis SIL\", \"Noto Serif SC\", \"Noto Serif JP\", \"Songti SC\", \"Yu Mincho\", serif}.ds-col ul{list-style:none;margin:0;padding:4px 0}.ds-col li{display:flex;align-items:center;gap:8px;height:26px;padding:0 16px 0 30px;font:15px \"Charis SIL\", \"Noto Serif SC\", \"Noto Serif JP\", \"Songti SC\", \"Yu Mincho\", serif}.ds-col li:hover{background:#efefe8}.ds-col li.on{padding-left:16px;background:#e8e8e0;font-weight:700}.ds-col li i{width:6px;height:6px;background:#c9361d}.ds-col small{margin-left:auto;font:11px \"Segoe UI Variable Text\", \"Segoe UI\", system-ui, -apple-system, \"Microsoft YaHei UI\", \"PingFang SC\", \"Hiragino Sans\", \"Yu Gothic UI\", sans-serif;color:#55575f;font-variant-numeric:tabular-nums}"
+    },
+    {
+      "name": "Dictionary Section Header",
+      "kind": "custom",
+      "refersTo": "dictionary-header",
+      "description": "Opens each Dictionary on the page: name in 【 】, sample tag, fold control; separated from the previous section by a full-width rule.",
+      "html": "<section class=\"ds-dict\"><header><h2>【样例英汉大词典】</h2><span class=\"tag\">样例</span><button aria-label=\"折叠\" aria-expanded=\"true\"><svg viewBox=\"0 0 16 16\" width=\"16\" height=\"16\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.5\" aria-hidden=\"true\"><path d=\"M4 6l4 4 4-4\"/></svg></button></header></section>",
+      "css": ".ds-dict{border-top:1px solid #141518;background:#f5f5f0;color:#141518;padding:0 0 0 7px}.ds-dict header{display:flex;align-items:center;gap:8px;height:36px}.ds-dict h2{margin:0 0 0 -7px;font:700 12px \"Segoe UI Variable Text\", \"Segoe UI\", system-ui, -apple-system, \"Microsoft YaHei UI\", \"PingFang SC\", \"Hiragino Sans\", \"Yu Gothic UI\", sans-serif}.ds-dict .tag{margin-right:auto;font:10.5px/15px \"Segoe UI Variable Text\", \"Segoe UI\", system-ui, -apple-system, \"Microsoft YaHei UI\", \"PingFang SC\", \"Hiragino Sans\", \"Yu Gothic UI\", sans-serif;padding:0 5px;border:1px solid #cfcfc7;border-radius:2px;color:#55575f}.ds-dict button{width:26px;height:26px;display:grid;place-items:center;border:0;border-radius:2px;background:none;color:#55575f}.ds-dict button:hover{background:#e8e8e0;color:#141518}.ds-dict button:focus-visible{outline:2px solid #c9361d}"
+    },
+    {
+      "name": "Thumb Index",
+      "kind": "nav",
+      "refersTo": "thumb-notch",
+      "description": "The signature component: half-round notches at the window edge, one per answering Dictionary; the current one is vermilion.",
+      "html": "<nav class=\"ds-thumbs\"><a class=\"cur\" href=\"#a\"><span>样例英汉大词典</span><b>英</b></a><a href=\"#b\"><span>Sample Learner's</span><b>L</b></a><a href=\"#c\"><span>Sample Etymology</span><b>源</b></a></nav>",
+      "css": ".ds-thumbs{width:168px;padding-top:12px;background:#f5f5f0}.ds-thumbs a{display:flex;align-items:center;justify-content:flex-end;gap:10px;height:46px;margin-bottom:7px;font:11.5px/1.3 \"Segoe UI Variable Text\", \"Segoe UI\", system-ui, -apple-system, \"Microsoft YaHei UI\", \"PingFang SC\", \"Hiragino Sans\", \"Yu Gothic UI\", sans-serif;color:#55575f;text-decoration:none}.ds-thumbs b{width:42px;height:46px;display:grid;place-items:center;background:#141518;color:#f5f5f0;border-radius:23px 0 0 23px;font:700 17px \"Charis SIL\", \"Noto Serif SC\", \"Noto Serif JP\", \"Songti SC\", \"Yu Mincho\", serif;transition:transform .18s cubic-bezier(.16,1,.3,1)}.ds-thumbs a:hover b{transform:translateX(-3px)}.ds-thumbs a:hover{color:#141518}.ds-thumbs a.cur{color:#141518;font-weight:700}.ds-thumbs a.cur b{background:#c9361d;color:#fff}.ds-thumbs a:focus-visible{outline:2px solid #c9361d;outline-offset:-2px}"
+    },
+    {
+      "name": "Command Palette",
+      "kind": "custom",
+      "refersTo": "command-palette",
+      "description": "Ctrl K. Every action in one keyboard list; vermilion checks mark the current settings.",
+      "html": "<div class=\"ds-pal\"><input placeholder=\"输入命令\" aria-label=\"Command\"><ul><li class=\"sel\"><span class=\"t\"></span>聚焦搜索框<kbd>/</kbd></li><li><span class=\"t\"><svg viewBox=\"0 0 16 16\" width=\"16\" height=\"16\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.5\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><path d=\"M3.5 8.5l3 3 6-7\"/></svg></span>切换到分组「精读」</li><li><span class=\"t\"></span>主题：深色</li></ul></div>",
+      "css": ".ds-pal{width:420px;background:#f5f5f0;color:#141518;border:1px solid #141518;border-radius:2px;font:13px/1.45 \"Segoe UI Variable Text\", \"Segoe UI\", system-ui, -apple-system, \"Microsoft YaHei UI\", \"PingFang SC\", \"Hiragino Sans\", \"Yu Gothic UI\", sans-serif}.ds-pal input{width:100%;box-sizing:border-box;height:46px;padding:0 16px;border:0;border-bottom:3px double #141518;outline:0;background:none;font:15px \"Segoe UI Variable Text\", \"Segoe UI\", system-ui, -apple-system, \"Microsoft YaHei UI\", \"PingFang SC\", \"Hiragino Sans\", \"Yu Gothic UI\", sans-serif}.ds-pal ul{list-style:none;margin:0;padding:4px 0}.ds-pal li{display:flex;align-items:center;gap:8px;min-height:30px;padding:0 14px 0 10px}.ds-pal li:hover{background:#efefe8}.ds-pal li.sel{background:#e8e8e0;font-weight:700}.ds-pal .t{display:inline-grid;width:16px;height:16px;color:#c9361d}.ds-pal kbd{margin-left:auto;font:11px/16px \"Segoe UI Variable Text\", \"Segoe UI\", system-ui, -apple-system, \"Microsoft YaHei UI\", \"PingFang SC\", \"Hiragino Sans\", \"Yu Gothic UI\", sans-serif;padding:0 5px;border:1px solid #cfcfc7;border-radius:2px;color:#55575f}"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Lexicographer's Page",
+    "overview": "**Creative North Star: \"The Lexicographer's Page\"**\n\nThe window is one well-set page of a dictionary. Every Dictionary in the Current Group answers on a single ruled page, each Entry in the typographic voice its own authors gave it, and a thumb index cut into the fore-edge is how the reader moves between them. The interface supplies only what a printed dictionary supplies: a cover, rules, guide words, an index column and a thumb index. Everything else is the Entries.\n\nDensity is a feature. A reader comparing four dictionaries wants to see four dictionaries, so the headword column runs full, the page rules run to the fore-edge, and empty space only appears where there is genuinely nothing to show. Colour is almost absent: paper, ink, and one vermilion that only ever means \"you are here\".\n\nThe system was built and reviewed as a clickable prototype in `design/prototype/`. The rules below describe that build. Where the shipped app differs, the build in the app wins and this file is updated.",
+    "keyCharacteristics": [
+      "Ink-black cover band as the title bar; India-paper page beneath it.",
+      "Bold serif headwords inside 【 】; system sans for every control.",
+      "Structure drawn with rules (a double rule, single hairlines), never with boxed cards.",
+      "A half-round thumb index at the right edge, one notch per answering Dictionary.",
+      "One vermilion, reserved for the current position.",
+      "Keyboard first: every action reachable from the command palette."
+    ],
+    "rules": [
+      {
+        "name": "The You-Are-Here Rule",
+        "body": "Vermilion marks the reader's current position and nothing else. If an element is not \"where you are now\", it is not vermilion: not focus rings, not primary buttons, not links, not warnings.",
+        "section": "colors"
+      },
+      {
+        "name": "The Closed Book Rule",
+        "body": "The dark theme is designed, not inverted: a navy bookcloth ground, cloth-toned notches and paper-coloured type. The brightest solid in the dark window is the current notch, never the chrome.",
+        "section": "colors"
+      },
+      {
+        "name": "The Two Voices Rule",
+        "body": "Serif is for words from the dictionary and words the reader typed; sans is for everything the application says. A control label in serif, or a headword in sans, breaks the rule.",
+        "section": "typography"
+      },
+      {
+        "name": "The Hands-Off Entry Rule",
+        "body": "OpenDict never sets the type of an Entry. Each Dictionary's HTML and CSS render in their own isolated root, and the app's styling stops at the Dictionary header.",
+        "section": "typography"
+      },
+      {
+        "name": "The Ruled Page Rule",
+        "body": "Separate with rules, never with boxes. A double rule closes the page head; a single rule separates Dictionaries; hairlines divide rows. No cards, no nested containers, no shadows on anything inside the page.",
+        "section": "elevation"
+      }
+    ],
+    "dos": [
+      "**Do** keep vermilion to the current position: selected row, current notch, caret, active-setting checks.",
+      "**Do** run the page's double rule and section rules the full width of the page to the thumb index.",
+      "**Do** set headwords and typed queries in the serif, and every control label in the system sans.",
+      "**Do** show every answering Dictionary on one page, in the Current Group's order, each Entry exactly as its Dictionary styles it.",
+      "**Do** give empty and no-match states somewhere to go: the headword index, recent lookups, another Group, a wildcard pattern.",
+      "**Do** design the dark theme from bookcloth navy and cloth notches, and keep the current notch the brightest solid."
+    ],
+    "donts": [
+      "**Don't** put Entries, settings or lists in cards, boxes or shadowed containers inside the page.",
+      "**Don't** use vermilion for focus rings, primary buttons, links or emphasis.",
+      "**Don't** restyle, re-font or re-colour an Entry beyond the dark-theme treatment the reader can switch off per Dictionary.",
+      "**Don't** leave the headword column or the page mostly empty when there are headwords to show.",
+      "**Don't** use gradients, glass effects or glowing borders; the reader asked for none of them.",
+      "**Don't** round controls beyond 2px; only the Mini Window, as a real window, takes 8px."
+    ]
+  }
+}
