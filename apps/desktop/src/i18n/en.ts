@@ -149,6 +149,19 @@ export const en = {
     percent === null ? `Downloading OpenDict ${version}…` : `Downloading OpenDict ${version}… ${percent}%`,
   updateInstalling: (version: string) => `Installing OpenDict ${version}…`,
   updateFailed: (version: string, reason: string) => `OpenDict ${version} could not be installed: ${reason}`,
+  yourData: "Your data",
+  dataDirectory: "Data directory",
+  dataDirectoryNote:
+    "History, Word Books, settings and indexes are kept here, on this computer only. Move them into a synced folder to carry them to another computer.",
+  moveData: "Move…",
+  movingData: "Moving your data…",
+  dataMoved: (path: string) => `Your data is now in ${path}.`,
+  dataNotMoved: (path: string, reason: string) => `Your data could not be moved and is still in ${path}: ${reason}`,
+  dataHeldThere: (path: string) => `${path} already holds OpenDict data. Use that data instead? Your data here stays where it is.`,
+  useThatData: "Use that data",
+  dataNotUsed: (path: string, reason: string) => `The data in ${path} could not be used: ${reason}`,
+  dataMissing: "Your data directory cannot be found. It may be on a drive that is not connected.",
+  chooseDataFolder: "Choose a folder…",
 };
 
 export type Catalogue = typeof en;

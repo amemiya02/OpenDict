@@ -317,3 +317,48 @@ export function recordLookup(headword: string): Promise<string[]> {
 export function clearHistory(): Promise<void> {
   return invoke<void>("clear_history");
 }
+
+/** Where the reader's data (History, Word Books, settings, indexes) is kept. */
+export interface DataDirectory {
+  path: string;
+  /** Whether it is where a new reader's data starts. */
+  isDefault: boolean;
+  /** Why it cannot be used, if it cannot (it may be on a drive that is not connected). */
+  problem: string | null;
+}
+
+/** Why the data directory did not move; the data stays where it was. */
+export type DataDirectoryError = { kind: "holdsData"; detail: string } | { kind: "failed"; detail: string };
+
+export function getDataDirectory(): Promise<DataDirectory> {
+  return invoke<DataDirectory>("data_directory");
+}
+
+/** Asks the reader for a folder with the system dialog; null when they cancel. */
+export function chooseDataFolder(): Promise<string | null> {
+  return invoke<string | null>("choose_data_folder");
+}
+
+/** Moves the reader's data into `path` and uses it from then on. Rejects with a DataDirectoryError. */
+export async function moveDataDirectory(path: string): Promise<DataDirectory> {
+  try {
+    return await invoke<DataDirectory>("move_data_directory", { path });
+  } catch (error) {
+    throw dataDirectoryError(error);
+  }
+}
+
+/** Uses the data already in `path` (or starts afresh there) from then on. Rejects with a DataDirectoryError. */
+export async function switchDataDirectory(path: string): Promise<DataDirectory> {
+  try {
+    return await invoke<DataDirectory>("use_data_directory", { path });
+  } catch (error) {
+    throw dataDirectoryError(error);
+  }
+}
+
+function dataDirectoryError(error: unknown): DataDirectoryError {
+  const typed = error as Partial<DataDirectoryError> | null;
+  if (typed && typeof typed === "object" && (typed.kind === "holdsData" || typed.kind === "failed")) return typed as DataDirectoryError;
+  return { kind: "failed", detail: String(error) };
+}

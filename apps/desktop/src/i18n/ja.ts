@@ -150,4 +150,17 @@ export const ja = {
     percent === null ? `OpenDict ${version} をダウンロード中…` : `OpenDict ${version} をダウンロード中… ${percent}%`,
   updateInstalling: (version: string) => `OpenDict ${version} をインストール中…`,
   updateFailed: (version: string, reason: string) => `OpenDict ${version} をインストールできませんでした：${reason}`,
+  yourData: "データ",
+  dataDirectory: "データフォルダ",
+  dataDirectoryNote:
+    "履歴・単語帳・設定・索引はここに、このコンピュータの中だけに保存されます。同期フォルダに移すと、別のコンピュータへ持ち運べます。",
+  moveData: "移動…",
+  movingData: "データを移動しています…",
+  dataMoved: (path: string) => `データは ${path} に移りました。`,
+  dataNotMoved: (path: string, reason: string) => `データを移動できませんでした。データは ${path} にあるままです：${reason}`,
+  dataHeldThere: (path: string) => `${path} にはすでに OpenDict のデータがあります。そのデータを使いますか？ ここのデータはそのまま残ります。`,
+  useThatData: "そのデータを使う",
+  dataNotUsed: (path: string, reason: string) => `${path} のデータを使えませんでした：${reason}`,
+  dataMissing: "データフォルダが見つかりません。接続されていないドライブにあるのかもしれません。",
+  chooseDataFolder: "フォルダを選ぶ…",
 } satisfies Catalogue;
