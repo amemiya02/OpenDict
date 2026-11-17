@@ -253,7 +253,8 @@ Square-cut, like print. Controls take a 2px corner at most (`sharp`). The one cu
 
 ### Mini Window
 - **Style:** a 408 × 468px window with an 8px corner and the Window float shadow: its own cover band with the search field, the page in miniature (24px headword), a 30px thumb index, and a footer with Add to Word Book, Open in main window and the Esc hint.
-- **Placement:** below the selected text, or above it, or beside it, whichever keeps it fully on screen.
+- **Placement:** below the selected text, or above it, or beside it, whichever keeps it fully on screen. The pointer stands for the selection (the system does not say where a selection in another application is): the window opens below the pointer's line, above it, or beside the pointer.
+- **Settings:** its two global shortcuts (look up the selection, bring the main window forward) and clipboard watching sit in a "Mini Window" section at the foot of the Library view, as rows over hairlines; a shortcut changes by pressing the new one.
 
 ## Do's and Don'ts
 
