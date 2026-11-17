@@ -23,22 +23,217 @@ pub struct BaseForm {
 /// among them.
 pub fn base_forms(word: &str) -> Vec<BaseForm> {
     let mut forms: Vec<BaseForm> = Vec::new();
-    let mut add = |form: String, doubtful: bool| {
-        if !form.is_empty() && form != word && !forms.iter().any(|known| known.form == form) {
-            forms.push(BaseForm { form, doubtful });
+    let proposals = english::base_forms(word)
+        .into_iter()
+        .chain(japanese::base_forms(word));
+    for (form, doubtful) in proposals {
+        if form.is_empty() || form == word {
+            continue;
         }
-    };
-    for (form, doubtful) in english::base_forms(word) {
-        add(form, doubtful);
+        match forms.iter_mut().find(|known| known.form == form) {
+            Some(known) => known.doubtful &= doubtful,
+            None => forms.push(BaseForm { form, doubtful }),
+        }
     }
     forms
+}
+
+mod japanese {
+    use std::sync::OnceLock;
+
+    // What a word is, as far as the rules are concerned. A rule accepts some kinds of
+    // word and leaves a word of one kind, so rules chain only where the grammar does:
+    // 食べなかった → 食べない (an adjective-like form) → 食べる (an ichidan verb).
+    /// The word as typed: every rule may start from it.
+    const TYPED: u16 = 1;
+    /// Ichidan verb (食べる), and the passive, causative and potential forms that
+    /// conjugate like one.
+    const V1: u16 = 1 << 1;
+    /// Godan verb (書く).
+    const V5: u16 = 1 << 2;
+    /// 来る.
+    const VK: u16 = 1 << 3;
+    /// する and nouns taking する (勉強する).
+    const VS: u16 = 1 << 4;
+    /// I-adjective (儚い), and the ない and たい forms that conjugate like one.
+    const ADJ: u16 = 1 << 5;
+    /// A te-form (食べて): not a base form, but ている and てる lead back to it.
+    const TE: u16 = 1 << 6;
+    /// A noun that took する.
+    const NOUN: u16 = 1 << 7;
+    const ANY: u16 = u16::MAX;
+
+    /// How many rules may chain: 食べさせられなかった needs four.
+    const MAX_STEPS: usize = 4;
+
+    struct Rule {
+        from: String,
+        to: String,
+        accepts: u16,
+        gives: u16,
+        /// The ending is common in base forms too (届ける is not 届く's potential).
+        doubtful: bool,
+        /// The rule may consume the whole word (した → する).
+        whole: bool,
+    }
+
+    /// Base forms for a Japanese word, each with whether it is doubtful, nearest first.
+    pub(super) fn base_forms(word: &str) -> Vec<(String, bool)> {
+        let mut found: Vec<(String, u16, bool)> = Vec::new();
+        let mut frontier = vec![(word.to_owned(), ANY, false)];
+        for _ in 0..MAX_STEPS {
+            let mut next = Vec::new();
+            for (form, kind, doubtful) in &frontier {
+                for rule in rules() {
+                    if kind & rule.accepts == 0 {
+                        continue;
+                    }
+                    let Some(stem) = form.strip_suffix(rule.from.as_str()) else {
+                        continue;
+                    };
+                    if stem.is_empty() && !rule.whole {
+                        continue;
+                    }
+                    let base = format!("{stem}{}", rule.to);
+                    let doubtful = *doubtful || rule.doubtful;
+                    if base.is_empty()
+                        || found
+                            .iter()
+                            .any(|(known, gives, _)| *known == base && *gives == rule.gives)
+                    {
+                        continue;
+                    }
+                    found.push((base.clone(), rule.gives, doubtful));
+                    next.push((base, rule.gives, doubtful));
+                }
+            }
+            frontier = next;
+        }
+        found
+            .into_iter()
+            .filter(|(_, kind, _)| *kind != TE)
+            .map(|(form, _, doubtful)| (form, doubtful))
+            .collect()
+    }
+
+    fn rules() -> &'static [Rule] {
+        static RULES: OnceLock<Vec<Rule>> = OnceLock::new();
+        RULES.get_or_init(build)
+    }
+
+    /// Polite and "while" endings, after the stem each verb class puts before ます.
+    const POLITE: &[&str] = &[
+        "ます",
+        "ました",
+        "ません",
+        "ませんでした",
+        "ましょう",
+        "ながら",
+    ];
+
+    #[rustfmt::skip]
+    fn build() -> Vec<Rule> {
+        let mut rules = Vec::new();
+        let mut rule = |from: String, to: &str, accepts: u16, gives: u16, doubtful: bool| {
+            let whole = matches!(to, "する" | "くる" | "来る" | "行く" | "いく");
+            rules.push(Rule { from, to: to.to_owned(), accepts, gives, doubtful, whole });
+        };
+
+        // Ichidan verbs: 食べ + ending ← 食べる.
+        for ending in ["ない", "たい"] { rule(ending.into(), "る", ADJ, V1, false); }
+        for ending in ["ず", "ずに", "ぬ", "た", "たら", "たり", "よう", "れば"]
+            .iter().chain(POLITE)
+        {
+            rule((*ending).into(), "る", TYPED, V1, false);
+        }
+        rule("て".into(), "る", TE, V1, false);
+        for ending in ["ろ", "よ"] { rule(ending.into(), "る", TYPED, V1, true); }
+        for ending in ["られる", "させる", "させられる"] { rule(ending.into(), "る", V1, V1, true); }
+
+        // Godan verbs, by the row their dictionary form ends in:
+        // (dictionary ending, a-, i-, e-, o-stem, te-form, ta-form).
+        const ROWS: &[(&str, &str, &str, &str, &str, &str, &str)] = &[
+            ("う", "わ", "い", "え", "お", "って", "った"),
+            ("く", "か", "き", "け", "こ", "いて", "いた"),
+            ("ぐ", "が", "ぎ", "げ", "ご", "いで", "いだ"),
+            ("す", "さ", "し", "せ", "そ", "して", "した"),
+            ("つ", "た", "ち", "て", "と", "って", "った"),
+            ("ぬ", "な", "に", "ね", "の", "んで", "んだ"),
+            ("ぶ", "ば", "び", "べ", "ぼ", "んで", "んだ"),
+            ("む", "ま", "み", "め", "も", "んで", "んだ"),
+            ("る", "ら", "り", "れ", "ろ", "って", "った"),
+        ];
+        for &(dict, a, i, e, o, te, ta) in ROWS {
+            rule(format!("{a}ない"), dict, ADJ, V5, false);
+            for ending in ["ず", "ずに", "ぬ"] { rule(format!("{a}{ending}"), dict, TYPED, V5, false); }
+            for ending in ["れる", "せる", "せられる", "される"] {
+                rule(format!("{a}{ending}"), dict, V1, V5, true);
+            }
+            for ending in POLITE { rule(format!("{i}{ending}"), dict, TYPED, V5, false); }
+            rule(format!("{i}たい"), dict, ADJ, V5, false);
+            rule(format!("{e}ば"), dict, TYPED, V5, false);
+            rule(e.into(), dict, TYPED, V5, true);
+            rule(format!("{e}る"), dict, V1, V5, true);
+            rule(format!("{o}う"), dict, TYPED, V5, false);
+            rule(te.into(), dict, TE, V5, false);
+            for ending in ["", "ら", "り"] { rule(format!("{ta}{ending}"), dict, TYPED, V5, false); }
+        }
+        // 行く makes its te- and ta-forms with っ.
+        for (go, base) in [("行", "行く"), ("い", "いく")] {
+            rule(format!("{go}って"), base, TE, V5, false);
+            for ending in ["", "ら", "り"] { rule(format!("{go}った{ending}"), base, TYPED, V5, false); }
+        }
+
+        // する, and nouns that take it.
+        rule("しない".into(), "する", ADJ, VS, false);
+        rule("したい".into(), "する", ADJ, VS, false);
+        for ending in ["せず", "せずに", "した", "したら", "したり", "しよう", "しろ", "せよ", "すれば"] {
+            rule(ending.into(), "する", TYPED, VS, false);
+        }
+        for ending in POLITE { rule(format!("し{ending}"), "する", TYPED, VS, false); }
+        rule("して".into(), "する", TE, VS, false);
+        for ending in ["される", "させる", "させられる"] { rule(ending.into(), "する", V1, VS, true); }
+        rule("する".into(), "", VS, NOUN, false);
+
+        // 来る, in kanji and in kana: (stem before ない, before ます, before ば, dictionary form).
+        for (nai, masu, ba, base) in [("来", "来", "来", "来る"), ("こ", "き", "く", "くる")] {
+            rule(format!("{nai}ない"), base, ADJ, VK, false);
+            rule(format!("{masu}たい"), base, ADJ, VK, false);
+            for ending in ["ず", "ずに", "よう", "い"] { rule(format!("{nai}{ending}"), base, TYPED, VK, false); }
+            for ending in ["た", "たら", "たり"].iter().chain(POLITE) {
+                rule(format!("{masu}{ending}"), base, TYPED, VK, false);
+            }
+            rule(format!("{masu}て"), base, TE, VK, false);
+            rule(format!("{ba}れば"), base, TYPED, VK, false);
+            for ending in ["られる", "させる"] { rule(format!("{nai}{ending}"), base, V1, VK, true); }
+        }
+
+        // I-adjectives: 儚 + ending ← 儚い.
+        for ending in ["く", "くて", "かった", "かったら", "ければ", "かろう"] {
+            rule(ending.into(), "い", TYPED, ADJ, false);
+        }
+        rule("くない".into(), "い", ADJ, ADJ, false);
+        rule("そう".into(), "い", TYPED, ADJ, true);
+        rule("すぎる".into(), "い", V1, ADJ, true);
+
+        // ている and てる conjugate like ichidan verbs and lead back to the te-form.
+        rule("ている".into(), "て", V1, TE, false);
+        rule("でいる".into(), "で", V1, TE, false);
+        rule("てる".into(), "て", V1, TE, true);
+        rule("でる".into(), "で", V1, TE, true);
+
+        rules
+    }
 }
 
 mod english {
     /// Base forms for an English word, each with whether it is doubtful.
     pub(super) fn base_forms(word: &str) -> Vec<(String, bool)> {
         let mut forms = Vec::new();
-        if !word.chars().all(|c| c.is_ascii_lowercase() || c == '\'' || c == '’') {
+        if !word
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c == '\'' || c == '’')
+        {
             return forms;
         }
         let sure = |forms: &mut Vec<(String, bool)>, form: String| forms.push((form, false));

@@ -15,8 +15,8 @@ pub use error::{Error, Result};
 pub use format::{
     DictionaryFormat, DictionaryReader, FormatError, MdictFormat, OpenError, RawRecord,
 };
-pub use lemma::{BaseForm, base_forms};
 pub use index::{HeadwordIndex, IndexError, IndexedHeadword, MemoryIndex, Start, index_key};
+pub use lemma::{BaseForm, base_forms};
 pub use library::{
     DictionaryInfo, Entry, Lemma, Library, LibraryFolder, Move, OpenFailure, Suggestion,
     Suggestions,

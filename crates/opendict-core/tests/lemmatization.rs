@@ -19,7 +19,11 @@ fn dictionary(title: &str, headwords: &[&str]) -> MdxBuilder {
 
 fn library_of(headwords: &[&str]) -> (tempfile::TempDir, Library) {
     let folder = tempfile::tempdir().unwrap();
-    put(folder.path(), "sample.mdx", &dictionary("Sample", headwords));
+    put(
+        folder.path(),
+        "sample.mdx",
+        &dictionary("Sample", headwords),
+    );
     let library = Library::open(folder.path()).unwrap();
     (folder, library)
 }
@@ -42,7 +46,10 @@ fn an_inflected_form_finds_its_base_headword_first_with_a_note() {
     let suggestions = library.suggest("serendipities", 10).unwrap();
 
     assert_eq!(suggestions.lemma, lemma("serendipities", "serendipity"));
-    assert_eq!(headwords(&suggestions.items), ["serendipity", "serene", "shadow"]);
+    assert_eq!(
+        headwords(&suggestions.items),
+        ["serendipity", "serene", "shadow"]
+    );
     assert!(!suggestions.miss && !suggestions.near && !suggestions.browse);
 }
 
@@ -97,7 +104,11 @@ fn wrong_lemmas<'a>(cases: &[(&'a str, &'a str)], distractors: &[&str]) -> Vec<(
     cases
         .iter()
         .filter_map(|&(form, base)| {
-            let found = library.suggest(form, 5).unwrap().lemma.map(|lemma| lemma.to);
+            let found = library
+                .suggest(form, 5)
+                .unwrap()
+                .lemma
+                .map(|lemma| lemma.to);
             (found.as_deref() != Some(base)).then(|| (form, format!("{found:?}, not {base}")))
         })
         .collect()
@@ -143,5 +154,67 @@ fn an_ending_common_in_base_forms_is_not_undone_when_the_query_is_a_headword() {
     assert_eq!(
         library.suggest("numbers", 10).unwrap().lemma,
         lemma("numbers", "number")
+    );
+}
+
+#[test]
+fn a_japanese_conjugated_form_finds_its_dictionary_form() {
+    let (_folder, library) = library_of(&["食べる", "食べ物", "儚い", "儚さ"]);
+
+    let ate = library.suggest("食べた", 10).unwrap();
+    let fleetingly = library.suggest("儚く", 10).unwrap();
+
+    assert_eq!(ate.lemma, lemma("食べた", "食べる"));
+    assert_eq!(headwords(&ate.items)[0], "食べる");
+    assert_eq!(fleetingly.lemma, lemma("儚く", "儚い"));
+    assert_eq!(headwords(&fleetingly.items)[0], "儚い");
+}
+
+#[test]
+fn japanese_rules_cover_verb_classes_adjectives_and_chained_endings() {
+    let cases = [
+        ("食べます", "食べる"),
+        ("食べない", "食べる"),
+        ("食べなかった", "食べる"),
+        ("食べて", "食べる"),
+        ("食べている", "食べる"),
+        ("食べていました", "食べる"),
+        ("食べられた", "食べる"),
+        ("食べさせられなかった", "食べる"),
+        ("たべた", "たべる"),
+        ("書いた", "書く"),
+        ("書かない", "書く"),
+        ("書きたい", "書く"),
+        ("書けば", "書く"),
+        ("書こう", "書く"),
+        ("泳いだ", "泳ぐ"),
+        ("話して", "話す"),
+        ("待った", "待つ"),
+        ("死んだ", "死ぬ"),
+        ("遊んで", "遊ぶ"),
+        ("読みました", "読む"),
+        ("帰らなかった", "帰る"),
+        ("買って", "買う"),
+        ("行った", "行く"),
+        ("勉強した", "勉強する"),
+        ("しない", "する"),
+        ("来た", "来る"),
+        ("こない", "くる"),
+        ("儚かった", "儚い"),
+        ("儚くない", "儚い"),
+        ("儚くなかった", "儚い"),
+        ("儚ければ", "儚い"),
+        ("儚くて", "儚い"),
+    ];
+    assert_eq!(wrong_lemmas(&cases, &["書い", "食べ物"]), []);
+}
+
+#[test]
+fn a_noun_that_took_suru_finds_the_noun() {
+    let (_folder, library) = library_of(&["散歩", "散策"]);
+
+    assert_eq!(
+        library.suggest("散歩しました", 10).unwrap().lemma,
+        lemma("散歩しました", "散歩")
     );
 }
