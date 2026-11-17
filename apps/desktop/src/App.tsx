@@ -16,10 +16,14 @@ import {
   rescanLibrary,
   setAllowNetwork,
   setDictionaryEnabled,
+  getWordBooks,
+  toggleWord,
   type Entry,
   type Library,
   type RegisterError,
+  type WordBooks,
 } from "./lib/ipc";
+import { MOD, withMod } from "./lib/platform";
 import { useHeadwordColumn } from "./lib/useHeadwordColumn";
 
 type PageState =
@@ -39,6 +43,9 @@ export function App() {
   const [library, setLibrary] = useState<Library | null>(null);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
+  const [wordBooks, setWordBooks] = useState<WordBooks | null>(null);
+  /** What the status line says about the last Word Book change. */
+  const [said, setSaid] = useState<string | null>(null);
   const pageRef = useRef<HTMLElement>(null);
   const column = useHeadwordColumn();
   const { refresh } = column;
@@ -57,6 +64,11 @@ export function App() {
       (error: unknown) => setPage({ kind: "failed", reason: String(error) }),
     );
   }, [refresh]);
+
+  useEffect(() => {
+    // Without readable Word Books the rest of the app still works; saving reports why not.
+    getWordBooks().then((books) => setWordBooks(Array.isArray(books?.books) ? books : null), () => {});
+  }, []);
 
   // Moving between the page and the Library puts the reader at the top of the new view.
   useEffect(() => {
@@ -126,6 +138,41 @@ export function App() {
     const headword = column.select(index);
     if (headword) commit(headword);
   }
+
+  const currentBook = wordBooks?.books.find((book) => book.id === wordBooks.current) ?? null;
+  const savedHere = (headword: string) => currentBook?.words.some((word) => word.headword === headword) ?? false;
+
+  /** Saves the word on the page to the chosen Word Book, or takes it out (Ctrl/⌘ + D). */
+  async function toggleSave() {
+    if (view !== "lookup" || page.kind !== "found") return;
+    const { headword, entries } = page;
+    const from = entries[0]!;
+    try {
+      const updated = await toggleWord(headword, from.dictionaryId, from.dictionaryTitle, t.newWordBookName);
+      setWordBooks(updated);
+      const book = updated.books.find((b) => b.id === updated.current);
+      const now = book?.words.some((word) => word.headword === headword) ?? false;
+      if (book) setSaid(now ? t.savedTo(headword, book.name) : t.removedFrom(headword, book.name));
+    } catch (error) {
+      setSaid(t.wordBookActionFailed(String(error)));
+    }
+  }
+
+  const shortcut = useRef(toggleSave);
+  useEffect(() => {
+    shortcut.current = toggleSave;
+  });
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (withMod(event) && event.key.toLowerCase() === "d" && !event.isComposing) {
+        // Ctrl+D would otherwise bookmark the page in WebView2.
+        event.preventDefault();
+        void shortcut.current();
+      }
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, []);
 
   /** Runs one Library command; the shell answers with the Library as it now is. */
   async function change(command: () => Promise<Library | null>, after?: (library: Library) => void) {
@@ -208,7 +255,16 @@ export function App() {
           {view === "library" && library ? (
             <LibraryPage library={library} busy={busy} notice={notice} actions={actions} />
           ) : (
-            <PageContent page={page} asked={asked} library={library} busy={busy} notice={notice} onAddFolder={actions.addFolder} />
+            <PageContent
+              page={page}
+              asked={asked}
+              library={library}
+              busy={busy}
+              notice={notice}
+              onAddFolder={actions.addFolder}
+              saved={page.kind === "found" && savedHere(page.headword)}
+              onToggleSave={() => void toggleSave()}
+            />
           )}
         </main>
         {view === "lookup" ? (
@@ -227,6 +283,11 @@ export function App() {
 
       <footer className="flex items-center gap-[18px] overflow-hidden border-t border-rule px-xl text-label whitespace-nowrap text-text-secondary tabular-nums select-none">
         <span>{library && !library.problem ? t.libraryCount(enabledCount) : null}</span>
+        {said ? (
+          <span role="status" className="min-w-0 truncate">
+            {said}
+          </span>
+        ) : null}
         <UpdateNotice />
       </footer>
     </div>
@@ -240,6 +301,8 @@ function PageContent({
   busy,
   notice,
   onAddFolder,
+  saved,
+  onToggleSave,
 }: {
   page: PageState;
   /** How many Dictionaries the Lookup ran against. */
@@ -248,6 +311,9 @@ function PageContent({
   busy: boolean;
   notice: string | null;
   onAddFolder: () => void;
+  /** Whether the word on the page is in the chosen Word Book. */
+  saved: boolean;
+  onToggleSave: () => void;
 }) {
   const { t } = useI18n();
   switch (page.kind) {
@@ -258,6 +324,8 @@ function PageContent({
           headword={page.headword}
           entries={page.entries}
           asked={asked}
+          saved={saved}
+          onToggleSave={onToggleSave}
         />
       );
     case "missing":
@@ -287,7 +355,19 @@ function PageContent({
 }
 
 /** The page head and one section per answering Dictionary. `asked` is how many Dictionaries the Lookup ran against. */
-function EntryPage({ headword, entries: initial, asked }: { headword: string; entries: Entry[]; asked: number }) {
+function EntryPage({
+  headword,
+  entries: initial,
+  asked,
+  saved,
+  onToggleSave,
+}: {
+  headword: string;
+  entries: Entry[];
+  asked: number;
+  saved: boolean;
+  onToggleSave: () => void;
+}) {
   const { t } = useI18n();
   const [entries, setEntries] = useState(initial);
   const pronunciation = entries.find((entry) => entry.pronunciation)?.pronunciation;
@@ -317,6 +397,7 @@ function EntryPage({ headword, entries: initial, asked }: { headword: string; en
         <h1 className="-ml-3.5 font-serif text-display font-bold [overflow-wrap:anywhere]">【{headword}】</h1>
         {pronunciation ? <span className="font-serif text-[16px] text-text-secondary">{pronunciation}</span> : null}
         <span className="text-[12px] text-text-secondary">{t.answeredOf(entries.length, asked)}</span>
+        <SaveButton saved={saved} onToggle={onToggleSave} />
       </div>
       {entries.map((entry) => {
         const open = !folded.has(entry.dictionaryId);
@@ -343,6 +424,28 @@ function EntryPage({ headword, entries: initial, asked }: { headword: string; en
         );
       })}
     </article>
+  );
+}
+
+/** Add to Word Book, in the page head: solid ink once the word is saved (DESIGN.md: toggled on). */
+function SaveButton({ saved, onToggle }: { saved: boolean; onToggle: () => void }) {
+  const { t } = useI18n();
+  return (
+    <button
+      type="button"
+      aria-pressed={saved}
+      aria-keyshortcuts={MOD === "⌘" ? "Meta+D" : "Control+D"}
+      onClick={onToggle}
+      className="ml-auto flex h-7 flex-none items-center gap-1.5 self-center rounded-sharp border border-rule px-2.5 text-body text-text hover:bg-shade active:translate-y-px aria-pressed:bg-text aria-pressed:text-paper"
+    >
+      <svg className="size-3.5 fill-none stroke-current stroke-[1.3]" viewBox="0 0 14 14" aria-hidden="true">
+        <path d="M3.5 1.5h7v11L7 9.8l-3.5 2.7z" fill={saved ? "currentColor" : "none"} />
+      </svg>
+      <span>{saved ? t.inWordBook : t.addToWordBook}</span>
+      <kbd aria-hidden="true" className="font-sans text-label text-current opacity-70">
+        {MOD} D
+      </kbd>
+    </button>
   );
 }
 
