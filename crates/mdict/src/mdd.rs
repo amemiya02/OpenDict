@@ -3,6 +3,7 @@ use std::path::Path;
 use crate::error::Result;
 use crate::file::{Kind, MdictFile};
 use crate::header::Header;
+use crate::registration::Registration;
 
 /// An open MDD file: the resources (images, styles, sounds, fonts) a Dictionary's
 /// Entries refer to, filed under Windows-style paths such as `\img\a.png`.
@@ -16,7 +17,20 @@ impl Mdd {
     /// Opens an MDD file. The file is memory-mapped; the header and the resource paths
     /// are read now, resources only when they are asked for.
     pub fn open(path: impl AsRef<Path>) -> Result<Mdd> {
-        let file = MdictFile::open(path.as_ref(), Kind::Mdd)?;
+        Self::from_file(MdictFile::open(path.as_ref(), Kind::Mdd, None)?)
+    }
+
+    /// Opens an MDD file that may need a registration code (`Encrypted="1"`), unlocking
+    /// it with `registration`. A file that needs none opens as with [`Mdd::open`].
+    pub fn open_registered(path: impl AsRef<Path>, registration: &Registration) -> Result<Mdd> {
+        Self::from_file(MdictFile::open(
+            path.as_ref(),
+            Kind::Mdd,
+            Some(registration),
+        )?)
+    }
+
+    fn from_file(file: MdictFile) -> Result<Mdd> {
         let mut sorted: Vec<(String, usize)> = file
             .keys
             .iter()

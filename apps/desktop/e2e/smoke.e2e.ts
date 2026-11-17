@@ -287,3 +287,29 @@ test("the headword column suggests as the reader types and the keyboard browses 
   assert.equal(await heading.count(), 1);
   if (process.env.OPENDICT_E2E_COLUMN_SCREENSHOT) await page.screenshot({ path: process.env.OPENDICT_E2E_COLUMN_SCREENSHOT });
 });
+
+// Runs last: unlocking adds a Dictionary, and with it a headword, to the Library.
+test("a Dictionary that needs a registration code opens once the reader enters it", async () => {
+  const page = browser!.contexts()[0]!.pages()[0]!;
+  await page.getByRole("button", { name: "Library", exact: true }).click();
+  const failure = page.getByRole("listitem").filter({ hasText: "sample-bought.mdx" });
+  assert.match(await failure.innerText(), /needs its registration code/);
+
+  await failure.getByRole("button", { name: /^Enter the registration code for / }).click();
+  await page.getByLabel("E-mail", { exact: true }).fill("reader@example.com");
+  await page.getByLabel("Registration code", { exact: true }).fill("FEDCBA9876543210FEDCBA9876543210");
+  await page.getByRole("button", { name: "Unlock" }).click();
+  await page.getByRole("alert").filter({ hasText: "do not unlock the dictionary" }).waitFor({ timeout: 10_000 });
+  if (process.env.OPENDICT_E2E_SCREENSHOT) {
+    await page.screenshot({ path: process.env.OPENDICT_E2E_SCREENSHOT.replace(/\.png$/, "-registration.png") });
+  }
+
+  await page.getByLabel("Registration code", { exact: true }).fill("0123 4567 89AB CDEF 0123 4567 89AB CDEF");
+  await page.getByRole("button", { name: "Unlock" }).click();
+  await page.getByRole("rowheader", { name: /Sample Bought Dictionary/ }).waitFor({ timeout: 10_000 });
+
+  const search = page.getByRole("combobox", { name: "Type a word" });
+  await search.fill("bargain");
+  await search.press("Enter");
+  await page.frameLocator("iframe").getByText("Something bought for less than it is worth.").waitFor({ timeout: 10_000 });
+});

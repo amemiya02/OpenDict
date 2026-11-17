@@ -11,11 +11,13 @@ mod near;
 mod normalization;
 mod pattern;
 mod preferences;
+mod registrations;
 mod scan;
 
 pub use error::{Error, Result};
 pub use format::{
     DictionaryFormat, DictionaryReader, FormatError, MdictFormat, OpenError, RawRecord,
+    Registration,
 };
 pub use index::{HeadwordIndex, IndexError, IndexedHeadword, MemoryIndex, Start, index_key};
 pub use library::{
