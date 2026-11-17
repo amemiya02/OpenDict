@@ -8,6 +8,7 @@ import {
   type Appearance,
   type Theme,
 } from "./ipc";
+import { shortcutOfEvent } from "./keymap";
 
 /** The defaults, until the shell has said otherwise (and if it cannot). */
 const DEFAULTS: Appearance = { theme: "system", allAsAuthored: false, textSize: 16, zoom: 100 };
@@ -94,11 +95,11 @@ export function useAppearance() {
 
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
-      if (!(event.ctrlKey || event.metaKey) || event.altKey) return;
       const zoom = latest.current.zoom;
-      if (event.key === "=" || event.key === "+" || event.code === "NumpadAdd") setZoom(zoomStep(zoom, 1));
-      else if (event.key === "-" || event.code === "NumpadSubtract") setZoom(zoomStep(zoom, -1));
-      else if (event.key === "0" || event.code === "Numpad0") setZoom(100);
+      const shortcut = shortcutOfEvent(event)?.kind;
+      if (shortcut === "zoomIn") setZoom(zoomStep(zoom, 1));
+      else if (shortcut === "zoomOut") setZoom(zoomStep(zoom, -1));
+      else if (shortcut === "zoomReset") setZoom(100);
       else return;
       event.preventDefault();
     }

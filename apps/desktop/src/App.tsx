@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useEffectEvent, useRef, useState, type ReactNode } from "react";
+import { CommandPalette, type Command } from "./components/CommandPalette";
 import { EntryFrame } from "./components/EntryFrame";
 import { GroupSwitcher } from "./components/GroupSwitcher";
 import { COLUMN_ID, HeadwordColumn, optionId, type ColumnItem, type ColumnList } from "./components/HeadwordColumn";
@@ -10,7 +11,7 @@ import { ReadingSettings } from "./components/ReadingSettings";
 import { SearchField } from "./components/SearchField";
 import { UpdateNotice } from "./components/UpdateNotice";
 import { WordBookPage, type WordBookActions } from "./components/WordBookPage";
-import { useI18n } from "./i18n";
+import { LANGUAGES, useI18n, type Locale } from "./i18n";
 import { soundUrl } from "./lib/entryLinks";
 import { playSound } from "./lib/sound";
 import {
@@ -57,8 +58,10 @@ import {
   type WordBooks,
 } from "./lib/ipc";
 import { useAppearance, type Scheme } from "./lib/useAppearance";
-import { MOD, withMod } from "./lib/platform";
-import { canStep, emptyTrail, step, visit } from "./lib/trail";
+import { hintOf, keysOf, press, shortcutOfEvent, type Shortcut } from "./lib/keymap";
+import { MOD } from "./lib/platform";
+import { canStep, emptyTrail, step, visit, type Trail } from "./lib/trail";
+import { TEXT_SIZES, zoomStep } from "./lib/useAppearance";
 import { useHeadwordColumn } from "./lib/useHeadwordColumn";
 import { wildcardHint } from "./lib/wildcard";
 
@@ -74,7 +77,7 @@ type View = "lookup" | "library" | "wordBook";
 
 /** The main window: cover band, headword column, page and status line. */
 export function App() {
-  const { t } = useI18n();
+  const { t, locale, chooseLanguage } = useI18n();
   const [query, setQuery] = useState("");
   const [page, setPage] = useState<PageState>({ kind: "idle" });
   const [view, setView] = useState<View>("lookup");
@@ -90,7 +93,15 @@ export function App() {
   /** Committed Lookups, newest first. */
   const [history, setHistory] = useState<string[]>([]);
   /** The words visited in this window, for Back and Forward. */
-  const [trail, setTrail] = useState(emptyTrail);
+  const [trail, setTrailState] = useState(emptyTrail);
+  /** The trail as it is now, ahead of rendering: Back may be pressed before a render. */
+  const trailRef = useRef(trail);
+  /** The Lookup the reader last committed, while it is under way. */
+  const committing = useRef<Promise<void>>(Promise.resolve());
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  /** The Dictionaries folded on the found page (by page key). */
+  const [folded, setFolded] = useState<{ page: string; ids: ReadonlySet<string> }>({ page: "", ids: new Set() });
+  const searchRef = useRef<HTMLInputElement>(null);
   /** Where the word on the page stands in History, or -1. */
   const historySelected = page.kind === "found" ? history.indexOf(page.headword) : -1;
   const [platform, setPlatform] = useState<WindowChrome["platform"] | null>(null);
@@ -252,10 +263,17 @@ export function App() {
   async function commit(headword: string) {
     putColumnAway();
     type(headword);
-    await show(headword, () => {
-      setTrail((now) => visit(now, headword));
+    const done = show(headword, () => {
+      setTrail(visit(trailRef.current, headword));
       recordLookup(headword).then((words) => setHistory(asWords(words)), () => {});
     });
+    committing.current = done;
+    await done;
+  }
+
+  function setTrail(next: Trail) {
+    trailRef.current = next;
+    setTrailState(next);
   }
 
   /** A narrow window's column overlay goes once a word is chosen. */
@@ -330,32 +348,29 @@ export function App() {
     if (view === "lookup" && page.kind === "found") await show(page.headword);
   }
 
-  /** Back (-1) or Forward (1) through the words visited. Retracing is not a new Lookup. */
-  function go(by: -1 | 1) {
-    const next = step(trail, by);
+  /**
+   * Back (-1) or Forward (1) through the words visited. Retracing is not a new Lookup. A
+   * Lookup the reader has just committed counts as visited, even if it has not answered
+   * yet: Back right after Enter goes to the word before it.
+   */
+  async function go(by: -1 | 1) {
+    await committing.current;
+    const next = step(trailRef.current, by);
     if (!next) return;
     setTrail(next.trail);
     type(next.word);
     column.refresh(next.word).catch(() => {});
-    void show(next.word);
+    await show(next.word);
   }
 
-  // Alt+← and Alt+→ work wherever the focus is in the window (but not inside an Entry
-  // frame, which is another document).
-  const goRef = useRef(go);
-  useEffect(() => {
-    goRef.current = go;
-  });
-  useEffect(() => {
-    function onKeyDown(event: KeyboardEvent) {
-      if (!event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
-      if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
-      event.preventDefault();
-      goRef.current(event.key === "ArrowLeft" ? -1 : 1);
-    }
-    document.addEventListener("keydown", onKeyDown);
-    return () => document.removeEventListener("keydown", onKeyDown);
-  }, []);
+  /** Puts the caret in the search field, its text selected, ready for a new word. */
+  function focusSearch() {
+    const field = searchRef.current;
+    if (!field) return;
+    field.focus();
+    field.select();
+  }
+
 
   function forgetHistory() {
     clearHistory().then(
@@ -423,20 +438,38 @@ export function App() {
     setBookNotice(null);
   }
 
-  const shortcut = useRef(toggleSave);
-  useEffect(() => {
-    shortcut.current = toggleSave;
-  });
-  useEffect(() => {
-    const onKey = (event: KeyboardEvent) => {
-      if (withMod(event) && event.key.toLowerCase() === "d" && !event.isComposing) {
+  // The window's shortcuts (lib/keymap.ts), wherever the focus is in it. Keys pressed inside
+  // an Entry frame reach here too: the frame reports them and EntryFrame presses them again.
+  const onShortcut = useEffectEvent((shortcut: Shortcut, event: KeyboardEvent) => {
+    switch (shortcut.kind) {
+      case "palette":
+        event.preventDefault();
+        setPaletteOpen(true);
+        return;
+      case "focusSearch":
+        event.preventDefault();
+        focusSearch();
+        return;
+      case "back":
+      case "forward":
+        // Also keeps WebView2 from navigating the window.
+        event.preventDefault();
+        void go(shortcut.kind === "back" ? -1 : 1);
+        return;
+      case "save":
         // Ctrl+D would otherwise bookmark the page in WebView2.
         event.preventDefault();
-        void shortcut.current();
-      }
-    };
-    document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
+        void toggleSave();
+        return;
+    }
+  });
+  useEffect(() => {
+    function onKeyDown(event: KeyboardEvent) {
+      const shortcut = shortcutOfEvent(event);
+      if (shortcut) onShortcut(shortcut, event);
+    }
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
   }, []);
 
   /** Runs one Library command; the shell answers with the Library as it now is. */
@@ -550,6 +583,94 @@ export function App() {
   const columnItems: ColumnItem[] =
     list === "history" ? history.map((headword) => ({ headword })) : list === "wordBook" ? bookWords : items;
 
+  const foldedHere = page.kind === "found" && folded.page === pageKey(page) ? folded.ids : NONE_FOLDED;
+
+  function toggleFold(dictionaryId: string) {
+    if (page.kind !== "found") return;
+    const ids = new Set(foldedHere);
+    if (!ids.delete(dictionaryId)) ids.add(dictionaryId);
+    setFolded({ page: pageKey(page), ids });
+  }
+
+  function foldAll(fold: boolean) {
+    if (page.kind !== "found") return;
+    setFolded({ page: pageKey(page), ids: new Set(fold ? page.entries.map((e) => e.dictionaryId) : []) });
+  }
+
+  /** Every action, for the command palette, as things stand now. */
+  function commands(): Command[] {
+    const found = view === "lookup" && page.kind === "found" ? page : null;
+    const sound = found ? firstSound(found.entries) : null;
+    const theme = appearance.appearance.theme;
+    const list: Command[] = [{ label: t.cFocus, hint: hintOf({ kind: "focusSearch" }), run: focusSearch }];
+    if (found) {
+      list.push({ label: savedHere(found.headword) ? t.cUnsave : t.cSave, hint: hintOf({ kind: "save" }), run: () => void toggleSave() });
+      if (sound !== null) list.push({ label: t.cPronounce, hint: hintOf({ kind: "pronounce" }), run: () => playSound(sound) });
+    }
+    if (canStep(trail, -1)) list.push({ label: t.back, hint: hintOf({ kind: "back" }), run: () => void go(-1) });
+    if (canStep(trail, 1)) list.push({ label: t.forward, hint: hintOf({ kind: "forward" }), run: () => void go(1) });
+    if (found) {
+      found.entries.slice(0, 9).forEach((entry, index) => {
+        const jump = { kind: "jump", index } as const;
+        list.push({ label: t.cJump(entry.dictionaryTitle), hint: hintOf(jump), run: () => press(keysOf(jump)) });
+      });
+      list.push({ label: t.cFoldAll, run: () => foldAll(true) }, { label: t.cUnfoldAll, run: () => foldAll(false) });
+    }
+    list.push(
+      view === "library"
+        ? { label: t.cLookup, run: () => setView("lookup") }
+        : { label: t.cLibrary, run: () => setView("library") },
+      {
+        label: t.cSuggestions,
+        run: () => {
+          setList("suggestions");
+          setView("lookup");
+        },
+      },
+      {
+        label: t.cHistory,
+        run: () => {
+          setList("history");
+          setView("lookup");
+        },
+      },
+      { label: t.cWordBook, run: showWordBook },
+    );
+    if (currentBook) {
+      const id = currentBook.id;
+      list.push(
+        { label: t.cExportCsv, run: () => void bookActions.export(id, "csv") },
+        { label: t.cExportTsv, run: () => void bookActions.export(id, "tsv") },
+      );
+    }
+    if (groups.length > 0) {
+      list.push({ label: t.cAllDictionaries, checked: currentGroup === null, run: () => void switchGroup(null) });
+      for (const g of groups) list.push({ label: t.cGroup(g.name), checked: g.id === currentGroup, run: () => void switchGroup(g.id) });
+    }
+    const system = window.matchMedia?.("(prefers-color-scheme: dark)").matches ? t.cDark : t.cLight;
+    list.push(
+      { label: t.cThemeSystem(system), checked: theme === "system", run: () => appearance.setTheme("system") },
+      { label: t.cThemeLight, checked: theme === "light", run: () => appearance.setTheme("light") },
+      { label: t.cThemeDark, checked: theme === "dark", run: () => appearance.setTheme("dark") },
+      appearance.appearance.allAsAuthored
+        ? { label: t.cRecolourAll, run: () => void reading.setAllAsAuthored(false).catch(() => {}) }
+        : { label: t.cAuthoredAll, run: () => void reading.setAllAsAuthored(true).catch(() => {}) },
+    );
+    for (const [language, name] of Object.entries(LANGUAGES) as [Locale, string][]) {
+      list.push({ label: t.cLanguage(name), checked: language === locale, run: () => chooseLanguage(language) });
+    }
+    const { zoom, textSize } = appearance.appearance;
+    list.push(
+      { label: t.zoomIn, hint: hintOf({ kind: "zoomIn" }), run: () => appearance.setZoom(zoomStep(zoom, 1)) },
+      { label: t.zoomOut, hint: hintOf({ kind: "zoomOut" }), run: () => appearance.setZoom(zoomStep(zoom, -1)) },
+      { label: t.zoomReset, hint: hintOf({ kind: "zoomReset" }), run: () => appearance.setZoom(100) },
+    );
+    if (textSize < TEXT_SIZES.max) list.push({ label: t.largerText, run: () => appearance.setTextSize(textSize + 1) });
+    if (textSize > TEXT_SIZES.min) list.push({ label: t.smallerText, run: () => appearance.setTextSize(textSize - 1) });
+    list.push({ label: t.cAddFolder, run: () => void actions.addFolder() }, { label: t.cRescan, run: () => void actions.rescan() });
+    return list;
+  }
+
   return (
     <div className="grid h-full grid-cols-[264px_minmax(0,1fr)] grid-rows-[48px_minmax(0,1fr)_26px] max-[860px]:grid-cols-[200px_minmax(0,1fr)] max-[620px]:grid-cols-[minmax(0,1fr)]">
       <header
@@ -579,7 +700,7 @@ export function App() {
             </svg>
           </button>
         </div>
-        <NavButtons canGoBack={canStep(trail, -1)} canGoForward={canStep(trail, 1)} onGo={go} />
+        <NavButtons canGoBack={canStep(trail, -1)} canGoForward={canStep(trail, 1)} onGo={(by) => void go(by)} />
         <div className="flex min-w-0 flex-1 pr-lg">
           <SearchField
             value={query}
@@ -590,6 +711,8 @@ export function App() {
             onCommit={commitCurrent}
             onEscape={putColumnAway}
             onBlur={() => setTyping(false)}
+            inputRef={searchRef}
+            trailing={<PaletteHint onOpen={() => setPaletteOpen(true)} />}
           />
         </div>
       </header>
@@ -649,6 +772,8 @@ export function App() {
               recent={<RecentLookups words={history} onPick={(word) => void commit(word)} />}
               saved={page.kind === "found" && savedHere(page.headword)}
               onToggleSave={() => void toggleSave()}
+              folded={foldedHere}
+              onToggleFold={toggleFold}
             />
           )}
         </main>
@@ -676,6 +801,7 @@ export function App() {
         ) : null}
         <UpdateNotice />
       </footer>
+      {paletteOpen ? <CommandPalette commands={commands} onClose={() => setPaletteOpen(false)} /> : null}
     </div>
   );
 }
@@ -698,6 +824,8 @@ function PageContent({
   recent,
   saved,
   onToggleSave,
+  folded,
+  onToggleFold,
 }: {
   page: PageState;
   /** How many Dictionaries the Lookup ran against. */
@@ -720,6 +848,9 @@ function PageContent({
   /** Whether the word on the page is in the chosen Word Book. */
   saved: boolean;
   onToggleSave: () => void;
+  /** The Dictionaries folded on the page. */
+  folded: ReadonlySet<string>;
+  onToggleFold: (dictionaryId: string) => void;
 }) {
   const { t } = useI18n();
   switch (page.kind) {
@@ -736,6 +867,8 @@ function PageContent({
           onLookUp={onLookUp}
           saved={saved}
           onToggleSave={onToggleSave}
+          folded={folded}
+          onToggleFold={onToggleFold}
         />
       );
     case "missing":
@@ -799,6 +932,8 @@ function EntryPage({
   onToggleAsAuthored,
   saved,
   onToggleSave,
+  folded,
+  onToggleFold,
 }: {
   headword: string;
   entries: Entry[];
@@ -809,29 +944,21 @@ function EntryPage({
   onLookUp: (headword: string) => void;
   saved: boolean;
   onToggleSave: () => void;
+  folded: ReadonlySet<string>;
+  onToggleFold: (dictionaryId: string) => void;
 }) {
   const { t } = useI18n();
   const dark = reading.scheme === "dark";
   const pronunciation = entries.find((entry) => entry.pronunciation)?.pronunciation;
   const sound = firstSound(entries);
-  const [folded, setFolded] = useState<ReadonlySet<string>>(new Set());
 
-  function toggleFold(dictionaryId: string) {
-    setFolded((current) => {
-      const next = new Set(current);
-      if (!next.delete(dictionaryId)) next.add(dictionaryId);
-      return next;
-    });
-  }
-
-  // Alt+P: the Pronounce action, wherever focus is in the app (not inside an Entry frame,
-  // whose keys stay its own).
+  // Alt+P: the Pronounce action, wherever focus is in the window (an Entry frame included,
+  // which reports the keys pressed in it).
   useEffect(() => {
     if (sound === null) return;
     const url = sound;
     function onKeyDown(event: KeyboardEvent) {
-      if (!event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
-      if (event.code !== "KeyP" && event.key.toLowerCase() !== "p") return;
+      if (shortcutOfEvent(event)?.kind !== "pronounce") return;
       event.preventDefault();
       playSound(url);
     }
@@ -867,7 +994,7 @@ function EntryPage({
               <h2 className="-ml-[7px] min-w-0 flex-1 truncate text-title font-bold">【{entry.dictionaryTitle}】</h2>
               {dark ? <AsAuthoredSwitch on={entry.asAuthored} onToggle={() => onToggleAsAuthored(entry)} /> : null}
               <NetworkSwitch allowed={entry.allowNetwork} onToggle={() => onToggleNetwork(entry)} />
-              <FoldButton open={open} controls={body} onToggle={() => toggleFold(entry.dictionaryId)} />
+              <FoldButton open={open} controls={body} onToggle={() => onToggleFold(entry.dictionaryId)} />
             </div>
             {/* Folded, the Entry stays loaded out of sight, so unfolding shows it as it was. */}
             <div id={body} hidden={!open} className="pb-3.5">
@@ -888,6 +1015,31 @@ function EntryPage({
         );
       })}
     </article>
+  );
+}
+
+const NONE_FOLDED: ReadonlySet<string> = new Set();
+
+/** The command palette's hint at the right end of the search field: a click opens it too. */
+function PaletteHint({ onOpen }: { onOpen: () => void }) {
+  const { t } = useI18n();
+  return (
+    <button
+      type="button"
+      aria-keyshortcuts={MOD === "⌘" ? "Meta+K" : "Control+K"}
+      // Keep the caret in the search field until the palette takes it.
+      onMouseDown={(event) => event.preventDefault()}
+      onClick={onOpen}
+      className="flex h-6 flex-none items-center gap-1 rounded-sharp px-1 text-[12px] whitespace-nowrap text-field-text-secondary hover:bg-field-hover hover:text-field-text"
+    >
+      <kbd aria-hidden="true" className="rounded-sharp border border-field-text-secondary/40 px-[5px] font-sans text-[11px] leading-4">
+        {MOD}
+      </kbd>
+      <kbd aria-hidden="true" className="rounded-sharp border border-field-text-secondary/40 px-[5px] font-sans text-[11px] leading-4">
+        K
+      </kbd>
+      <span className="max-[620px]:sr-only">{t.commands}</span>
+    </button>
   );
 }
 

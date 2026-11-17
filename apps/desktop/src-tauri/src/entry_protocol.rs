@@ -128,6 +128,12 @@ fn content_policy(dictionary_id: &str, allow_network: bool) -> Vec<(header::Head
 /// Entry (`entry://#sense2`) stays in the frame. A click the Dictionary's own scripts
 /// already handled (`preventDefault`) is left alone.
 ///
+/// Keys pressed in an Entry stay in its document, so the script also reports the keys of
+/// the window's shortcuts (Alt + digit, P, ← or →; Ctrl/⌘ + K, L, D or zoom; `/`), and
+/// keeps them from the frame. Never while the reader types in a field of the Entry or an
+/// IME composes, nor for keys the Dictionary's scripts handled. The app checks each key
+/// against its keyboard map before pressing it again (lib/keymap.ts).
+///
 /// It also takes a new base text size from the app while the Entry is open, so the reader
 /// can change it without reloading the Entry. It accepts that only from the app window
 /// (another Dictionary's frame is a different `source`), and only a whole number of pixels
@@ -144,6 +150,15 @@ const kind=m[1].toLowerCase(),rest=href.slice(m[0].length);
 if(kind==="entry"&&rest.charAt(0)==='#'){let id=rest.slice(1);try{id=decodeURIComponent(id)}catch{}
 const t=document.getElementById(id)||document.getElementsByName(id)[0];if(t)t.scrollIntoView();return}
 parent.postMessage({opendict:kind==="entry"?"link":"sound",href},"*")});
+addEventListener("keydown",e=>{
+if(e.defaultPrevented||e.isComposing||e.keyCode===229||!e.isTrusted)return;
+const t=e.target,typing=t instanceof Element&&(t.isContentEditable||/^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName));
+const alt=e.altKey&&!e.ctrlKey&&!e.metaKey&&!e.shiftKey&&/^(Digit[1-9]|Numpad[1-9]|KeyP|ArrowLeft|ArrowRight)$/.test(e.code);
+const mod=(e.ctrlKey||e.metaKey)&&!e.altKey&&(/^[kld=+0-]$/i.test(e.key)||/^Numpad(Add|Subtract|0)$/.test(e.code));
+const slash=e.key==="/"&&!e.ctrlKey&&!e.metaKey&&!e.altKey;
+if(typing||!(alt||mod||slash))return;
+e.preventDefault();
+parent.postMessage({opendict:"key",key:e.key,code:e.code,altKey:e.altKey,ctrlKey:e.ctrlKey,metaKey:e.metaKey,shiftKey:e.shiftKey},"*")});
 const ts=document.currentScript.previousElementSibling;
 addEventListener("message",e=>{const d=e.data;if(e.source!==parent||!d||d.opendict!=="textSize")return;
 const n=d.size;if(Number.isInteger(n)&&n>=10&&n<=32)ts.textContent=":where(html){font-size:"+n+"px}"});

@@ -22,6 +22,9 @@ export interface Entry {
 
 export type Theme = "system" | "light" | "dark";
 
+/** The interface languages there are catalogues for. */
+export type Language = "zh-CN" | "en" | "ja";
+
 /** How the page reads; the shell keeps it in the reader's preferences. */
 export interface Appearance {
   theme: Theme;
@@ -31,6 +34,8 @@ export interface Appearance {
   textSize: number;
   /** Page zoom, in percent. */
   zoom: number;
+  /** The interface language the reader chose; null follows the system language. */
+  language?: Language | null;
 }
 
 /** One headword in the headword column. */
@@ -231,6 +236,16 @@ export function getAppearance(): Promise<Appearance> {
 /** Saves the theme; the shell also gives it to the windows. */
 export function setTheme(theme: Theme): Promise<void> {
   return invoke<void>("set_theme", { theme });
+}
+
+/** Saves the interface language (null: follow the system); the shell tells every window. */
+export function setLanguage(language: Language | null): Promise<void> {
+  return invoke<void>("set_language", { language });
+}
+
+/** The interface language changed, in this window or another. */
+export function onLanguageChanged(handler: (language: Language | null) => void): Promise<UnlistenFn> {
+  return listen<Language | null>("language", (event) => handler(event.payload));
 }
 
 export function setAsAuthored(dictionaryId: string, asAuthored: boolean): Promise<void> {

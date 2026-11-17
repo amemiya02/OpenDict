@@ -1,6 +1,7 @@
 import { useEffect, useEffectEvent, useRef, useState, type CSSProperties, type RefObject } from "react";
 import { useI18n } from "../i18n";
 import { markOf } from "../lib/format";
+import { shortcutOfEvent } from "../lib/keymap";
 
 /** The element id of a Dictionary's section on the page, which its notch links to. */
 export function sectionId(dictionaryId: string): string {
@@ -86,11 +87,10 @@ export function ThumbIndex({
   // Alt + 1–9 jumps to the nth Dictionary, wherever the focus is in the window.
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
-      if (!event.altKey || event.ctrlKey || event.metaKey || event.isComposing || event.defaultPrevented) return;
-      const digit = /^(?:Digit|Numpad)([1-9])$/.exec(event.code)?.[1] ?? /^[1-9]$/.exec(event.key)?.[0];
-      if (!digit) return;
+      const shortcut = event.defaultPrevented ? null : shortcutOfEvent(event);
+      if (shortcut?.kind !== "jump") return;
       event.preventDefault();
-      jumpByKey(Number(digit) - 1);
+      jumpByKey(shortcut.index);
     }
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);

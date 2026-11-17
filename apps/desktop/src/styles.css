@@ -66,6 +66,15 @@
       translate: 100% 0;
     }
   }
+
+  /* The command palette dropping into place. */
+  --animate-drop: drop 0.16s var(--ease-out-expo);
+  @keyframes drop {
+    from {
+      opacity: 0;
+      translate: 0 -6px;
+    }
+  }
 }
 
 /* Semantic colours. Day is the open page; night is the closed book (navy bookcloth). */
@@ -156,6 +165,17 @@
   }
   ::selection {
     background: color-mix(in srgb, var(--here) 30%, transparent);
+  }
+  /*
+   * Focus is visible on every control: a ring in the page's rule colour, or in the cover's
+   * paper colour on the cover band. Never vermilion (the You-Are-Here Rule).
+   */
+  :focus-visible {
+    outline: 2px solid var(--rule);
+    outline-offset: 1px;
+  }
+  header :focus-visible {
+    outline-color: var(--color-on-cover);
   }
   :lang(ja) {
     --font-serif: var(--font-serif-ja);

@@ -1,14 +1,15 @@
 import { useId, type ReactNode } from "react";
-import { useI18n } from "../i18n";
+import { LANGUAGES, useI18n, type Locale } from "../i18n";
 import type { Theme } from "../lib/ipc";
 import { TEXT_SIZES, ZOOMS, zoomStep, type AppearanceControls } from "../lib/useAppearance";
 
 /**
- * How the page reads: theme, "as authored" for every Dictionary, text size and zoom. Set
+ * How the page reads: interface language, theme, "as authored" for every Dictionary, text
+ * size and zoom. Set
  * like the Library above it: a heading, then rows divided by hairlines, no boxes.
  */
 export function ReadingSettings({ controls }: { controls: AppearanceControls }) {
-  const { t } = useI18n();
+  const { t, locale, chooseLanguage } = useI18n();
   const heading = useId();
   const { appearance, setTheme, setAllAsAuthored, setTextSize, setZoom } = controls;
   const themes: [Theme, string][] = [
@@ -22,6 +23,16 @@ export function ReadingSettings({ controls }: { controls: AppearanceControls }) 
       <h2 id={heading} className="mt-5 mb-1.5 text-[13px] font-bold">
         {t.reading}
       </h2>
+      <Row label={t.interfaceLanguage}>
+        <div role="radiogroup" aria-label={t.interfaceLanguage} className="flex flex-wrap gap-x-3.5 gap-y-1">
+          {(Object.entries(LANGUAGES) as [Locale, string][]).map(([language, name]) => (
+            <label key={language} lang={language} className="flex items-center gap-1.5">
+              <input type="radio" name="language" checked={locale === language} onChange={() => chooseLanguage(language)} />
+              {name}
+            </label>
+          ))}
+        </div>
+      </Row>
       <Row label={t.theme}>
         <div role="radiogroup" aria-label={t.theme} className="flex flex-wrap gap-x-3.5 gap-y-1">
           {themes.map(([theme, label]) => (

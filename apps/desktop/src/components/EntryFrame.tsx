@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useEffectEvent, useRef, useState } from "react";
 import { useI18n } from "../i18n";
 import { linkedHeadword, soundUrl } from "../lib/entryLinks";
+import { keysFromFrame, press } from "../lib/keymap";
 import { readerJustActed } from "../lib/sound";
 
 /** Height before the Entry document has reported its own. */
@@ -21,11 +22,13 @@ const RECOLOUR = "invert(0.92) hue-rotate(180deg)";
  * scripts but has an opaque origin: no access to the app, Tauri IPC, storage or other
  * Dictionaries. The app sets no type inside it (the Hands-Off Entry Rule).
  *
- * The frame's document can say three things, by message, and nothing else: its height,
- * an `entry://` link the reader clicked (`onLink` gets the headword) and a `sound://` link
- * the reader clicked (`onSound` gets a URL beneath this frame's own Dictionary). Messages
- * from any other window, of any other shape, or (for links) with no reader action in this
- * frame behind them are dropped.
+ * The frame's document can say four things, by message, and nothing else: its height,
+ * an `entry://` link the reader clicked (`onLink` gets the headword), a `sound://` link
+ * the reader clicked (`onSound` gets a URL beneath this frame's own Dictionary) and a key
+ * the reader pressed in it that is one of the window's shortcuts (lib/keymap.ts), which
+ * the frame presses again on itself, so the window answers it as if pressed there.
+ * Messages from any other window, of any other shape, or (for links and keys) with no
+ * reader action in this frame behind them are dropped.
  *
  * It also tells the document the reader's base text size when it changes, and in the
  * dark theme recolours the frame from outside with a filter, never touching the document.
@@ -73,6 +76,11 @@ export function EntryFrame({
         if (typeof message.href !== "string" || !readerActedHere()) return;
         const headword = linkedHeadword(message.href);
         if (headword !== null) onLink?.(headword);
+        return;
+      }
+      case "key": {
+        const keys = keysFromFrame(message as Record<string, unknown>);
+        if (keys && readerActedHere()) press(keys, frame.current);
         return;
       }
       case "sound": {
