@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-use-data-directory"
+description = "Enables the use_data_directory command without any pre-configured scope."
+commands.allow = ["use_data_directory"]
+
+[[permission]]
+identifier = "deny-use-data-directory"
+description = "Denies the use_data_directory command without any pre-configured scope."
+commands.deny = ["use_data_directory"]

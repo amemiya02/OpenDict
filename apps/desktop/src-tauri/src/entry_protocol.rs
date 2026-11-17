@@ -279,11 +279,7 @@ mod tests {
             .entry("cat", "<p>cat</p>")
             .write_to(library.join("plain.mdx"))
             .unwrap();
-        let state = AppState::load(
-            &folder.path().join("library.json"),
-            Some(library),
-            &folder.path().join("data"),
-        );
+        let state = AppState::load(&folder.path().join("data"), Some(library));
         let id = |title: &str| {
             let view = state.library();
             view.dictionaries

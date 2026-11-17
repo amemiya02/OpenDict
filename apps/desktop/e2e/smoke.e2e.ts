@@ -10,7 +10,7 @@
 
 import { spawn, execFileSync, type ChildProcess } from "node:child_process";
 import { createServer, type Server } from "node:http";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { release, tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { after, before, test } from "node:test";
@@ -65,6 +65,8 @@ before(async () => {
       OPENDICT_DATA_DIR: join(scratch, "data"),
       // Word Books export here instead of asking where with the system dialog.
       OPENDICT_EXPORT_DIR: join(scratch, "exports"),
+      // The folder the reader "chooses" when moving their data, without the system dialog.
+      OPENDICT_PICK_DATA_FOLDER: join(scratch, "synced"),
       // A WebView2 browser of our own: instances sharing a user data folder share one
       // browser process, and with it the debugging port of whichever started first.
       WEBVIEW2_USER_DATA_FOLDER: join(scratch, "webview"),
@@ -749,6 +751,30 @@ test("the global shortcut looks the selection up in the Mini Window, and Esc clo
   await mini.keyboard.press("Escape");
   await waitUntil("the Mini Window is gone", async () => !(await shown()));
   await waitUntil("the main window has the focus again", () => page.evaluate(() => document.hasFocus()));
+});
+
+test("the data directory moves into another folder, and the app keeps the reader's data there from then on", async () => {
+  const home = join(scratch, "data");
+  const synced = join(scratch, "synced");
+  await lookUp("apple");
+  assert.ok(existsSync(join(home, "history.json")), "History starts in the home folder");
+
+  await page.getByRole("button", { name: "Library", exact: true }).click();
+  const settings = page.getByRole("region", { name: "Your data" });
+  await settings.getByText(home, { exact: true }).waitFor({ timeout: 10_000 });
+  await settings.getByRole("button", { name: "Move…" }).click();
+  await settings.getByRole("status").filter({ hasText: `Your data is now in ${synced}.` }).waitFor({ timeout: 30_000 });
+  if (process.env.OPENDICT_E2E_DATA_SCREENSHOT) await page.screenshot({ path: process.env.OPENDICT_E2E_DATA_SCREENSHOT });
+
+  for (const name of ["history.json", "word-books.json", "preferences.json"]) {
+    assert.ok(existsSync(join(synced, name)), `${name} moved`);
+    assert.ok(!existsSync(join(home, name)), `${name} is no longer in the old place`);
+  }
+  await lookUp("cat");
+  // The Lookup is recorded just after its page shows.
+  const recorded = () => (JSON.parse(readFileSync(join(synced, "history.json"), "utf8")) as { headwords: string[] }).headwords.slice(0, 2);
+  for (let tries = 0; tries < 50 && recorded()[0] !== "cat"; tries++) await new Promise((r) => setTimeout(r, 100));
+  assert.deepEqual(recorded(), ["cat", "apple"], "History goes on in the new place");
 });
 
 // Runs last: unlocking adds a Dictionary, and with it a headword, to the Library.

@@ -197,6 +197,27 @@ fn register<R: Runtime>(app: &AppHandle<R>, role: Role, previous: Option<Shortcu
     }
 }
 
+/// Reads the settings again from the data directory, now at `data_dir` (after it moved, or
+/// the reader switched to other data), and registers its shortcuts in place of the old.
+pub fn reload<R: Runtime>(app: &AppHandle<R>, data_dir: &Path) {
+    let mini = app.state::<Mini>();
+    let (settings, problem) = MiniSettings::load(&data_dir.join(settings::FILE_NAME));
+    let previous = {
+        let mut current = lock(&mini.settings);
+        let previous =
+            [Role::LookUpSelection, Role::ShowMainWindow].map(|role| current.shortcut(role));
+        *current = settings;
+        previous
+    };
+    *lock(&mini.problem) = problem;
+    for (role, previous) in [Role::LookUpSelection, Role::ShowMainWindow]
+        .into_iter()
+        .zip(previous)
+    {
+        register(app, role, previous);
+    }
+}
+
 /// Changes a shortcut (`None` turns it off) and registers it in place of the old one.
 pub fn set_shortcut<R: Runtime>(
     app: &AppHandle<R>,

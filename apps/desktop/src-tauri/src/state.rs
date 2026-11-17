@@ -7,22 +7,30 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 pub use opendict_core::Theme;
 use opendict_core::{
-    Error as CoreError, ExportFormat, History, IndexState, Library, Move, OpenError, Preferences,
-    Registration, SavedFrom, Suggestion, WordBookId, WordBooks,
+    DataDirectory, Error as CoreError, ExportFormat, History, IndexState, Library, Move, OpenError,
+    Preferences, Registration, SavedFrom, Suggestion, WordBookId, WordBooks,
 };
 use serde::{Deserialize, Serialize};
 
 use crate::entry_protocol;
 
-/// What the shell holds between commands: the Library (or why it could not be loaded),
-/// the reader's preferences, History and Word Books (or why they could not be read), and
-/// the indexing that runs beside them. Cloning shares the same state.
+/// What the shell holds between commands: the data directory, the Library (or why it
+/// could not be loaded), the reader's preferences, History and Word Books (or why they
+/// could not be read), and the indexing that runs beside them. Cloning shares the same
+/// state.
 #[derive(Clone)]
 pub struct AppState {
     inner: Arc<Inner>,
 }
 
 struct Inner {
+    /// The app's home folder, which says where the data directory is.
+    home: PathBuf,
+    /// The one Library Folder used instead of the reader's Library, if any.
+    override_folder: Option<PathBuf>,
+    /// The data directory, or where it should be and why it cannot be used. Locked
+    /// before anything kept in it whenever both are needed.
+    data: Mutex<Result<DataDirectory, DataDirectoryView>>,
     library: Mutex<Result<Library, String>>,
     /// What is being indexed right now, for the Library view.
     indexing: Mutex<Option<IndexingView>>,
@@ -239,6 +247,28 @@ pub struct SavedWordView {
     pub added: u64,
 }
 
+/// Where the reader's data is kept.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DataDirectoryView {
+    pub path: PathBuf,
+    /// Whether it is where a new reader's data starts.
+    pub is_default: bool,
+    /// Why it cannot be used, if it cannot (it may be on a drive that is not there).
+    pub problem: Option<String>,
+}
+
+/// Why the data directory did not move, as a kind the interface words in the reader's
+/// language.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(tag = "kind", content = "detail", rename_all = "camelCase")]
+pub enum DataDirectoryError {
+    /// The folder already holds OpenDict data, which the reader may use instead.
+    HoldsData(PathBuf),
+    /// Anything else; the data stayed where it was.
+    Failed(String),
+}
+
 /// A step in Library order, as the interface sends it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -260,34 +290,99 @@ impl From<Direction> for Move {
 const PROGRESS_INTERVAL: Duration = Duration::from_millis(100);
 
 impl AppState {
-    /// Loads the Library recorded in `library_file`. With `override_folder` (from the
-    /// environment, for tests and development) the Library is that one folder instead,
-    /// kept only in memory, so the reader's own Library is never touched. Preferences
-    /// and History live in `data_dir`.
-    pub fn load(
-        library_file: &Path,
-        override_folder: Option<PathBuf>,
-        data_dir: &Path,
-    ) -> AppState {
-        let library = match override_folder {
-            Some(folder) => Library::open(&folder),
-            None => Library::load(library_file),
-        };
-        let preferences = Preferences::load(&data_dir.join("preferences.json"));
-        let history = History::load(&data_dir.join("history.json"));
-        let word_books = WordBooks::load(&data_dir.join("word-books.json"));
+    /// Loads the reader's data from the data directory that `home` (the app's folder
+    /// for its data) says, which starts as `home` itself. With `override_folder` (from
+    /// the environment, for tests and development) the Library is that one folder
+    /// instead, kept only in memory, so the reader's own Library is never touched.
+    pub fn load(home: &Path, override_folder: Option<PathBuf>) -> AppState {
+        let data = located(home);
+        let loaded = Loaded::from(&data, override_folder.as_deref());
         AppState {
             inner: Arc::new(Inner {
-                library: Mutex::new(library.map_err(|error| error.to_string())),
-                preferences: Mutex::new(preferences.map_err(|error| error.to_string())),
-                history: Mutex::new(history.map_err(|error| error.to_string())),
-                word_books: Mutex::new(word_books.map_err(|error| error.to_string())),
+                home: home.to_owned(),
+                override_folder,
+                data: Mutex::new(data),
+                library: Mutex::new(loaded.library),
+                preferences: Mutex::new(loaded.preferences),
+                history: Mutex::new(loaded.history),
+                word_books: Mutex::new(loaded.word_books),
                 indexing: Mutex::new(None),
                 indexing_running: AtomicBool::new(false),
                 cancel: AtomicBool::new(false),
                 worker: Mutex::new(None),
             }),
         }
+    }
+
+    /// Where the reader's data is kept.
+    pub fn data_directory(&self) -> DataDirectoryView {
+        data_view(&self.inner.data.lock().unwrap_or_else(|e| e.into_inner()))
+    }
+
+    /// Moves the reader's data into the folder `to` and uses it from then on. Indexing
+    /// stops for the move; start it again afterwards. On failure the data stays, and
+    /// is used, where it was.
+    pub fn move_data_directory(&self, to: &Path) -> Result<DataDirectoryView, DataDirectoryError> {
+        self.reload_data(|data| {
+            let data = data.as_mut().map_err(|view| {
+                DataDirectoryError::Failed(view.problem.clone().unwrap_or_default())
+            })?;
+            data.relocate(to, &mut |_| ControlFlow::Continue(()))
+                .map(|_| ())
+                .map_err(|error| match error {
+                    CoreError::DataDirectoryHoldsData(path) => DataDirectoryError::HoldsData(path),
+                    other => DataDirectoryError::Failed(other.to_string()),
+                })
+        })
+    }
+
+    /// Uses the data already in `folder` (starting afresh if there is none) from then
+    /// on; the data used until now stays where it is. Indexing stops for the switch;
+    /// start it again afterwards.
+    pub fn use_data_directory(
+        &self,
+        folder: &Path,
+    ) -> Result<DataDirectoryView, DataDirectoryError> {
+        let home = self.inner.home.clone();
+        self.reload_data(|data| {
+            *data = Ok(DataDirectory::use_folder(&home, folder)
+                .map_err(|error| DataDirectoryError::Failed(error.to_string()))?);
+            Ok(())
+        })
+    }
+
+    /// Lets go of every file in the data directory, applies `change` to it, and loads
+    /// the reader's data again from wherever it is afterwards.
+    fn reload_data(
+        &self,
+        change: impl FnOnce(
+            &mut Result<DataDirectory, DataDirectoryView>,
+        ) -> Result<(), DataDirectoryError>,
+    ) -> Result<DataDirectoryView, DataDirectoryError> {
+        self.cancel_indexing();
+        self.wait_for_indexing();
+        let inner = &*self.inner;
+        let mut data = inner.data.lock().unwrap_or_else(|e| e.into_inner());
+        let mut library = self.lock();
+        let mut preferences = inner.preferences.lock().unwrap_or_else(|e| e.into_inner());
+        let mut history = inner.history.lock().unwrap_or_else(|e| e.into_inner());
+        let mut word_books = inner.word_books.lock().unwrap_or_else(|e| e.into_inner());
+        // Every file is let go first: the Library maps its index files, which could
+        // then be neither copied safely nor removed.
+        let busy = "the data directory is moving".to_owned();
+        *library = Err(busy.clone());
+        *preferences = Err(busy.clone());
+        *history = Err(busy.clone());
+        *word_books = Err(busy);
+
+        let changed = change(&mut data);
+
+        let loaded = Loaded::from(&data, inner.override_folder.as_deref());
+        *library = loaded.library;
+        *preferences = loaded.preferences;
+        *history = loaded.history;
+        *word_books = loaded.word_books;
+        changed.map(|()| data_view(&data))
     }
 
     fn lock(&self) -> MutexGuard<'_, Result<Library, String>> {
@@ -839,6 +934,68 @@ impl AppState {
     }
 }
 
+/// The data directory `home` says, or where it should be and why it cannot be used.
+fn located(home: &Path) -> Result<DataDirectory, DataDirectoryView> {
+    DataDirectory::locate(home).map_err(|error| DataDirectoryView {
+        path: match &error {
+            CoreError::DataDirectoryMissing(path) => path.clone(),
+            _ => home.to_owned(),
+        },
+        is_default: false,
+        problem: Some(error.to_string()),
+    })
+}
+
+fn data_view(data: &Result<DataDirectory, DataDirectoryView>) -> DataDirectoryView {
+    match data {
+        Ok(data) => DataDirectoryView {
+            path: data.path().to_owned(),
+            is_default: data.is_default(),
+            problem: None,
+        },
+        Err(view) => view.clone(),
+    }
+}
+
+/// The reader's data as read from the data directory. Without a data directory, each
+/// part says why it is missing, and nothing is written anywhere else.
+struct Loaded {
+    library: Result<Library, String>,
+    preferences: Result<Preferences, String>,
+    history: Result<History, String>,
+    word_books: Result<WordBooks, String>,
+}
+
+impl Loaded {
+    fn from(
+        data: &Result<DataDirectory, DataDirectoryView>,
+        override_folder: Option<&Path>,
+    ) -> Loaded {
+        let data = match data {
+            Ok(data) => data,
+            Err(view) => {
+                let problem = view.problem.clone().unwrap_or_default();
+                return Loaded {
+                    library: Err(problem.clone()),
+                    preferences: Err(problem.clone()),
+                    history: Err(problem.clone()),
+                    word_books: Err(problem),
+                };
+            }
+        };
+        let library = match override_folder {
+            Some(folder) => Library::open(folder),
+            None => Library::load(&data.library_file()),
+        };
+        Loaded {
+            library: library.map_err(|error| error.to_string()),
+            preferences: Preferences::load(&data.preferences_file()).map_err(|e| e.to_string()),
+            history: History::load(&data.history_file()).map_err(|e| e.to_string()),
+            word_books: WordBooks::load(&data.word_books_file()).map_err(|e| e.to_string()),
+        }
+    }
+}
+
 fn view(library: &Result<Library, String>, indexing: Option<IndexingView>) -> LibraryView {
     let library = match library {
         Ok(library) => library,
@@ -984,7 +1141,7 @@ mod tests {
             .registered_to(EMAIL, CODE, Identity::Utf16)
             .write_to(&bought)
             .unwrap();
-        let state = AppState::load(&data.path().join("library.json"), None, data.path());
+        let state = AppState::load(data.path(), None);
         let view = serde_json::to_value(state.add_folder(folder.path()).unwrap()).unwrap();
         assert_eq!(
             view["failures"],
@@ -1008,7 +1165,7 @@ mod tests {
         assert_eq!(view.dictionaries[0].title, "Bought");
         assert!(view.failures.is_empty());
         assert_eq!(state.look_up("serendipity").unwrap().len(), 1);
-        let kept = AppState::load(&data.path().join("library.json"), None, data.path());
+        let kept = AppState::load(data.path(), None);
         assert_eq!(kept.library().dictionaries.len(), 1, "kept for next time");
     }
 
@@ -1030,7 +1187,7 @@ mod tests {
     fn a_new_library_is_empty() {
         let data = tempfile::tempdir().unwrap();
 
-        let state = AppState::load(&data.path().join("library.json"), None, data.path());
+        let state = AppState::load(data.path(), None);
 
         assert_eq!(
             serde_json::to_value(state.library()).unwrap(),
@@ -1046,7 +1203,7 @@ mod tests {
     fn an_added_folder_is_shown_and_answers_lookups_once_indexed() {
         let data = tempfile::tempdir().unwrap();
         let folder = library_folder();
-        let state = AppState::load(&data.path().join("library.json"), None, data.path());
+        let state = AppState::load(data.path(), None);
 
         let view = serde_json::to_value(state.add_folder(folder.path()).unwrap()).unwrap();
 
@@ -1092,7 +1249,7 @@ mod tests {
     fn indexing_reports_each_dictionary_and_ends_with_nothing_in_progress() {
         let data = tempfile::tempdir().unwrap();
         let folder = library_folder();
-        let state = AppState::load(&data.path().join("library.json"), None, data.path());
+        let state = AppState::load(data.path(), None);
         state.add_folder(folder.path()).unwrap();
         let seen = Arc::new(Mutex::new(Vec::new()));
 
@@ -1113,7 +1270,7 @@ mod tests {
     fn cancelled_indexing_leaves_dictionaries_pending_until_started_again() {
         let data = tempfile::tempdir().unwrap();
         let folder = library_folder();
-        let state = AppState::load(&data.path().join("library.json"), None, data.path());
+        let state = AppState::load(data.path(), None);
         state.add_folder(folder.path()).unwrap();
 
         // The reader cancels as soon as the first progress report arrives.
@@ -1139,7 +1296,7 @@ mod tests {
     fn a_patterns_column_continues_with_its_matches_only() {
         let data = tempfile::tempdir().unwrap();
         let folder = library_folder();
-        let state = AppState::load(&data.path().join("library.json"), None, data.path());
+        let state = AppState::load(data.path(), None);
         state.add_folder(folder.path()).unwrap();
         index(&state);
 
@@ -1162,7 +1319,7 @@ mod tests {
                 .build_damaged(Damage::KeyBlock),
         )
         .unwrap();
-        let state = AppState::load(&data.path().join("library.json"), None, data.path());
+        let state = AppState::load(data.path(), None);
         state.add_folder(folder.path()).unwrap();
 
         index(&state);
@@ -1188,7 +1345,7 @@ mod tests {
     fn a_disabled_dictionary_no_longer_answers() {
         let data = tempfile::tempdir().unwrap();
         let folder = library_folder();
-        let state = AppState::load(&data.path().join("library.json"), None, data.path());
+        let state = AppState::load(data.path(), None);
         let id = state.add_folder(folder.path()).unwrap().dictionaries[0]
             .id
             .clone();
@@ -1216,13 +1373,15 @@ mod tests {
     fn the_environment_override_is_a_library_of_that_folder_alone() {
         let data = tempfile::tempdir().unwrap();
         let folder = library_folder();
-        let file = data.path().join("library.json");
 
-        let state = AppState::load(&file, Some(folder.path().to_owned()), data.path());
+        let state = AppState::load(data.path(), Some(folder.path().to_owned()));
         state.rescan().unwrap();
 
         assert_eq!(state.look_up("serendipity").unwrap().len(), 1);
-        assert!(!file.exists(), "the reader's Library file is not touched");
+        assert!(
+            !data.path().join("library.json").exists(),
+            "the reader's Library file is not touched"
+        );
         assert!(
             !data.path().join("indexes").exists(),
             "nor is anything stored beside it"
@@ -1232,13 +1391,13 @@ mod tests {
     #[test]
     fn committed_lookups_are_kept_in_history_in_the_data_directory() {
         let data = tempfile::tempdir().unwrap();
-        let state = AppState::load(&data.path().join("library.json"), None, data.path());
+        let state = AppState::load(data.path(), None);
 
         state.record_lookup("apple").unwrap();
         let history = state.record_lookup("serendipity").unwrap();
 
         assert_eq!(history, ["serendipity", "apple"]);
-        let restarted = AppState::load(&data.path().join("library.json"), None, data.path());
+        let restarted = AppState::load(data.path(), None);
         assert_eq!(restarted.history().unwrap(), ["serendipity", "apple"]);
         assert!(data.path().join("history.json").exists());
     }
@@ -1246,7 +1405,7 @@ mod tests {
     #[test]
     fn history_can_be_cleared() {
         let data = tempfile::tempdir().unwrap();
-        let state = AppState::load(&data.path().join("library.json"), None, data.path());
+        let state = AppState::load(data.path(), None);
         state.record_lookup("apple").unwrap();
 
         state.clear_history().unwrap();
@@ -1260,11 +1419,7 @@ mod tests {
         std::fs::write(data.path().join("history.json"), "[ broken").unwrap();
         let folder = library_folder();
 
-        let state = AppState::load(
-            &data.path().join("library.json"),
-            Some(folder.path().to_owned()),
-            data.path(),
-        );
+        let state = AppState::load(data.path(), Some(folder.path().to_owned()));
 
         assert!(state.history().is_err());
         assert!(state.record_lookup("serendipity").is_err());
@@ -1274,7 +1429,7 @@ mod tests {
     #[test]
     fn a_saved_word_is_kept_in_the_data_directory_with_where_it_came_from() {
         let data = tempfile::tempdir().unwrap();
-        let state = AppState::load(&data.path().join("library.json"), None, data.path());
+        let state = AppState::load(data.path(), None);
 
         let books = state
             .toggle_word(
@@ -1297,7 +1452,7 @@ mod tests {
             word["added"].as_u64().unwrap() > 1_700_000_000_000,
             "milliseconds since 1970"
         );
-        let restarted = AppState::load(&data.path().join("library.json"), None, data.path());
+        let restarted = AppState::load(data.path(), None);
         assert_eq!(restarted.word_books().unwrap(), books);
 
         let books = state
@@ -1317,7 +1472,7 @@ mod tests {
     #[test]
     fn word_books_are_managed_and_exported_through_the_state() {
         let data = tempfile::tempdir().unwrap();
-        let state = AppState::load(&data.path().join("library.json"), None, data.path());
+        let state = AppState::load(data.path(), None);
         let first = state.create_word_book("Novel").unwrap().current.unwrap();
         let second = state.create_word_book("Paper").unwrap().current.unwrap();
         state.choose_word_book(first).unwrap();
@@ -1356,11 +1511,7 @@ mod tests {
         std::fs::write(data.path().join("word-books.json"), "{ broken").unwrap();
         let folder = library_folder();
 
-        let state = AppState::load(
-            &data.path().join("library.json"),
-            Some(folder.path().to_owned()),
-            data.path(),
-        );
+        let state = AppState::load(data.path(), Some(folder.path().to_owned()));
 
         assert!(state.word_books().is_err());
         assert!(
@@ -1389,7 +1540,7 @@ mod tests {
         let file = data.path().join("library.json");
         std::fs::write(&file, "{ folders: ").unwrap();
 
-        let state = AppState::load(&file, None, data.path());
+        let state = AppState::load(data.path(), None);
         index(&state);
 
         assert!(state.library().problem.is_some());
@@ -1401,7 +1552,7 @@ mod tests {
     fn suggestions_reach_the_interface_in_the_lookup_result_shape() {
         let data = tempfile::tempdir().unwrap();
         let folder = library_folder();
-        let state = AppState::load(&data.path().join("library.json"), None, data.path());
+        let state = AppState::load(data.path(), None);
         state.add_folder(folder.path()).unwrap();
         index(&state);
 
@@ -1429,7 +1580,7 @@ mod tests {
     fn without_a_library_there_is_nothing_to_suggest() {
         let data = tempfile::tempdir().unwrap();
 
-        let state = AppState::load(&data.path().join("library.json"), None, data.path());
+        let state = AppState::load(data.path(), None);
 
         let suggestions = state.suggest("", 50).unwrap();
         assert!(suggestions.browse && suggestions.items.is_empty());
@@ -1453,11 +1604,7 @@ mod tests {
             .entry("serif", "<p>see also: sans serif (sample)</p>")
             .write_to(folder.path().join("b-thesaurus.mdx"))
             .unwrap();
-        let state = AppState::load(
-            &data.path().join("library.json"),
-            Some(folder.path().to_owned()),
-            data.path(),
-        );
+        let state = AppState::load(data.path(), Some(folder.path().to_owned()));
 
         let said: Vec<Option<String>> = state
             .look_up("serif")
@@ -1484,7 +1631,7 @@ mod tests {
                 .write_to(folder.join(file))
                 .unwrap();
         }
-        let state = AppState::load(&data.join("library.json"), None, data);
+        let state = AppState::load(data, None);
         let view = state.add_folder(folder).unwrap();
         index(&state);
         let (a, b) = (
@@ -1538,7 +1685,7 @@ mod tests {
     #[test]
     fn a_group_needs_a_name_of_its_own() {
         let data = tempfile::tempdir().unwrap();
-        let state = AppState::load(&data.path().join("library.json"), None, data.path());
+        let state = AppState::load(data.path(), None);
         state.create_group("Reading").unwrap();
 
         assert!(state.create_group(" Reading ").is_err());
@@ -1548,8 +1695,7 @@ mod tests {
     #[test]
     fn the_reading_preferences_are_kept_in_the_data_directory() {
         let data = tempfile::tempdir().unwrap();
-        let library_file = data.path().join("library.json");
-        let state = AppState::load(&library_file, None, data.path());
+        let state = AppState::load(data.path(), None);
         assert_eq!(
             state.appearance(),
             AppearanceView {
@@ -1565,7 +1711,7 @@ mod tests {
         assert_eq!(state.set_text_size(99).unwrap(), 32);
         assert_eq!(state.set_zoom(150).unwrap(), 150);
 
-        let again = AppState::load(&library_file, None, data.path());
+        let again = AppState::load(data.path(), None);
         assert_eq!(
             again.appearance(),
             AppearanceView {
@@ -1588,10 +1734,155 @@ mod tests {
             Theme::Dark
         );
         let data = tempfile::tempdir().unwrap();
-        let state = AppState::load(&data.path().join("library.json"), None, data.path());
+        let state = AppState::load(data.path(), None);
         assert_eq!(
             serde_json::to_value(state.appearance()).unwrap(),
             json!({"theme": "system", "allAsAuthored": false, "textSize": 16, "zoom": 100})
         );
+    }
+
+    /// A reader's data: an indexed Library, a Lookup in History, a saved word and a theme.
+    fn filled(home: &Path, folder: &Path) -> AppState {
+        let state = AppState::load(home, None);
+        state.add_folder(folder).unwrap();
+        index(&state);
+        state.record_lookup("serendipity").unwrap();
+        let id = state.library().dictionaries[0].id.clone();
+        state
+            .toggle_word("serendipity", &id, "Sample Dictionary", "Word Book")
+            .unwrap();
+        state.set_theme(Theme::Dark).unwrap();
+        state
+    }
+
+    /// What the reader sees of their data through `state`.
+    fn seen(state: &AppState) -> (usize, Vec<String>, usize, Theme) {
+        (
+            state.look_up("serendipity").unwrap().len(),
+            state.history().unwrap(),
+            state.word_books().unwrap().books[0].words.len(),
+            state.appearance().theme,
+        )
+    }
+
+    fn reader_data() -> (usize, Vec<String>, usize, Theme) {
+        (1, vec!["serendipity".to_owned()], 1, Theme::Dark)
+    }
+
+    #[test]
+    fn the_data_directory_moves_with_everything_in_it_and_is_used_from_then_on() {
+        let home = tempfile::tempdir().unwrap();
+        let folder = library_folder();
+        let synced = tempfile::tempdir().unwrap();
+        let to = synced.path().join("OpenDict");
+        let state = filled(home.path(), folder.path());
+        assert_eq!(
+            serde_json::to_value(state.data_directory()).unwrap(),
+            json!({ "path": home.path(), "isDefault": true, "problem": null })
+        );
+
+        let view = state.move_data_directory(&to).unwrap();
+
+        assert_eq!(
+            serde_json::to_value(view).unwrap(),
+            json!({ "path": to, "isDefault": false, "problem": null })
+        );
+        assert_eq!(seen(&state), reader_data());
+        assert!(!home.path().join("library.json").exists());
+        assert!(!home.path().join("history.json").exists());
+        let restarted = AppState::load(home.path(), None);
+        assert_eq!(restarted.data_directory().path, to);
+        assert_eq!(seen(&restarted), reader_data());
+        assert_eq!(
+            restarted.library().dictionaries[0].index,
+            IndexView::Ready,
+            "the indexes moved too"
+        );
+    }
+
+    #[test]
+    fn the_data_moves_while_a_dictionary_is_being_indexed() {
+        let home = tempfile::tempdir().unwrap();
+        let folder = library_folder();
+        let synced = tempfile::tempdir().unwrap();
+        let state = AppState::load(home.path(), None);
+        state.add_folder(folder.path()).unwrap();
+        state.start_indexing(|_| {});
+
+        state.move_data_directory(synced.path()).unwrap();
+        index(&state);
+
+        assert_eq!(state.look_up("serendipity").unwrap().len(), 1);
+        let restarted = AppState::load(home.path(), None);
+        assert_eq!(restarted.data_directory().path, synced.path());
+        assert_eq!(restarted.look_up("serendipity").unwrap().len(), 1);
+    }
+
+    #[test]
+    fn a_folder_holding_other_data_is_offered_for_use_instead() {
+        let folder = library_folder();
+        let synced = tempfile::tempdir().unwrap();
+        let other_home = tempfile::tempdir().unwrap();
+        let other = filled(other_home.path(), folder.path());
+        other.move_data_directory(synced.path()).unwrap();
+        let home = tempfile::tempdir().unwrap();
+        let state = AppState::load(home.path(), None);
+        state.record_lookup("own").unwrap();
+
+        let refused = state.move_data_directory(synced.path()).unwrap_err();
+
+        assert_eq!(
+            serde_json::to_value(refused).unwrap(),
+            json!({ "kind": "holdsData", "detail": synced.path() })
+        );
+        assert_eq!(state.history().unwrap(), ["own"]);
+        let view = state.use_data_directory(synced.path()).unwrap();
+        assert_eq!(view.path, synced.path());
+        assert_eq!(seen(&state), reader_data());
+        assert_eq!(seen(&AppState::load(home.path(), None)), reader_data());
+    }
+
+    #[test]
+    fn a_data_directory_that_has_gone_is_reported_and_another_can_be_chosen() {
+        let home = tempfile::tempdir().unwrap();
+        let folder = library_folder();
+        let synced = tempfile::tempdir().unwrap();
+        let to = synced.path().join("OpenDict");
+        filled(home.path(), folder.path())
+            .move_data_directory(&to)
+            .unwrap();
+        std::fs::rename(&to, synced.path().join("Unplugged")).unwrap();
+
+        let state = AppState::load(home.path(), None);
+
+        let view = state.data_directory();
+        assert_eq!(view.path, to);
+        assert!(view.problem.is_some());
+        assert!(state.library().problem.is_some());
+        assert!(state.history().is_err());
+        assert!(
+            state.record_lookup("lost").is_err(),
+            "nothing is written elsewhere"
+        );
+        let view = state
+            .use_data_directory(&synced.path().join("Unplugged"))
+            .unwrap();
+        assert_eq!(view.problem, None);
+        assert_eq!(seen(&state), reader_data());
+    }
+
+    #[test]
+    fn a_move_that_fails_keeps_the_data_in_use_where_it_was() {
+        let home = tempfile::tempdir().unwrap();
+        let folder = library_folder();
+        let state = filled(home.path(), folder.path());
+
+        let error = state
+            .move_data_directory(&home.path().join("indexes").join("inside"))
+            .unwrap_err();
+
+        assert!(matches!(error, DataDirectoryError::Failed(_)), "{error:?}");
+        assert_eq!(state.data_directory().path, home.path());
+        assert_eq!(seen(&state), reader_data());
     }
 }

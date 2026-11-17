@@ -112,7 +112,7 @@ function fakeShell(start: WordBook[] = [], current: number | null = start[0]?.id
         throw new Error(`unexpected command ${command}`);
     }
     return structuredClone(state);
-  });
+  }, { shouldMockEvents: true });
   return { calls, state };
 }
 

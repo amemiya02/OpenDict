@@ -43,6 +43,21 @@ pub enum Error {
     #[error("cannot read or write the History file {file}: {reason}")]
     History { file: PathBuf, reason: String },
 
+    /// The data directory, or a folder it was being moved to, could not be read or
+    /// written.
+    #[error("cannot use {path} for the data directory: {reason}")]
+    DataDirectory { path: PathBuf, reason: String },
+
+    /// The folder the data directory was to move to already holds OpenDict data, which a
+    /// move would overwrite.
+    #[error("{0} already holds OpenDict data")]
+    DataDirectoryHoldsData(PathBuf),
+
+    /// The data directory is not where it was last put (a removable or network drive may
+    /// be missing).
+    #[error("the data directory {0} cannot be found")]
+    DataDirectoryMissing(PathBuf),
+
     /// No Dictionary in the Library has this key.
     #[error("no Dictionary in the Library has the key {0}")]
     UnknownDictionary(String),
