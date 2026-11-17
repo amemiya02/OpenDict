@@ -15,6 +15,10 @@ pub enum Error {
         source: std::io::Error,
     },
 
+    /// The preferences file could not be read or written.
+    #[error("cannot read or write the preferences file {file}: {reason}")]
+    Preferences { file: PathBuf, reason: String },
+
     /// A Dictionary failed while answering a Lookup.
     #[error("{dictionary}: {reason}")]
     Dictionary { dictionary: String, reason: String },
