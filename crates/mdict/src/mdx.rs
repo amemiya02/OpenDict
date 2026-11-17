@@ -32,19 +32,19 @@ pub enum Record {
 }
 
 /// Where the record blocks are and how large each is once decompressed.
-struct RecordSection {
-    blocks: Vec<RecordBlock>,
+pub(crate) struct RecordSection {
+    pub(crate) blocks: Vec<RecordBlock>,
     /// Size of the whole decompressed record stream.
-    total: u64,
+    pub(crate) total: u64,
 }
 
-struct RecordBlock {
+pub(crate) struct RecordBlock {
     /// Byte range of the stored block in the file.
-    file_start: usize,
-    stored_len: usize,
+    pub(crate) file_start: usize,
+    pub(crate) stored_len: usize,
     /// Offset of the block's first byte in the decompressed record stream.
-    stream_start: u64,
-    plain_len: usize,
+    pub(crate) stream_start: u64,
+    pub(crate) plain_len: usize,
 }
 
 struct Key {
@@ -236,7 +236,7 @@ fn read_key_section(reader: &mut Reader<'_>) -> Result<Vec<Key>> {
 }
 
 /// Reads the record section of a version 2.0 file: counts, the size table, then the blocks.
-fn read_record_section(reader: &mut Reader<'_>, key_count: usize) -> Result<RecordSection> {
+pub(crate) fn read_record_section(reader: &mut Reader<'_>, key_count: usize) -> Result<RecordSection> {
     let block_count = reader.size()?;
     let entry_count = reader.size()?;
     let table_len = reader.size()?;

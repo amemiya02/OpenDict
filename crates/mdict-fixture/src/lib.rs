@@ -12,11 +12,15 @@
 //! assert!(!bytes.is_empty());
 //! ```
 
+mod mdd;
+
 use std::io::{self, Write};
 use std::path::Path;
 
 use flate2::Compression;
 use flate2::write::ZlibEncoder;
+
+pub use mdd::MddBuilder;
 
 /// Builds an MDX file (format 2.0, UTF-8, zlib) from headwords and their records.
 #[derive(Debug, Clone)]
@@ -204,7 +208,7 @@ impl MdxBuilder {
 }
 
 /// `[02 00 00 00] [adler32(data) BE] [zlib(data)]`
-fn compressed_block(data: &[u8]) -> Vec<u8> {
+pub(crate) fn compressed_block(data: &[u8]) -> Vec<u8> {
     let mut encoder = ZlibEncoder::new(Vec::new(), Compression::default());
     encoder
         .write_all(data)
@@ -217,7 +221,7 @@ fn compressed_block(data: &[u8]) -> Vec<u8> {
 }
 
 /// Adler-32 as defined in RFC 1950.
-fn adler32(data: &[u8]) -> u32 {
+pub(crate) fn adler32(data: &[u8]) -> u32 {
     const MOD: u32 = 65521;
     let (mut a, mut b) = (1u32, 0u32);
     for &byte in data {
