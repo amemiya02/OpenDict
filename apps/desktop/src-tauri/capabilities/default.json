@@ -16,6 +16,9 @@
     "allow-move-dictionary",
     "allow-register-dictionary",
     "allow-set-allow-network",
+    "allow-window-chrome",
+    "core:window:allow-start-dragging",
+    "core:window:allow-internal-toggle-maximize",
     "updater:default",
     "process:allow-restart"
   ]
