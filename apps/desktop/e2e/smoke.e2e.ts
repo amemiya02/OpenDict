@@ -10,7 +10,7 @@
 
 import { spawn, execFileSync, type ChildProcess } from "node:child_process";
 import { createServer, type Server } from "node:http";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { after, before, test } from "node:test";
@@ -56,6 +56,8 @@ before(async () => {
       ...process.env,
       OPENDICT_LIBRARY_FOLDER: library,
       OPENDICT_DATA_DIR: join(scratch, "data"),
+      // Word Books export here instead of asking where with the system dialog.
+      OPENDICT_EXPORT_DIR: join(scratch, "exports"),
       // A WebView2 browser of our own: instances sharing a user data folder share one
       // browser process, and with it the debugging port of whichever started first.
       WEBVIEW2_USER_DATA_FOLDER: join(scratch, "webview"),
@@ -341,6 +343,33 @@ test("the headword column suggests as the reader types and the keyboard browses 
   assert.equal(await search.inputValue(), "cat");
   assert.equal(await heading.count(), 1);
   if (process.env.OPENDICT_E2E_COLUMN_SCREENSHOT) await page.screenshot({ path: process.env.OPENDICT_E2E_COLUMN_SCREENSHOT });
+});
+
+test("a word saved with Ctrl+D goes into the Word Book, keeps a note and exports to CSV", async () => {
+  await lookUp("serendipity");
+  await page.getByRole("button", { name: "Add to Word Book", pressed: false }).waitFor({ timeout: 10_000 });
+
+  await page.keyboard.press("Control+d");
+  await page.getByRole("button", { name: "In Word Book", pressed: true }).waitFor({ timeout: 10_000 });
+  const screenshot = process.env.OPENDICT_E2E_WORDBOOK_SCREENSHOT;
+  if (screenshot) await page.screenshot({ path: screenshot.replace(/\.png$/, "-page.png") });
+
+  await page.getByRole("button", { name: "Word Book", exact: true }).click();
+  await page.getByRole("heading", { level: 1, name: "【Word Book】" }).waitFor({ timeout: 10_000 });
+  const column = page.getByRole("listbox", { name: "Headwords" });
+  assert.deepEqual(await column.getByRole("option").evaluateAll((options) => options.map((o) => (o as HTMLElement).dataset.headword)), ["serendipity"]);
+  const note = page.getByRole("textbox", { name: "Note for serendipity" });
+  await note.fill("Finding a book I was not looking for, in a shop.");
+  await note.press("Enter");
+  if (screenshot) await page.screenshot({ path: screenshot });
+
+  await page.getByRole("button", { name: "Export CSV…" }).click();
+  const file = join(scratch, "exports", "Word Book.csv");
+  await page.getByText(`Exported to ${file}`).waitFor({ timeout: 10_000 });
+  const [header, row, ...rest] = readFileSync(file, "utf8").split("\n");
+  assert.equal(header, "Headword,Note,Dictionary,Added");
+  assert.match(row!, /^serendipity,"Finding a book I was not looking for, in a shop\.",Sample English Dictionary,\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$/);
+  assert.deepEqual(rest, [""]);
 });
 
 // Runs last: unlocking adds a Dictionary, and with it a headword, to the Library.
