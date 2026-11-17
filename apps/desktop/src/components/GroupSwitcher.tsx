@@ -31,7 +31,7 @@ export function GroupSwitcher({
         title={t.currentGroup}
         onChange={(event) => onSwitch(event.target.value === "" ? null : event.target.value)}
         style={{ backgroundImage: chevron }}
-        className="h-7 max-w-[120px] min-w-0 appearance-none truncate rounded-sharp border border-cover-edge bg-transparent bg-[right_5px_center] bg-no-repeat bg-size-[14px] pr-6 pl-2.5 text-body text-on-cover outline-offset-1 hover:bg-cover-edge focus-visible:outline focus-visible:outline-1 focus-visible:outline-on-cover max-[860px]:max-w-[96px] [&>option]:bg-india-paper [&>option]:text-ink"
+        className="h-7 max-w-[136px] min-w-0 appearance-none truncate rounded-sharp border border-cover-edge bg-transparent bg-[right_5px_center] bg-no-repeat bg-size-[14px] pr-6 pl-2.5 text-body text-on-cover outline-offset-1 hover:bg-cover-edge focus-visible:outline focus-visible:outline-1 focus-visible:outline-on-cover max-[860px]:max-w-[96px] [&>option]:bg-india-paper [&>option]:text-ink"
       >
         <option value="">{t.wholeLibrary}</option>
         {groups.map((group) => (
