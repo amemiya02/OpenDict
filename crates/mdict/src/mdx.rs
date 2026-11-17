@@ -236,7 +236,10 @@ fn read_key_section(reader: &mut Reader<'_>) -> Result<Vec<Key>> {
 }
 
 /// Reads the record section of a version 2.0 file: counts, the size table, then the blocks.
-pub(crate) fn read_record_section(reader: &mut Reader<'_>, key_count: usize) -> Result<RecordSection> {
+pub(crate) fn read_record_section(
+    reader: &mut Reader<'_>,
+    key_count: usize,
+) -> Result<RecordSection> {
     let block_count = reader.size()?;
     let entry_count = reader.size()?;
     let table_len = reader.size()?;

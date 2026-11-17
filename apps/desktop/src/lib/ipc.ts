@@ -7,8 +7,10 @@ export interface Entry {
   dictionaryId: string;
   /** The Dictionary's title, from its header. */
   dictionaryTitle: string;
-  /** The Entry's HTML, untrusted: it must only ever render inside an EntryFrame. */
-  html: string;
+  /** The Entry document's URL on the Entry scheme. Its HTML never passes through the interface. */
+  src: string;
+  /** Whether the reader allowed this Dictionary network access. */
+  allowNetwork: boolean;
 }
 
 export type LibraryStatus =
@@ -22,4 +24,8 @@ export function lookUp(headword: string): Promise<Entry[]> {
 
 export function libraryStatus(): Promise<LibraryStatus> {
   return invoke<LibraryStatus>("library_status");
+}
+
+export function setAllowNetwork(dictionaryId: string, allow: boolean): Promise<void> {
+  return invoke<void>("set_allow_network", { dictionaryId, allow });
 }

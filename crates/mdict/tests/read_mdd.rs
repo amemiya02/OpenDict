@@ -20,7 +20,10 @@ fn resolves_a_resource_by_its_path() {
 
     let mdd = Mdd::open(&path).unwrap();
 
-    assert_eq!(mdd.resource("\\img\\cat.png").unwrap().as_deref(), Some(PICTURE));
+    assert_eq!(
+        mdd.resource("\\img\\cat.png").unwrap().as_deref(),
+        Some(PICTURE)
+    );
     assert_eq!(
         mdd.resource("\\style.css").unwrap().as_deref(),
         Some(&b"p { color: teal }"[..])
@@ -39,7 +42,12 @@ fn accepts_web_style_paths_in_any_letter_case() {
 
     let mdd = Mdd::open(&path).unwrap();
 
-    for spelling in ["img/cat.png", "/img/cat.png", "\\IMG\\cat.png", "img\\Cat.PNG"] {
+    for spelling in [
+        "img/cat.png",
+        "/img/cat.png",
+        "\\IMG\\cat.png",
+        "img\\Cat.PNG",
+    ] {
         assert_eq!(
             mdd.resource(spelling).unwrap().as_deref(),
             Some(PICTURE),

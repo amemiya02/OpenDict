@@ -1,12 +1,17 @@
 use std::path::PathBuf;
+use std::sync::Mutex;
 
-use opendict_core::{Config, Library};
+use opendict_core::{Config, Library, Preferences};
 use serde::Serialize;
 
-/// What the shell holds between commands: the Library, or why there is none.
+use crate::entry_protocol;
+
+/// What the shell holds between commands: the Library, or why there is none, and the
+/// reader's preferences.
 pub struct AppState {
     config_file: PathBuf,
     library: Result<Library, LibraryProblem>,
+    preferences: Mutex<Result<Preferences, String>>,
 }
 
 enum LibraryProblem {
@@ -17,14 +22,17 @@ enum LibraryProblem {
     },
 }
 
-/// An Entry as the interface receives it.
+/// An Entry as the interface receives it. Its HTML never passes through the interface:
+/// the frame loads it from the Entry scheme at `src`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct EntryView {
     pub dictionary_id: String,
     pub dictionary_title: String,
-    /// Untrusted HTML; the interface renders it only inside a sandboxed frame.
-    pub html: String,
+    /// The Entry document's URL, for a sandboxed frame.
+    pub src: String,
+    /// Whether the reader allowed this Dictionary network access.
+    pub allow_network: bool,
 }
 
 /// Whether there is a Library to look words up in, as the interface receives it.
@@ -50,8 +58,13 @@ pub enum LibraryStatus {
 
 impl AppState {
     /// Reads the configuration and opens the Library Folder it names. `override_folder`
-    /// (from the environment) takes precedence over the configuration file.
-    pub fn load(config_file: PathBuf, override_folder: Option<PathBuf>) -> AppState {
+    /// (from the environment) takes precedence over the configuration file. Preferences
+    /// live in `data_dir`.
+    pub fn load(
+        config_file: PathBuf,
+        override_folder: Option<PathBuf>,
+        data_dir: PathBuf,
+    ) -> AppState {
         let folder = match override_folder {
             Some(folder) => Ok(Some(folder)),
             None => Config::load(&config_file).map(|config| config.library_folder),
@@ -69,9 +82,12 @@ impl AppState {
                 reason: error.to_string(),
             }),
         };
+        let preferences =
+            Preferences::load(&data_dir.join("preferences.json")).map_err(|e| e.to_string());
         AppState {
             config_file,
             library,
+            preferences: Mutex::new(preferences),
         }
     }
 
@@ -86,11 +102,56 @@ impl AppState {
         Ok(entries
             .into_iter()
             .map(|entry| EntryView {
+                src: entry_protocol::entry_url(&entry.dictionary_id, headword),
+                allow_network: self.allows_network(&entry.dictionary_id),
                 dictionary_id: entry.dictionary_id,
                 dictionary_title: entry.dictionary_title,
-                html: entry.html,
             })
             .collect())
+    }
+
+    /// The HTML of one Dictionary's Entry for exactly `headword`.
+    pub fn entry_html(
+        &self,
+        dictionary_id: &str,
+        headword: &str,
+    ) -> Result<Option<String>, String> {
+        let Ok(library) = &self.library else {
+            return Ok(None);
+        };
+        library
+            .entry(dictionary_id, headword)
+            .map(|entry| entry.map(|e| e.html))
+            .map_err(|error| error.to_string())
+    }
+
+    /// A file one Dictionary's Entries refer to.
+    pub fn resource(&self, dictionary_id: &str, path: &str) -> Result<Option<Vec<u8>>, String> {
+        let Ok(library) = &self.library else {
+            return Ok(None);
+        };
+        library
+            .resource(dictionary_id, path)
+            .map_err(|error| error.to_string())
+    }
+
+    /// Whether the reader allowed the Dictionary network access. If the preferences
+    /// cannot be read, no Dictionary has it.
+    pub fn allows_network(&self, dictionary_id: &str) -> bool {
+        let preferences = self.preferences.lock().unwrap_or_else(|e| e.into_inner());
+        preferences
+            .as_ref()
+            .is_ok_and(|p| p.allows_network(dictionary_id))
+    }
+
+    pub fn set_allow_network(&self, dictionary_id: &str, allow: bool) -> Result<(), String> {
+        let mut preferences = self.preferences.lock().unwrap_or_else(|e| e.into_inner());
+        match preferences.as_mut() {
+            Ok(p) => p
+                .set_allows_network(dictionary_id, allow)
+                .map_err(|e| e.to_string()),
+            Err(reason) => Err(reason.clone()),
+        }
     }
 
     pub fn library_status(&self) -> LibraryStatus {
@@ -138,7 +199,7 @@ mod tests {
         )
         .unwrap();
 
-        let state = AppState::load(config_file, None);
+        let state = AppState::load(config_file, None, config.path().join("data"));
 
         assert_eq!(
             serde_json::to_value(state.library_status()).unwrap(),
@@ -149,7 +210,8 @@ mod tests {
             json!([{
                 "dictionaryId": "sample.mdx",
                 "dictionaryTitle": "Sample Dictionary",
-                "html": "<p>a happy accident (sample)</p>"
+                "src": entry_protocol::entry_url("sample.mdx", "serendipity"),
+                "allowNetwork": false
             }])
         );
     }
@@ -162,6 +224,7 @@ mod tests {
         let state = AppState::load(
             config.path().join("config.json"),
             Some(folder.path().to_owned()),
+            config.path().join("data"),
         );
 
         assert_eq!(state.look_up("serendipity").unwrap().len(), 1);
@@ -172,7 +235,7 @@ mod tests {
         let config = tempfile::tempdir().unwrap();
         let config_file = config.path().join("config.json");
 
-        let state = AppState::load(config_file.clone(), None);
+        let state = AppState::load(config_file.clone(), None, config.path().join("data"));
 
         assert_eq!(
             state.library_status(),
@@ -186,7 +249,11 @@ mod tests {
         let config = tempfile::tempdir().unwrap();
         let missing = config.path().join("no-such-folder");
 
-        let state = AppState::load(config.path().join("config.json"), Some(missing.clone()));
+        let state = AppState::load(
+            config.path().join("config.json"),
+            Some(missing.clone()),
+            config.path().join("data"),
+        );
 
         assert!(
             matches!(state.library_status(), LibraryStatus::Unavailable { folder: Some(f), .. } if f == missing)

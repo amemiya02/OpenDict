@@ -15,6 +15,9 @@ export const en = {
   libraryCount: (n: number) => (n === 1 ? "1 dictionary" : `${n} dictionaries`),
   startHint: "Type a headword and press Enter.",
   lookupFailed: (reason: string) => `The lookup failed: ${reason}`,
+  allowNetwork: "Allow network access",
+  networkAllowed: "This dictionary may use the network. Click to block it.",
+  networkBlocked: "This dictionary is kept off the network. Click to allow it.",
 };
 
 export type Catalogue = typeof en;

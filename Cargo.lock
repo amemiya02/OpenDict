@@ -2215,6 +2215,7 @@ version = "0.1.0"
 dependencies = [
  "opendict-core",
  "opendict-mdict-fixture",
+ "percent-encoding",
  "serde",
  "serde_json",
  "tauri",

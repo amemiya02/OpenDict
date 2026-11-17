@@ -19,6 +19,7 @@ tauri-build = { version = "2", features = [] }
 opendict-core.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+percent-encoding = "2"
 tauri = { version = "2", features = [] }
 
 [dev-dependencies]

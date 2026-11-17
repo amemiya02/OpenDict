@@ -119,8 +119,8 @@ fn open_resource_files(path: &Path) -> Vec<opendict_mdict::Mdd> {
     let Some(stem) = path.file_stem().map(|s| s.to_string_lossy().into_owned()) else {
         return Vec::new();
     };
-    let names = std::iter::once(format!("{stem}.mdd"))
-        .chain((1..).map(|n| format!("{stem}.{n}.mdd")));
+    let names =
+        std::iter::once(format!("{stem}.mdd")).chain((1..).map(|n| format!("{stem}.{n}.mdd")));
     names
         .map(|name| path.with_file_name(name))
         .take_while(|candidate| candidate.is_file())

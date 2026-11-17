@@ -16,4 +16,7 @@ export const ja = {
   libraryCount: (n: number) => `辞書 ${n} 冊`,
   startHint: "見出し語を入力して Enter を押してください。",
   lookupFailed: (reason: string) => `検索に失敗しました：${reason}`,
+  allowNetwork: "ネットワークへのアクセスを許可",
+  networkAllowed: "この辞書はネットワークを使えます。クリックで遮断します。",
+  networkBlocked: "この辞書はネットワークから遮断されています。クリックで許可します。",
 } satisfies Catalogue;
