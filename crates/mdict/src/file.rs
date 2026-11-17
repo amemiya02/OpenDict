@@ -2,6 +2,7 @@
 
 use std::fs::File;
 use std::path::Path;
+use std::sync::{Arc, Mutex};
 
 use memmap2::Mmap;
 
@@ -114,6 +115,7 @@ pub(crate) struct Sections {
     /// How many keys the key section says it holds.
     pub(crate) key_count: usize,
     records: RecordSection,
+    last_record_block: Mutex<Option<(usize, Arc<Vec<u8>>)>>,
 }
 
 /// Where a key block is stored and how many keys it holds.
@@ -196,6 +198,7 @@ impl Sections {
             key_blocks,
             key_count,
             records,
+            last_record_block: Mutex::new(None),
         })
     }
 
@@ -245,13 +248,7 @@ impl Sections {
             let block = blocks
                 .get(index)
                 .ok_or(Error::Corrupt("a record runs past the record section"))?;
-            let stored = self
-                .map
-                .get(block.file_start..block.file_start + block.stored_len)
-                .ok_or(Error::Corrupt(
-                    "a record block lies past the end of the file",
-                ))?;
-            let plain = block::decompress(stored, block.plain_len)?;
+            let plain = self.record_block(index, block)?;
             let from = (at - block.stream_start) as usize;
             let to = ((end - block.stream_start) as usize).min(plain.len());
             if from >= to {
@@ -262,6 +259,29 @@ impl Sections {
             index += 1;
         }
         Ok(out)
+    }
+
+    /// Record block `index`, decompressed. The last one is kept, because the records
+    /// under one headword (and the steps of a redirect) usually share a block.
+    fn record_block(&self, index: usize, block: &RecordBlock) -> Result<Arc<Vec<u8>>> {
+        let mut last = self
+            .last_record_block
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if let Some((cached, plain)) = &*last
+            && *cached == index
+        {
+            return Ok(Arc::clone(plain));
+        }
+        let stored = self
+            .map
+            .get(block.file_start..block.file_start + block.stored_len)
+            .ok_or(Error::Corrupt(
+                "a record block lies past the end of the file",
+            ))?;
+        let plain = Arc::new(block::decompress(stored, block.plain_len)?);
+        *last = Some((index, Arc::clone(&plain)));
+        Ok(plain)
     }
 }
 
