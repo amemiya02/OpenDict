@@ -100,6 +100,8 @@ export function App() {
   const [trail, setTrailState] = useState(emptyTrail);
   /** The trail as it is now, ahead of rendering: Back may be pressed before a render. */
   const trailRef = useRef(trail);
+  /** How many words the reader has chosen, so a slower preview never overtakes a choice. */
+  const commits = useRef(0);
   /** The Lookup the reader last committed, while it is under way. */
   const committing = useRef<Promise<void>>(Promise.resolve());
   const [paletteOpen, setPaletteOpen] = useState(false);
@@ -216,9 +218,12 @@ export function App() {
   async function changeQuery(text: string) {
     setList("suggestions");
     setTyping(true);
+    const before = commits.current;
     try {
       const answer = await column.refresh(text);
-      if (!answer) return;
+      // The reader chose a word (Enter) while the suggestions were on their way: that word
+      // stays on the page, and its Lookup is not overtaken by this preview.
+      if (!answer || commits.current !== before) return;
       if (answer.headword) {
         void show(answer.headword);
       } else if (text.trim()) {
@@ -265,6 +270,7 @@ export function App() {
    * the latest step for Back and Forward.
    */
   async function commit(headword: string) {
+    commits.current++;
     putColumnAway();
     type(headword);
     const done = show(headword, () => {

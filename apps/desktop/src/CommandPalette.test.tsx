@@ -31,6 +31,9 @@ interface Shell {
   lookedUp: string[];
   /** While set, Lookups wait for this before answering. */
   hold: Promise<void> | null;
+  /** While set, suggestions wait for this before answering. */
+  holdSuggestions: Promise<void> | null;
+  recorded: string[];
 }
 
 /** A fake shell with a two-Dictionary Library, one Group, and three headwords. */
@@ -38,7 +41,7 @@ function fakeShell(stored: Partial<Appearance> & { language?: Locale | null } = 
   const appearance = { theme: "system", allAsAuthored: false, textSize: 16, zoom: 100, language: null, ...stored };
   let current: Library = { ...library };
   const history: string[] = [];
-  const shell: Shell = { changes: [], lookedUp: [], hold: null };
+  const shell: Shell = { changes: [], lookedUp: [], hold: null, holdSuggestions: null, recorded: [] };
   mockIPC(
     async (command, payload) => {
       const args = (payload ?? {}) as Record<string, unknown>;
@@ -46,6 +49,7 @@ function fakeShell(stored: Partial<Appearance> & { language?: Locale | null } = 
         case "library":
           return current;
         case "suggest": {
+          if (shell.holdSuggestions) await shell.holdSuggestions;
           const query = String(args.query).trim();
           const items = words.filter((w) => w.startsWith(query)).map((headword) => ({ headword, count: 2 }));
           return { items, lemma: null, near: false, miss: items.length === 0 && query !== "", browse: query === "" };
@@ -66,6 +70,7 @@ function fakeShell(stored: Partial<Appearance> & { language?: Locale | null } = 
           return history;
         case "record_lookup":
           history.unshift(String(args.headword));
+          shell.recorded.push(String(args.headword));
           return history;
         case "word_books":
           return { books: [], current: null };
@@ -343,6 +348,29 @@ describe("the keyboard map", () => {
 
     await userEvent.type(field(), "{End}/");
     expect(field().value).toBe("thumb/");
+  });
+
+  it("Enter before the suggestions for the typed word answer still commits it", async () => {
+    const shell = fakeShell();
+    renderApp();
+    await lookUp("apple");
+
+    // The suggestions for "cat" answer after Enter, while Enter's Lookup is still under way.
+    let suggest!: () => void;
+    let lookUpCat!: () => void;
+    shell.holdSuggestions = new Promise((resolve) => (suggest = resolve));
+    shell.hold = new Promise((resolve) => (lookUpCat = resolve));
+    fireEvent.change(field(), { target: { value: "cat" } });
+    fireEvent.submit(field().closest("form")!);
+    shell.holdSuggestions = null;
+    await act(async () => suggest());
+    shell.hold = null;
+    await act(async () => lookUpCat());
+    await screen.findByRole("heading", { level: 1, name: "【cat】" });
+
+    await vi.waitFor(() => expect(shell.recorded).toEqual(["apple", "cat"]));
+    await userEvent.keyboard("{Alt>}{ArrowLeft}{/Alt}");
+    await vi.waitFor(() => expect(screen.getByRole("heading", { level: 1 }).textContent).toBe("【apple】"));
   });
 
   it("Back works at once after Enter, even before the Lookup has answered", async () => {

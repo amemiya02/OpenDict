@@ -784,7 +784,8 @@ test("the data directory moves into another folder, and the app keeps the reader
 
 // Runs last: unlocking adds a Dictionary, and with it a headword, to the Library.
 test("the command palette switches the theme and the interface language; shortcuts work inside an Entry", async () => {
-  const palette = page.getByRole("dialog", { name: "Command palette" });
+  // By element, not by name: the palette's name changes with the interface language.
+  const palette = page.locator("dialog[open]");
   const run = async (label: string) => {
     await page.keyboard.press("Control+k");
     await palette.waitFor({ timeout: 5_000 });
