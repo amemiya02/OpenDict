@@ -53,7 +53,7 @@ pub fn respond(state: &AppState, request: &Request<Vec<u8>>) -> Response<Vec<u8>
                 .header(header::CONTENT_TYPE, "text/html; charset=utf-8")
                 .header(header::CACHE_CONTROL, "no-store")
                 .headers(&policy)
-                .body(entry_document(&html, state.appearance().text_size).into_bytes())
+                .body(entry_document(&html, &headword, state.appearance().text_size).into_bytes())
                 .expect("valid response"),
             Ok(None) => plain(StatusCode::NOT_FOUND, &policy),
             Err(_) => plain(StatusCode::INTERNAL_SERVER_ERROR, &policy),
@@ -329,13 +329,33 @@ fn decode_references(text: &str) -> String {
     out
 }
 
-/// Wraps Entry HTML in a document of its own. The app sets no type inside it (the
-/// Hands-Off Entry Rule): it removes the default page margin and gives the reader's text
-/// size as the base size, the way a browser's default font size works. That rule has no
-/// specificity and comes before the Entry, so any size the Dictionary sets itself wins.
-fn entry_document(html: &str, text_size: u32) -> String {
+/// Wraps Entry HTML in a document with the reader's base text size and CJK font defaults.
+/// The Dictionary can override both. Keep the text-size style next to the frame script,
+/// which updates that style when the reader changes the size.
+fn entry_document(html: &str, headword: &str, text_size: u32) -> String {
+    let font_language = if headword.chars().any(|c| {
+        matches!(
+            c,
+            '\u{3041}'..='\u{309f}' | '\u{30a1}'..='\u{30fa}' | '\u{30fc}'..='\u{30ff}'
+                | '\u{31f0}'..='\u{31ff}' | '\u{ff66}'..='\u{ff9f}'
+        )
+    }) {
+        "ja"
+    } else if headword.chars().any(|c| {
+        matches!(
+            c,
+            '\u{3400}'..='\u{4dbf}' | '\u{4e00}'..='\u{9fff}' | '\u{f900}'..='\u{faff}'
+                | '\u{20000}'..='\u{2fa1f}' | '\u{30000}'..='\u{3347f}'
+        )
+    }) {
+        "zh"
+    } else {
+        ""
+    };
+    let entry_fonts = include_str!("entry_fonts.css");
     format!(
-        "<!doctype html><html><head><meta charset=\"utf-8\"><style>html,body{{margin:0}}</style>\
+        "<!doctype html><html data-opendict-font-language=\"{font_language}\"><head><meta charset=\"utf-8\">\
+         <style>html,body{{margin:0}}</style><style>{entry_fonts}</style>\
          <style>:where(html){{font-size:{text_size}px}}</style>\
          <script>{WEBRTC_LOCKDOWN}{FRAME_SCRIPT}</script></head><body>{}</body></html>",
         without_resource_hints(html)

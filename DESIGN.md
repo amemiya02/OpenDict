@@ -192,7 +192,7 @@ Running text inside the page is held to an 860px measure; the rules around it ar
 ### Named Rules
 **The Two Voices Rule.** Serif is for words from the dictionary and words the reader typed; sans is for everything the application says. A control label in serif, or a headword in sans, breaks the rule.
 
-**The Hands-Off Entry Rule.** OpenDict never sets the type of an Entry. Each Dictionary's HTML and CSS render in their own isolated root, and the app's styling stops at the Dictionary header.
+**The Hands-Off Entry Rule.** Each Dictionary's HTML and CSS render in their own isolated root. OpenDict provides a base text size and local CJK font defaults. The Dictionary's own typography takes precedence.
 
 ## Layout
 
@@ -269,7 +269,7 @@ Square-cut, like print. Controls take a 2px corner at most (`sharp`). The one cu
 ### Don't:
 - **Don't** put Entries, settings or lists in cards, boxes or shadowed containers inside the page.
 - **Don't** use vermilion for focus rings, primary buttons, links or emphasis.
-- **Don't** restyle, re-font or re-colour an Entry beyond the dark-theme treatment the reader can switch off per Dictionary.
+- Preserve the Dictionary's layout and typography. The reader can switch off dark-theme recolouring per Dictionary.
 - **Don't** leave the headword column or the page mostly empty when there are headwords to show.
 - **Don't** use gradients, glass effects or glowing borders; the reader asked for none of them.
 - **Don't** round controls beyond 2px; only the Mini Window, as a real window, takes 8px.

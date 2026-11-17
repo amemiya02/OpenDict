@@ -20,7 +20,7 @@ const RECOLOUR = "invert(0.92) hue-rotate(180deg)";
  * scheme, which sends it with a content security policy that sandboxes it again and keeps
  * it off the network unless the reader allowed it. The frame may run the Dictionary's
  * scripts but has an opaque origin: no access to the app, Tauri IPC, storage or other
- * Dictionaries. The app sets no type inside it (the Hands-Off Entry Rule).
+ * Dictionaries. The document supplies typography defaults that its Dictionary can override.
  *
  * The frame's document can say five things, by message, and nothing else: its height,
  * an `entry://` link the reader clicked (`onLink` gets the headword), a `sound://` link

@@ -313,6 +313,22 @@ test("an Entry shows the image from its MDD and the stylesheet beside its MDX, a
   );
 });
 
+test("an Entry uses the CJK reading font for its language and keeps authored fonts", async () => {
+  await lookUp("食べる");
+  const japanese = await entryFrame("サンプル国語辞典");
+  const bodyFont = (frame: Frame) => frame.locator("body").evaluate((body) => getComputedStyle(body).fontFamily);
+  assert.match(await bodyFont(japanese), /^"Noto Sans JP",/);
+
+  await lookUp("serendipity");
+  const marked = await entryFrame("Sample English Dictionary");
+  await marked.locator("body").evaluate((body) => body.setAttribute("lang", "zh-CN"));
+  assert.match(await bodyFont(marked), /^"Noto Sans SC",/);
+  assert.equal(await marked.locator(".def").evaluate((entry) => getComputedStyle(entry).fontFamily), "serif");
+
+  await marked.locator("body").evaluate((body) => body.setAttribute("lang", "zh-TW"));
+  assert.match(await bodyFont(marked), /^"Noto Sans TC",/);
+});
+
 test("an Entry's scripts run but cannot reach the app, stored data, other Dictionaries or the network", async () => {
   await lookUp("probe");
 

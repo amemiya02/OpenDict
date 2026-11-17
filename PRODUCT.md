@@ -48,7 +48,7 @@ First release (v0.1), desktop only (Windows, macOS, Linux); Android may come lat
 
 Constraints:
 
-- Entry content is third-party HTML, CSS and JavaScript. It is shown sandboxed, with each dictionary's styles isolated from the app and from other dictionaries. OpenDict does not control how an Entry looks inside its section.
+- Entry content is third-party HTML, CSS and JavaScript. It is shown sandboxed, with each dictionary's styles isolated from the app and from other dictionaries. The dictionary's typography takes precedence over OpenDict's reading defaults.
 - Under the dark theme, Entries are recoloured by default, and each Dictionary can be switched to show as authored on its white page (accepted with the prototype, 2026-11-17).
 - Vocabulary is fixed in `GLOSSARY.md`.
 

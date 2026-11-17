@@ -1,0 +1,21 @@
+/* Keep the defaults below the Dictionary's styles, including its own layers.
+   The headword is a hint for untagged Entries. Use the document language when supplied. */
+@layer {
+  :where(
+    html:has(> body:lang(ja)),
+    html[data-opendict-font-language="ja"]:not([lang], :has(> body[lang]))
+  ) {
+    font-family: "Noto Sans JP", "Noto Sans CJK JP", "Yu Gothic", "Hiragino Sans", Meiryo, sans-serif;
+  }
+
+  :where(
+    html:has(> body:lang(zh)),
+    html[data-opendict-font-language="zh"]:not([lang], :has(> body[lang]))
+  ) {
+    font-family: "Noto Sans SC", "Noto Sans CJK SC", "Microsoft YaHei", "PingFang SC", sans-serif;
+  }
+
+  :where(html:has(> body:is(:lang(zh-Hant), :lang(zh-TW), :lang(zh-HK), :lang(zh-MO)))) {
+    font-family: "Noto Sans TC", "Noto Sans CJK TC", "Microsoft JhengHei", "PingFang TC", sans-serif;
+  }
+}
