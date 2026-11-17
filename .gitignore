@@ -1,0 +1,17 @@
+# Dictionary files are copyrighted: never commit them.
+*.mdx
+*.mdd
+
+# Build output
+target/
+node_modules/
+dist/
+*.log
+
+# Local tool state
+.omc/
+.claude/settings.local.json
+.impeccable/config.local.json
+.impeccable/review/
+.impeccable/questions/
+.impeccable/mocks/
