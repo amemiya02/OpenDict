@@ -576,6 +576,8 @@ test("a Group made in the Library is switched from the cover band, and a miss po
   await offer.waitFor({ timeout: 10_000 });
   if (process.env.OPENDICT_E2E_GROUPS_SCREENSHOT) await page.screenshot({ path: process.env.OPENDICT_E2E_GROUPS_SCREENSHOT });
   await offer.click();
+  // The no-match page has the same heading: wait for the Entries themselves.
+  await page.getByRole("region", { name: "Sample English Dictionary" }).waitFor({ timeout: 10_000 });
   await onPage("serendipity");
   assert.equal(await switcher.inputValue(), "");
 });
