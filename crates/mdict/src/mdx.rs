@@ -62,7 +62,7 @@ impl Mdx {
 }
 
 /// Reads a decoded record: text ending in a NUL (and usually CR LF before it), or a redirect.
-fn decode_record(text: &str) -> Record {
+pub(crate) fn decode_record(text: &str) -> Record {
     let text = text.trim_end_matches(['\0', '\r', '\n']);
     match text.strip_prefix("@@@LINK=") {
         Some(target) => Record::Link(target.lines().next().unwrap_or("").trim().to_owned()),

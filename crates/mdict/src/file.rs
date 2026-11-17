@@ -102,17 +102,44 @@ pub(crate) struct Key {
     pub(crate) record_offset: u64,
 }
 
-/// An open MDX or MDD file. The header and every key are read at open; records are
-/// decompressed only when asked for.
-pub(crate) struct MdictFile {
+/// The parts of an MDX or MDD file that are read at open: the header and the tables of
+/// the key and record sections. Key blocks and record blocks are decompressed only when
+/// asked for.
+pub(crate) struct Sections {
     map: Mmap,
     pub(crate) header: Header,
     pub(crate) encoding: TextEncoding,
+    version: Version,
+    key_blocks: Vec<KeyBlock>,
+    /// How many keys the key section says it holds.
+    pub(crate) key_count: usize,
+    records: RecordSection,
+}
+
+/// Where a key block is stored and how many keys it holds.
+struct KeyBlock {
+    entries: usize,
+    file_start: usize,
+    stored_len: usize,
+    plain_len: usize,
+}
+
+/// An open MDX or MDD file with every key read: the header and every key are read at
+/// open; records are decompressed only when asked for.
+pub(crate) struct MdictFile {
+    sections: Sections,
     /// Every key in file order.
     pub(crate) keys: Vec<Key>,
     /// Every distinct record offset in ascending order: a record ends where the next begins.
     record_starts: Vec<u64>,
-    records: RecordSection,
+}
+
+impl std::ops::Deref for MdictFile {
+    type Target = Sections;
+
+    fn deref(&self) -> &Sections {
+        &self.sections
+    }
 }
 
 /// Where the record blocks are and how large each is once decompressed.
@@ -131,8 +158,9 @@ struct RecordBlock {
     plain_len: usize,
 }
 
-impl MdictFile {
-    pub(crate) fn open(path: &Path, kind: Kind) -> Result<MdictFile> {
+impl Sections {
+    /// Opens a file and reads its header and section tables, but no key or record block.
+    pub(crate) fn open(path: &Path, kind: Kind) -> Result<Sections> {
         let file = File::open(path)?;
         // SAFETY: the map is read-only and owned by this value. OpenDict never writes
         // dictionary files; another process truncating one while it is open is outside
@@ -156,44 +184,57 @@ impl MdictFile {
             Kind::Mdd => TextEncoding::UTF_16LE,
         };
 
-        let keys = read_key_section(&mut reader, version, encoding, encrypted_index)?;
-        let records = read_record_section(&mut reader, version, keys.len())?;
+        let (key_blocks, key_count) =
+            read_key_index(&mut reader, version, encoding, encrypted_index)?;
+        let records = read_record_section(&mut reader, version, key_count)?;
 
-        let mut record_starts: Vec<u64> = keys.iter().map(|key| key.record_offset).collect();
-        record_starts.sort_unstable();
-        record_starts.dedup();
-        if record_starts
-            .last()
-            .is_some_and(|&last| last >= records.total)
-        {
-            return Err(Error::Corrupt(
-                "a record offset lies past the record section",
-            ));
-        }
-
-        Ok(MdictFile {
+        Ok(Sections {
             map,
             header,
             encoding,
-            keys,
-            record_starts,
+            version,
+            key_blocks,
+            key_count,
             records,
         })
     }
 
-    /// The raw bytes of the record that starts at `start`: up to the next record's start.
-    pub(crate) fn record(&self, start: u64) -> Result<Vec<u8>> {
-        let next = self.record_starts.partition_point(|&s| s <= start);
-        let end = self
-            .record_starts
-            .get(next)
-            .copied()
-            .unwrap_or(self.records.total);
-        self.record_bytes(start, end)
+    pub(crate) fn key_block_count(&self) -> usize {
+        self.key_blocks.len()
     }
 
-    /// The bytes of the record stream in `start..end`, decompressing only the blocks that hold them.
-    fn record_bytes(&self, start: u64, end: u64) -> Result<Vec<u8>> {
+    /// Decompresses key block `index` and reads its keys.
+    pub(crate) fn key_block(&self, index: usize) -> Result<Vec<Key>> {
+        let block = &self.key_blocks[index];
+        let stored = self
+            .map
+            .get(block.file_start..block.file_start + block.stored_len)
+            .ok_or(Error::Corrupt("a key block lies past the end of the file"))?;
+        let plain = block::decompress(stored, block.plain_len)?;
+        let mut plain = Reader::new(&plain);
+        let mut keys = Vec::with_capacity(block.entries.min(1 << 16));
+        for _ in 0..block.entries {
+            let record_offset = self.version.number(&mut plain)? as u64;
+            let text = self.encoding.decode(plain.until_nul(self.encoding.unit)?);
+            keys.push(Key {
+                text,
+                record_offset,
+            });
+        }
+        Ok(keys)
+    }
+
+    /// Size of the whole decompressed record stream: where the last record ends.
+    pub(crate) fn record_stream_len(&self) -> u64 {
+        self.records.total
+    }
+
+    /// The bytes of the record stream in `start..end`, decompressing only the blocks
+    /// that hold them.
+    pub(crate) fn record_bytes(&self, start: u64, end: u64) -> Result<Vec<u8>> {
+        if start > end || end > self.records.total {
+            return Err(Error::Corrupt("a record lies outside the record section"));
+        }
         let blocks = &self.records.blocks;
         let mut index = blocks
             .partition_point(|b| b.stream_start <= start)
@@ -213,6 +254,9 @@ impl MdictFile {
             let plain = block::decompress(stored, block.plain_len)?;
             let from = (at - block.stream_start) as usize;
             let to = ((end - block.stream_start) as usize).min(plain.len());
+            if from >= to {
+                return Err(Error::Corrupt("a record runs past its block"));
+            }
             out.extend_from_slice(&plain[from..to]);
             at = block.stream_start + to as u64;
             index += 1;
@@ -221,13 +265,56 @@ impl MdictFile {
     }
 }
 
-/// Reads the key section: its header, the key index (key block info), then every key block.
-fn read_key_section(
+impl MdictFile {
+    pub(crate) fn open(path: &Path, kind: Kind) -> Result<MdictFile> {
+        let sections = Sections::open(path, kind)?;
+        let mut keys = Vec::with_capacity(sections.key_count.min(1 << 20));
+        for index in 0..sections.key_block_count() {
+            keys.extend(sections.key_block(index)?);
+        }
+        if keys.len() != sections.key_count {
+            return Err(Error::Corrupt("the key index does not add up"));
+        }
+
+        let mut record_starts: Vec<u64> = keys.iter().map(|key| key.record_offset).collect();
+        record_starts.sort_unstable();
+        record_starts.dedup();
+        if record_starts
+            .last()
+            .is_some_and(|&last| last >= sections.records.total)
+        {
+            return Err(Error::Corrupt(
+                "a record offset lies past the record section",
+            ));
+        }
+
+        Ok(MdictFile {
+            sections,
+            keys,
+            record_starts,
+        })
+    }
+
+    /// The raw bytes of the record that starts at `start`: up to the next record's start.
+    pub(crate) fn record(&self, start: u64) -> Result<Vec<u8>> {
+        let next = self.record_starts.partition_point(|&s| s <= start);
+        let end = self
+            .record_starts
+            .get(next)
+            .copied()
+            .unwrap_or(self.records.total);
+        self.record_bytes(start, end)
+    }
+}
+
+/// Reads the key section's header and key index (key block info), and steps over the key
+/// blocks without decompressing them. Returns where each block lies, and the key count.
+fn read_key_index(
     reader: &mut Reader<'_>,
     version: Version,
     encoding: TextEncoding,
     encrypted_index: bool,
-) -> Result<Vec<Key>> {
+) -> Result<(Vec<KeyBlock>, usize)> {
     let head_len = match version {
         Version::V1 => 16,
         Version::V2 => 40,
@@ -260,8 +347,10 @@ fn read_key_section(
 
     let unit = encoding.unit;
     let mut info = Reader::new(&info);
-    let mut keys = Vec::with_capacity(entry_count.min(1 << 20));
-    let mut blocks_seen = 0usize;
+    let mut blocks = Vec::with_capacity(block_count.min(1 << 16));
+    let blocks_start = reader.position();
+    let mut file_start = blocks_start;
+    let mut entries_seen = 0usize;
     for _ in 0..block_count {
         let entries = version.number(&mut info)?;
         // The first and last keys of the block: hints only, not always the literal keys.
@@ -274,23 +363,22 @@ fn read_key_section(
         }
         let stored_len = version.number(&mut info)?;
         let plain_len = version.number(&mut info)?;
-
-        let plain = block::decompress(reader.take(stored_len)?, plain_len)?;
-        blocks_seen = blocks_seen.saturating_add(stored_len);
-        let mut plain = Reader::new(&plain);
-        for _ in 0..entries {
-            let record_offset = version.number(&mut plain)? as u64;
-            let text = encoding.decode(plain.until_nul(unit)?);
-            keys.push(Key {
-                text,
-                record_offset,
-            });
-        }
+        blocks.push(KeyBlock {
+            entries,
+            file_start,
+            stored_len,
+            plain_len,
+        });
+        file_start = file_start
+            .checked_add(stored_len)
+            .ok_or(Error::Corrupt("key blocks overflow"))?;
+        entries_seen = entries_seen.saturating_add(entries);
     }
-    if keys.len() != entry_count || blocks_seen != blocks_len {
+    if entries_seen != entry_count || file_start - blocks_start != blocks_len {
         return Err(Error::Corrupt("the key index does not add up"));
     }
-    Ok(keys)
+    reader.take(blocks_len)?;
+    Ok((blocks, entry_count))
 }
 
 /// Reads the record section: counts, the size table, then the blocks.
