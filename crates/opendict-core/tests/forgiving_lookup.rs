@@ -56,8 +56,8 @@ fn full_width_half_width_katakana_and_hiragana_do_not_matter() {
         headwords(&library.suggest("ｶﾞﾗｽ", 1).unwrap().items),
         ["ガラス"]
     );
-    // The voicing mark is part of the word, not a diacritic.
-    assert!(library.suggest("からす", 1).unwrap().miss);
+    // The voicing mark is part of the word, not a diacritic: からす only spells ガラス nearly.
+    assert!(library.suggest("からす", 1).unwrap().near);
 }
 
 #[test]
@@ -135,4 +135,28 @@ fn the_column_continues_with_what_the_query_offers() {
         headwords(&library.suggest_after("ax*", "a5", 10).unwrap()),
         ["b1"]
     );
+}
+
+#[test]
+fn a_typo_offers_close_spellings_nearest_first() {
+    let (_folder, library) = library_of(&[
+        "serendipity",
+        "serene",
+        "series",
+        "serious",
+        "the",
+        "then",
+        "zebra",
+    ]);
+
+    let typo = library.suggest("serendipty", 10).unwrap();
+    let two_ways = library.suggest("serius", 10).unwrap();
+    let swapped = library.suggest("teh", 10).unwrap();
+
+    assert!(typo.near && !typo.miss);
+    assert_eq!(headwords(&typo.items), ["serendipity"]);
+    assert!(two_ways.near);
+    assert_eq!(headwords(&two_ways.items), ["series", "serious"]);
+    // Short words allow one slip: a swapped pair counts as one.
+    assert_eq!(headwords(&swapped.items), ["the"]);
 }

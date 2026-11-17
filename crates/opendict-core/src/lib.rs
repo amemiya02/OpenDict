@@ -7,6 +7,7 @@ mod error;
 mod format;
 mod index;
 mod library;
+mod near;
 mod normalization;
 mod pattern;
 mod preferences;

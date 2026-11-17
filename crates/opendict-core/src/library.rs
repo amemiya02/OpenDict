@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 use crate::error::{Error, Result};
 use crate::format::{DictionaryFormat, DictionaryReader, MdictFormat, OpenError, RawRecord};
 use crate::index::{HeadwordIndex, IndexError, IndexedHeadword, MemoryIndex, Start, index_key};
+use crate::near;
 use crate::pattern::Pattern;
 use crate::scan::{self, Unit};
 
@@ -418,17 +419,52 @@ impl Library {
         }
         let items = self.merged(Start::AtKey(&key), limit)?;
         let browse = key.is_empty();
-        let miss = !browse
-            && !items
+        let matched = browse
+            || items
                 .first()
                 .is_some_and(|(first, _)| first.key.starts_with(&key));
+        // No headword starts with the query: offer close spellings, and failing those,
+        // the index from where the query would stand.
+        let close = if matched {
+            Vec::new()
+        } else {
+            self.near(&key, limit)?
+        };
+        let near = !close.is_empty();
+        let items = if near { close } else { items };
         Ok(Suggestions {
             items: items.into_iter().map(suggestion).collect(),
             lemma: None,
-            near: false,
-            miss,
+            near,
+            miss: !matched && !near,
             browse,
         })
+    }
+
+    /// Up to `limit` headwords spelt nearly like `key`, nearest first, then in index order,
+    /// each with how many enabled Dictionaries file it.
+    fn near(&self, key: &str, limit: usize) -> Result<Vec<(IndexedHeadword, usize)>> {
+        let query: Vec<char> = key.chars().collect();
+        let tolerance = near::tolerance(&query);
+        let distance = |headword: &IndexedHeadword| {
+            let candidate: Vec<char> = headword.key.chars().collect();
+            near::distance(&query, &candidate, tolerance)
+        };
+        let close = |headword: &IndexedHeadword| match distance(headword) {
+            Some(_) => Scan::Take,
+            None => Scan::Skip,
+        };
+        let counts = self.counted(Start::AtKey(""), usize::MAX, &close)?;
+        let mut found: Vec<(usize, IndexedHeadword, usize)> = counts
+            .into_iter()
+            .filter_map(|(headword, count)| Some((distance(&headword)?, headword, count)))
+            .collect();
+        found.sort();
+        Ok(found
+            .into_iter()
+            .take(limit)
+            .map(|(_, headword, count)| (headword, count))
+            .collect())
     }
 
     fn suggest_pattern(&self, pattern: &Pattern, limit: usize) -> Result<Suggestions> {
@@ -496,11 +532,23 @@ impl Library {
     ) -> Result<Vec<(IndexedHeadword, usize)>> {
         // Each headword among the first `limit` overall is among the first `limit` of
         // every Dictionary that files it, so `limit` from each is enough to count it.
+        let counts = self.counted(start, limit, &scan)?;
+        Ok(counts.into_iter().take(limit).collect())
+    }
+
+    /// Up to `limit` headwords `scan` takes from each enabled Dictionary, from `start`,
+    /// with how many of them file each.
+    fn counted(
+        &self,
+        start: Start<'_>,
+        limit: usize,
+        scan: &dyn Fn(&IndexedHeadword) -> Scan,
+    ) -> Result<BTreeMap<IndexedHeadword, usize>> {
         let mut counts: BTreeMap<IndexedHeadword, usize> = BTreeMap::new();
         for dictionary in self.dictionaries.iter().filter(|d| d.info.enabled) {
             let headwords =
                 dictionary
-                    .scan(start, limit, &scan)
+                    .scan(start, limit, scan)
                     .map_err(|error| Error::Dictionary {
                         dictionary: dictionary.info.title.clone(),
                         reason: error.to_string(),
@@ -509,7 +557,7 @@ impl Library {
                 *counts.entry(headword).or_default() += 1;
             }
         }
-        Ok(counts.into_iter().take(limit).collect())
+        Ok(counts)
     }
 
     /// The Entry for exactly `headword` in the Dictionary with `dictionary_id`, if that
