@@ -1,7 +1,7 @@
-import type { ReactNode } from "react";
+import { useState, type FormEvent, type ReactNode } from "react";
 import { useI18n } from "../i18n";
 import { formatCount, formatSize, markOf } from "../lib/format";
-import type { Dictionary, FailureReason, Library } from "../lib/ipc";
+import type { Dictionary, FailureReason, Library, OpenFailure, RegisterError } from "../lib/ipc";
 import type { Catalogue } from "../i18n/en";
 
 export interface LibraryActions {
@@ -10,6 +10,8 @@ export interface LibraryActions {
   rescan: () => void;
   setEnabled: (id: string, enabled: boolean) => void;
   move: (id: string, direction: "up" | "down") => void;
+  /** Unlocks a Dictionary with a registration code; resolves to why not, or null when it opened. */
+  register: (path: string, email: string, code: string) => Promise<RegisterError | null>;
 }
 
 /**
@@ -92,10 +94,7 @@ export function LibraryPage({
           <SubHeading>{t.failedToOpen}</SubHeading>
           <ul className="max-w-[860px]">
             {library.failures.map((failure) => (
-              <li key={failure.path} className="flex flex-wrap items-baseline gap-x-3.5 border-t border-hair py-1">
-                <code className="min-w-0 font-sans [overflow-wrap:anywhere]">{failure.path}</code>
-                <span className="text-[12px] text-text-secondary">{describeFailure(t, failure.reason)}</span>
-              </li>
+              <FailureRow key={failure.path} failure={failure} busy={busy} register={actions.register} />
             ))}
           </ul>
         </>
@@ -187,6 +186,143 @@ function DictionaryTable({
   );
 }
 
+/**
+ * One Dictionary that could not be opened. One that waits for its registration code
+ * offers a form for the code and e-mail, set in the row under a hairline, not in a box.
+ */
+function FailureRow({
+  failure,
+  busy,
+  register,
+}: {
+  failure: OpenFailure;
+  busy: boolean;
+  register: LibraryActions["register"];
+}) {
+  const { t } = useI18n();
+  const [open, setOpen] = useState(false);
+  const locked = failure.reason.kind === "needsRegistrationCode" || failure.reason.kind === "wrongRegistrationCode";
+  return (
+    <li className="border-t border-hair py-1">
+      <div className="flex flex-wrap items-baseline gap-x-3.5">
+        <code className="min-w-0 font-sans [overflow-wrap:anywhere]">{failure.path}</code>
+        <span className="text-[12px] text-text-secondary">{describeFailure(t, failure.reason)}</span>
+        {locked && !open ? (
+          <button
+            type="button"
+            aria-label={t.enterCodeFor(failure.path)}
+            disabled={busy}
+            onClick={() => setOpen(true)}
+            className="ml-auto h-6.5 flex-none rounded-sharp px-2 text-[12px] text-text-secondary hover:bg-shade hover:text-text disabled:opacity-50"
+          >
+            {t.enterCode}
+          </button>
+        ) : null}
+      </div>
+      {locked && open ? (
+        <RegistrationForm path={failure.path} busy={busy} register={register} onCancel={() => setOpen(false)} />
+      ) : null}
+    </li>
+  );
+}
+
+/** Spaces and dashes are allowed for readability; what is left must be 32 hex digits. */
+function wellFormedCode(code: string): boolean {
+  return /^[0-9a-f]{32}$/i.test(code.replace(/[\s-]/g, ""));
+}
+
+/** The registration code and e-mail for one Dictionary. Nothing typed here is kept unless it unlocks it. */
+function RegistrationForm({
+  path,
+  busy,
+  register,
+  onCancel,
+}: {
+  path: string;
+  busy: boolean;
+  register: LibraryActions["register"];
+  onCancel: () => void;
+}) {
+  const { t } = useI18n();
+  const [email, setEmail] = useState("");
+  const [code, setCode] = useState("");
+  const [problem, setProblem] = useState<string | null>(null);
+
+  async function submit(event: FormEvent) {
+    event.preventDefault();
+    if (code.trim() !== "" && !wellFormedCode(code)) {
+      setProblem(t.registrationMalformed);
+      return;
+    }
+    setProblem(null);
+    const error = await register(path, email.trim(), code.trim());
+    switch (error?.kind) {
+      case undefined:
+        return;
+      case "wrongCode":
+        setProblem(t.registrationWrong);
+        return;
+      case "codeNeeded":
+        setProblem(t.registrationCodeNeeded);
+        return;
+      case "failed":
+        setProblem(t.libraryActionFailed(error.detail));
+        return;
+    }
+  }
+
+  const field =
+    "h-7 min-w-0 rounded-sharp border border-hair bg-transparent px-2 text-body text-text outline-offset-1 focus-visible:border-rule focus-visible:outline focus-visible:outline-1 focus-visible:outline-rule";
+  return (
+    <form onSubmit={submit} aria-label={t.enterCodeFor(path)} className="max-w-[860px] pt-1.5 pb-1">
+      <div className="flex flex-wrap items-end gap-x-3 gap-y-1.5">
+        <label className="flex flex-col gap-0.5 text-label text-text-secondary">
+          {t.registrationEmail}
+          <input
+            type="text"
+            inputMode="email"
+            autoComplete="email"
+            spellCheck={false}
+            required
+            value={email}
+            onChange={(event) => setEmail(event.target.value)}
+            className={`${field} w-[240px]`}
+          />
+        </label>
+        <label className="flex flex-col gap-0.5 text-label text-text-secondary">
+          {t.registrationCode}
+          <input
+            type="text"
+            autoComplete="off"
+            spellCheck={false}
+            value={code}
+            onChange={(event) => setCode(event.target.value)}
+            className={`${field} w-[300px] tabular-nums`}
+          />
+        </label>
+        <span className="flex gap-1.5">
+          <button
+            type="submit"
+            disabled={busy}
+            className="h-7 rounded-sharp border border-rule px-2.5 text-body text-text hover:bg-shade active:translate-y-px disabled:opacity-50 disabled:hover:bg-transparent"
+          >
+            {t.unlock}
+          </button>
+          <OutlineButton onClick={onCancel} disabled={busy}>
+            {t.cancel}
+          </OutlineButton>
+        </span>
+      </div>
+      {problem ? (
+        <p role="alert" className="pt-1.5 text-[12px] font-semibold">
+          {problem}
+        </p>
+      ) : null}
+      <p className="pt-1 text-[12px] text-text-secondary">{t.registrationHint}</p>
+    </form>
+  );
+}
+
 /** What an empty Library says: how to add a Library Folder. */
 export function EmptyLibrary({ action }: { action?: ReactNode }) {
   const { t } = useI18n();
@@ -211,6 +347,8 @@ export function describeFailure(t: Catalogue, reason: FailureReason): string {
       return t.reasonDamaged;
     case "needsRegistrationCode":
       return t.reasonNeedsRegistrationCode;
+    case "wrongRegistrationCode":
+      return t.reasonWrongRegistrationCode;
     case "unsupported":
       return t.reasonUnsupported(reason.detail);
   }

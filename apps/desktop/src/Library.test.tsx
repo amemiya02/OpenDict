@@ -23,12 +23,28 @@ const japanese: Dictionary = {
   enabled: true,
 };
 
+const bought: Dictionary = {
+  id: "bo03",
+  title: "Bought Dictionary",
+  path: "D:\\Dictionaries\\bought.mdx",
+  entryCount: 900,
+  size: 2 * 1024 * 1024,
+  enabled: true,
+};
+const EMAIL = "reader@example.com";
+const CODE = "0123 4567 89AB CDEF 0123 4567 89AB CDEF";
+
 const empty: Library = { folders: [], dictionaries: [], failures: [], problem: null };
 const stocked: Library = {
   folders: [{ path: "D:\\Dictionaries", dictionaryCount: 3, problem: null }],
   dictionaries: [english, japanese],
   failures: [{ path: "D:\\Dictionaries\\notes.mdx", reason: { kind: "notADictionary" } }],
   problem: null,
+};
+
+const locked: Library = {
+  ...stocked,
+  failures: [...stocked.failures, { path: bought.path, reason: { kind: "needsRegistrationCode" } }],
 };
 
 /** A fake shell: keeps a Library, records every command, and answers like the real one. */
@@ -63,6 +79,17 @@ function fakeShell(initial: Library, { picked = stocked }: { picked?: Library | 
         const to = from + (args.direction === "up" ? -1 : 1);
         [list[from], list[to]] = [list[to]!, list[from]!];
         library = { ...library, dictionaries: list };
+        return library;
+      }
+      case "register_dictionary": {
+        // Like the shell: the right e-mail and code unlock it; a typed error otherwise.
+        if (args.code === "") throw { kind: "codeNeeded" };
+        if (args.path !== bought.path || args.email !== EMAIL || args.code !== CODE) throw { kind: "wrongCode" };
+        library = {
+          ...library,
+          dictionaries: [...library.dictionaries, bought],
+          failures: library.failures.filter((f) => f.path !== bought.path),
+        };
         return library;
       }
     }
@@ -161,6 +188,96 @@ describe("Library view", () => {
 
     const failure = await screen.findByText("D:\\Dictionaries\\notes.mdx");
     expect(failure.closest("li")?.textContent).toContain("辞書ファイルではありません");
+  });
+
+  it("opens a Dictionary that needs a registration code once the reader enters it", async () => {
+    const calls = fakeShell(locked);
+    renderApp();
+    await openLibrary();
+
+    const failure = screen.getByText(bought.path).closest("li")!;
+    expect(failure.textContent).toContain("needs its registration code");
+    await userEvent.click(within(failure).getByRole("button", { name: `Enter the registration code for ${bought.path}` }));
+    await userEvent.type(screen.getByLabelText("E-mail"), EMAIL);
+    await userEvent.type(screen.getByLabelText("Registration code"), CODE);
+    await userEvent.click(screen.getByRole("button", { name: "Unlock" }));
+
+    expect(calls.at(-1)).toEqual({
+      command: "register_dictionary",
+      args: { path: bought.path, email: EMAIL, code: CODE },
+    });
+    expect(await screen.findByRole("rowheader", { name: /Bought Dictionary/ })).toBeTruthy();
+    expect(screen.queryByText(bought.path)).toBeNull();
+    expect(screen.getByRole("status").textContent).toContain("Bought Dictionary is unlocked");
+  });
+
+  it("says plainly when the code or e-mail is wrong, and keeps the form open", async () => {
+    fakeShell(locked);
+    renderApp();
+    await openLibrary();
+
+    await userEvent.click(screen.getByRole("button", { name: `Enter the registration code for ${bought.path}` }));
+    await userEvent.type(screen.getByLabelText("E-mail"), "someone@example.com");
+    await userEvent.type(screen.getByLabelText("Registration code"), CODE);
+    await userEvent.click(screen.getByRole("button", { name: "Unlock" }));
+
+    expect((await screen.findByRole("alert")).textContent).toBe(
+      "This registration code and e-mail do not unlock the dictionary. Check both and try again.",
+    );
+    expect(screen.getByLabelText("E-mail")).toHaveProperty("value", "someone@example.com");
+    expect(screen.queryByRole("rowheader", { name: /Bought Dictionary/ })).toBeNull();
+  });
+
+  it("checks the shape of a code before sending it", async () => {
+    const calls = fakeShell(locked);
+    renderApp();
+    await openLibrary();
+
+    await userEvent.click(screen.getByRole("button", { name: `Enter the registration code for ${bought.path}` }));
+    await userEvent.type(screen.getByLabelText("E-mail"), EMAIL);
+    await userEvent.type(screen.getByLabelText("Registration code"), "12345");
+    await userEvent.click(screen.getByRole("button", { name: "Unlock" }));
+
+    expect((await screen.findByRole("alert")).textContent).toBe(
+      "A registration code is 32 characters, each 0–9 or A–F.",
+    );
+    expect(calls.map((c) => c.command)).not.toContain("register_dictionary");
+  });
+
+  it("asks for the code when the e-mail alone is not enough", async () => {
+    fakeShell(locked);
+    renderApp();
+    await openLibrary();
+
+    await userEvent.click(screen.getByRole("button", { name: `Enter the registration code for ${bought.path}` }));
+    await userEvent.type(screen.getByLabelText("E-mail"), EMAIL);
+    await userEvent.click(screen.getByRole("button", { name: "Unlock" }));
+
+    expect((await screen.findByRole("alert")).textContent).toBe(
+      "This dictionary does not carry its code. Enter the registration code as well.",
+    );
+  });
+
+  it("cancelling the form sends nothing", async () => {
+    const calls = fakeShell(locked);
+    renderApp();
+    await openLibrary();
+
+    await userEvent.click(screen.getByRole("button", { name: `Enter the registration code for ${bought.path}` }));
+    await userEvent.click(screen.getByRole("button", { name: "Cancel" }));
+
+    expect(screen.queryByLabelText("E-mail")).toBeNull();
+    expect(calls.map((c) => c.command)).not.toContain("register_dictionary");
+  });
+
+  it("says when a kept code no longer unlocks a Dictionary, and offers to enter it again", async () => {
+    fakeShell({ ...locked, failures: [{ path: bought.path, reason: { kind: "wrongRegistrationCode" } }] });
+    renderApp();
+    await openLibrary();
+
+    const failure = screen.getByText(bought.path).closest("li")!;
+    expect(failure.textContent).toContain("The registration code kept for it no longer unlocks it.");
+    expect(within(failure).getByRole("button", { name: `Enter the registration code for ${bought.path}` })).toBeTruthy();
   });
 
   it("a cancelled folder dialog changes nothing", async () => {
