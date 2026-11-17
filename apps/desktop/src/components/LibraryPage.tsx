@@ -218,7 +218,7 @@ function IndexingProgress({ indexing, onCancel }: { indexing: Indexing; onCancel
         aria-label={label}
         value={indexing.done}
         max={Math.max(indexing.total, 1)}
-        className="h-1 w-40 flex-none accent-[var(--ink)]"
+        className="h-1 w-40 flex-none appearance-none border-0 bg-shade [&::-moz-progress-bar]:bg-text [&::-webkit-progress-bar]:bg-shade [&::-webkit-progress-value]:bg-text"
       />
       <OutlineButton onClick={onCancel}>{t.stopIndexing}</OutlineButton>
     </div>
