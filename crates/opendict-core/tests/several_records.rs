@@ -22,11 +22,16 @@ fn several_records_under_one_headword_stay_together_in_one_entry() {
     let library = Library::open(folder.path()).unwrap();
     let entries = library.look_up("bank").unwrap();
 
-    let titles: Vec<&str> = entries.iter().map(|e| e.dictionary_title.as_str()).collect();
+    let titles: Vec<&str> = entries
+        .iter()
+        .map(|e| e.dictionary_title.as_str())
+        .collect();
     assert_eq!(titles, ["Sample Homographs", "Sample Second"]);
     let html = &entries[0].html;
     let first = html.find("the side of a river").expect("first record");
-    let second = html.find("a place that keeps money").expect("second record");
+    let second = html
+        .find("a place that keeps money")
+        .expect("second record");
     assert!(first < second, "records keep the file's order: {html}");
     assert!(!html.contains("a long rigid piece"), "{html}");
 }

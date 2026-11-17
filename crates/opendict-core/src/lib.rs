@@ -7,6 +7,7 @@ mod error;
 mod format;
 mod library;
 mod preferences;
+mod pronunciation;
 mod scan;
 
 pub use error::{Error, Result};
@@ -15,3 +16,4 @@ pub use format::{
 };
 pub use library::{DictionaryInfo, Entry, Library, LibraryFolder, Move, OpenFailure};
 pub use preferences::Preferences;
+pub use pronunciation::pronunciation;

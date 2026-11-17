@@ -24,6 +24,8 @@ pub struct EntryView {
     pub src: String,
     /// Whether the reader allowed this Dictionary network access.
     pub allow_network: bool,
+    /// How the headword is said, where the Entry shows that plainly. Plain text.
+    pub pronunciation: Option<String>,
 }
 
 /// The Library as the Library view shows it.
@@ -139,6 +141,7 @@ impl AppState {
             .map(|entry| EntryView {
                 src: entry_protocol::entry_url(&entry.dictionary_id, headword),
                 allow_network: self.allows_network(&entry.dictionary_id),
+                pronunciation: opendict_core::pronunciation(&entry.html),
                 dictionary_id: entry.dictionary_id,
                 dictionary_title: entry.dictionary_title,
             })
@@ -338,7 +341,8 @@ mod tests {
                 "dictionaryId": id,
                 "dictionaryTitle": "Sample Dictionary",
                 "src": entry_protocol::entry_url(id, "serendipity"),
-                "allowNetwork": false
+                "allowNetwork": false,
+                "pronunciation": null
             }])
         );
     }
@@ -394,5 +398,38 @@ mod tests {
         assert!(state.library().problem.is_some());
         assert!(state.rescan().is_err());
         assert_eq!(state.look_up("serendipity").unwrap(), []);
+    }
+
+    #[test]
+    fn each_entry_says_how_the_headword_is_said_where_it_shows_that() {
+        let data = tempfile::tempdir().unwrap();
+        let folder = tempfile::tempdir().unwrap();
+        MdxBuilder::new()
+            .title("A Sample Learner's")
+            .entry(
+                "serif",
+                r#"<span class="phon">/ˈserɪf/</span> a small line (sample)"#,
+            )
+            .write_to(folder.path().join("a-learner.mdx"))
+            .unwrap();
+        MdxBuilder::new()
+            .title("B Sample Thesaurus")
+            .entry("serif", "<p>see also: sans serif (sample)</p>")
+            .write_to(folder.path().join("b-thesaurus.mdx"))
+            .unwrap();
+        let state = AppState::load(
+            &data.path().join("library.json"),
+            Some(folder.path().to_owned()),
+            data.path(),
+        );
+
+        let said: Vec<Option<String>> = state
+            .look_up("serif")
+            .unwrap()
+            .into_iter()
+            .map(|entry| entry.pronunciation)
+            .collect();
+
+        assert_eq!(said, [Some("/ˈserɪf/".to_owned()), None]);
     }
 }
