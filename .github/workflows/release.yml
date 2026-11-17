@@ -49,16 +49,20 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          find_release() {
-            gh api "repos/$GITHUB_REPOSITORY/releases" --paginate \
-              --jq ".[] | select(.tag_name == \"$GITHUB_REF_NAME\") | .id" | head -n 1
-          }
-          id=$(find_release)
+          # Reuse the draft an earlier run made for this tag.
+          id=$(gh api "repos/$GITHUB_REPOSITORY/releases" --paginate \
+            --jq ".[] | select(.tag_name == \"$GITHUB_REF_NAME\") | .id" | head -n 1)
           if [ -z "$id" ]; then
-            gh release create "$GITHUB_REF_NAME" --draft --verify-tag \
-              --title "OpenDict ${GITHUB_REF_NAME#v}" \
-              --notes "Installers for Windows, macOS and Linux are attached below. OpenDict is not code-signed yet, so Windows and macOS warn on first launch: see \"Install\" in the README. Installed copies update themselves."
-            id=$(find_release)
+            # Take the id from the response: the release list lags behind a release just created.
+            id=$(gh api -X POST "repos/$GITHUB_REPOSITORY/releases" \
+              -f tag_name="$GITHUB_REF_NAME" -F draft=true \
+              -f name="OpenDict ${GITHUB_REF_NAME#v}" \
+              -f body="Installers for Windows, macOS and Linux are attached below. OpenDict is not code-signed yet, so Windows and macOS warn on first launch: see \"Install\" in the README. Installed copies update themselves." \
+              --jq .id)
+          fi
+          if [ -z "$id" ]; then
+            echo "::error::No draft release for $GITHUB_REF_NAME; the builds would have nowhere to upload."
+            exit 1
           fi
           echo "id=$id" >> "$GITHUB_OUTPUT"
 
