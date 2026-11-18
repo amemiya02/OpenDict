@@ -460,7 +460,7 @@ test("the thumb index jumps between the Dictionaries on the page and follows the
 });
 
 test("the Library view lists the Dictionaries, and a disabled one stops answering", async () => {
-  const libraryButton = page.getByRole("button", { name: "Library", exact: true });
+  const libraryButton = page.getByRole("button", { name: "Manage", exact: true });
   await libraryButton.click();
   await page.getByRole("heading", { level: 1, name: "【Library】" }).waitFor({ timeout: 10_000 });
 
@@ -499,17 +499,21 @@ test("the headword column suggests as the reader types and the keyboard browses 
   const column = page.getByRole("listbox", { name: "Headwords" });
   const heading = page.getByRole("heading", { level: 1 });
 
-  // An empty field shows the headword index to browse, guide words above it.
+  // An empty field shows the headword index to browse.
   await search.click();
   await search.fill("");
-  await column.getByRole("option", { name: "apple, in 1 dictionary" }).waitFor({ timeout: 10_000 });
+  const apple = column.getByRole("option", { name: "apple", exact: true });
+  await apple.waitFor({ timeout: 10_000 });
+  assert.equal(await apple.innerText(), "apple");
+  assert.match(await column.getByRole("option", { name: "thumb, in 3 dictionaries" }).innerText(), /3 dictionaries$/);
   const index = await column.getByRole("option").evaluateAll((options) => options.map((o) => (o as HTMLElement).dataset.headword));
   assert.deepEqual(index, ["apple", "apples", "cat", "happy accident", "probe", "serendipities", "serendipitous", "serendipity", "thumb", "食べる"]);
-  assert.equal((await page.getByTestId("guide-words").innerText()).replace(/\s+/g, " "), "apple 食べる");
+  await page.getByRole("heading", { name: "Headword index" }).waitFor({ timeout: 10_000 });
 
   // Typing suggests by prefix, shows the first match at once, and the column carries on.
   await search.pressSequentially("app");
-  await column.getByRole("option", { name: "apple, in 1 dictionary", selected: true }).waitFor({ timeout: 10_000 });
+  await column.getByRole("option", { name: "apple", exact: true, selected: true }).waitFor({ timeout: 10_000 });
+  await page.getByRole("heading", { name: "Lookup suggestions" }).waitFor({ timeout: 10_000 });
   await page.waitForFunction(() => document.querySelector("h1")?.textContent === "【apple】", null, { timeout: 10_000 });
 
   await search.press("ArrowDown");
@@ -524,7 +528,7 @@ test("the headword column suggests as the reader types and the keyboard browses 
 
 test("in the dark theme Entries are recoloured unless shown as authored; text size and zoom adjust; all are kept", async () => {
   const openReading = async () => {
-    await page.getByRole("button", { name: "Library", exact: true }).click();
+    await page.getByRole("button", { name: "Manage", exact: true }).click();
     const reading = page.getByRole("region", { name: "Reading" });
     await reading.waitFor({ timeout: 10_000 });
     return reading;
@@ -646,7 +650,7 @@ test("a Group made in the Library is switched from the cover band, and a miss po
   const onPage = (headword: string) =>
     page.waitForFunction((word) => document.querySelector("h1")?.textContent === `【${word}】`, headword, { timeout: 10_000 });
 
-  await page.getByRole("button", { name: "Library", exact: true }).click();
+  await page.getByRole("button", { name: "Manage", exact: true }).click();
   await page.getByRole("button", { name: "New Group…" }).click();
   await page.getByLabel("Group name", { exact: true }).fill("日本語");
   await page.getByLabel("Group name", { exact: true }).press("Enter");
@@ -731,6 +735,9 @@ test("the window has the system's own title bar controls, Mica on Windows 11, an
     await narrow(600);
     assert.equal(await column.isVisible(), false, "at 620px and below the column leaves the page");
     assert.equal(await toggle.isVisible(), true, "a toggle in the cover band brings it back");
+    const commands = page.getByRole("button", { name: "Commands" });
+    assert.equal(await commands.getByText("Commands").isVisible(), true, "the Commands label stays visible");
+    assert.equal(await commands.locator("kbd").isVisible(), false, "the keyboard hint yields space to the label");
     assert.ok(((await box("main")) ?? { width: 0 }).width > 500, "the page takes the width");
     for (const name of ["Back", "Forward"]) {
       const button = page.getByRole("button", { name, exact: true });
@@ -857,7 +864,7 @@ test("the data directory moves into another folder, and the app keeps the reader
   await lookUp("apple");
   assert.ok(existsSync(join(home, "history.json")), "History starts in the home folder");
 
-  await page.getByRole("button", { name: "Library", exact: true }).click();
+  await page.getByRole("button", { name: "Manage", exact: true }).click();
   const settings = page.getByRole("region", { name: "Your data" });
   await settings.getByText(home, { exact: true }).waitFor({ timeout: 10_000 });
   await settings.getByRole("button", { name: "Move…" }).click();
@@ -891,7 +898,7 @@ test("the command palette switches the theme and the interface language; shortcu
 
   await run("Theme: dark");
   await page.waitForFunction(() => document.documentElement.dataset.theme === "dark", null, { timeout: 5_000 });
-  await page.keyboard.press("Control+k");
+  await page.getByRole("button", { name: "Commands" }).click();
   const dark = palette.getByRole("option", { name: "Theme: dark" });
   assert.equal(await dark.getAttribute("aria-checked"), "true", "the palette ticks the theme");
   assert.equal(await palette.getByRole("option", { name: "Interface language: Follow system" }).getAttribute("aria-checked"), "true");
@@ -932,7 +939,7 @@ test("the command palette switches the theme and the interface language; shortcu
 });
 
 test("a Dictionary that needs a registration code opens once the reader enters it", async () => {
-  await page.getByRole("button", { name: "Library", exact: true }).click();
+  await page.getByRole("button", { name: "Manage", exact: true }).click();
   const failure = page.getByRole("listitem").filter({ hasText: "sample-bought.mdx" });
   assert.match(await failure.innerText(), /needs its registration code/);
 

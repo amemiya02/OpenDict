@@ -760,7 +760,7 @@ export function App() {
           </button>
         </div>
         <NavButtons canGoBack={canStep(trail, -1)} canGoForward={canStep(trail, 1)} onGo={(by) => void go(by)} />
-        <div className="flex min-w-0 flex-1 pr-lg">
+        <div className="flex min-w-0 flex-1 items-center gap-sm pr-lg">
           <SearchField
             value={query}
             activeOption={view === "lookup" && columnSelected >= 0 ? optionId(columnSelected) : undefined}
@@ -771,8 +771,8 @@ export function App() {
             onEscape={putColumnAway}
             onBlur={() => setTyping(false)}
             inputRef={searchRef}
-            trailing={<PaletteHint onOpen={() => setPaletteOpen(true)} />}
           />
+          <CommandsButton onOpen={() => setPaletteOpen(true)} />
         </div>
       </header>
 
@@ -780,6 +780,7 @@ export function App() {
         items={columnItems}
         selected={columnSelected}
         note={list === "suggestions" ? note : null}
+        hasQuery={query.trim() !== ""}
         view={view}
         list={list}
         onPick={pick}
@@ -1088,25 +1089,23 @@ function EntryPage({
 
 const NONE_FOLDED: ReadonlySet<string> = new Set();
 
-/** The command palette's hint at the right end of the search field: a click opens it too. */
-function PaletteHint({ onOpen }: { onOpen: () => void }) {
+function CommandsButton({ onOpen }: { onOpen: () => void }) {
   const { t } = useI18n();
   return (
     <button
       type="button"
+      aria-haspopup="dialog"
       aria-keyshortcuts={MOD === "⌘" ? "Meta+K" : "Control+K"}
+      data-tauri-drag-region="false"
       // Keep the caret in the search field until the palette takes it.
       onMouseDown={(event) => event.preventDefault()}
       onClick={onOpen}
-      className="flex h-6 flex-none items-center gap-1 rounded-sharp px-1 text-[12px] whitespace-nowrap text-field-text-secondary hover:bg-field-hover hover:text-field-text"
+      className="flex h-8 flex-none cursor-pointer items-center gap-sm rounded-sharp border border-on-cover-muted/60 bg-cover-edge/45 px-2.5 text-body font-medium whitespace-nowrap text-on-cover hover:bg-cover-edge active:translate-y-px"
     >
-      <kbd aria-hidden="true" className="rounded-sharp border border-field-text-secondary/40 px-[5px] font-sans text-[11px] leading-4">
-        {MOD}
+      <span>{t.commands}</span>
+      <kbd aria-hidden="true" className="font-sans text-[11px] font-normal text-on-cover-muted max-[620px]:hidden">
+        {hintOf({ kind: "palette" })}
       </kbd>
-      <kbd aria-hidden="true" className="rounded-sharp border border-field-text-secondary/40 px-[5px] font-sans text-[11px] leading-4">
-        K
-      </kbd>
-      <span className="max-[620px]:sr-only">{t.commands}</span>
     </button>
   );
 }

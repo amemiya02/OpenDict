@@ -1,4 +1,4 @@
-import type { FormEvent, KeyboardEvent, ReactNode, Ref, SyntheticEvent } from "react";
+import type { FormEvent, KeyboardEvent, Ref, SyntheticEvent } from "react";
 import { useI18n } from "../i18n";
 import { LIST_ID } from "./HeadwordColumn";
 
@@ -24,7 +24,6 @@ export function SearchField({
   onBlur,
   compact = false,
   inputRef,
-  trailing,
 }: {
   value: string;
   /** The id of the current suggestion, if any. */
@@ -44,8 +43,6 @@ export function SearchField({
    */
   compact?: boolean;
   inputRef?: Ref<HTMLInputElement>;
-  /** At the right end of the field: the command palette's hint. */
-  trailing?: ReactNode;
 }) {
   const { t } = useI18n();
 
@@ -108,7 +105,6 @@ export function SearchField({
         autoFocus
         className={`h-full min-w-0 flex-1 bg-transparent px-1 font-serif ${compact ? "text-[15px]" : "text-search"} outline-0 placeholder:font-sans placeholder:text-[14px] placeholder:text-field-text-secondary`}
       />
-      {trailing}
     </form>
   );
 }

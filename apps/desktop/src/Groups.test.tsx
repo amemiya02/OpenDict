@@ -217,14 +217,14 @@ describe("Groups", () => {
     fakeShell({ groups: [], current: null });
     renderApp();
 
-    await screen.findByRole("button", { name: "Library" });
+    await screen.findByRole("button", { name: "Manage" });
     await waitFor(() => expect(screen.queryByRole("combobox", { name: "Current Group" })).toBeNull());
   });
 });
 
 describe("Groups in the Library view", () => {
   async function openLibrary() {
-    await userEvent.click(await screen.findByRole("button", { name: "Library" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Manage" }));
     await screen.findByRole("heading", { level: 1, name: "【Library】" });
   }
   const groupList = (name: string) => screen.getByRole("list", { name });

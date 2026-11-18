@@ -116,7 +116,7 @@ async function lookUp(word: string) {
 }
 
 async function openReadingSettings() {
-  await userEvent.click(screen.getByRole("button", { name: "Library" }));
+  await userEvent.click(screen.getByRole("button", { name: "Manage" }));
   return screen.findByRole("region", { name: "Reading" });
 }
 

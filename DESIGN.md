@@ -134,7 +134,7 @@ components:
 
 **Creative North Star: "The Lexicographer's Page"**
 
-The window is one well-set page of a dictionary. Every Dictionary in the Current Group answers on a single ruled page, each Entry in the typographic voice its own authors gave it, and a thumb index cut into the fore-edge is how the reader moves between them. The interface supplies only what a printed dictionary supplies: a cover, rules, guide words, an index column and a thumb index. Everything else is the Entries.
+The window is one well-set page of a dictionary. Every Dictionary in the Current Group answers on a single ruled page, each Entry in the typographic voice its own authors gave it, and a thumb index cut into the fore-edge is how the reader moves between them. The interface uses a cover, rules, an index column and a thumb index.
 
 Density is a feature. A reader comparing four dictionaries wants to see four dictionaries, so the headword column runs full, the page rules run to the fore-edge, and empty space only appears where there is genuinely nothing to show. Colour is almost absent: paper, ink, and one vermilion that only ever means "you are here".
 
@@ -199,7 +199,7 @@ Running text inside the page is held to an 860px measure; the rules around it ar
 A fixed desktop frame: a 48px cover band across the top, a 264px headword column on the left, the page in the middle, a 168px thumb index on the right, and a 26px status line under the page. The page scrolls; the frame does not.
 
 - **Page:** 18px top, 34px left and 30px right padding. The page head (headword, pronunciation, answer count, actions) sits over a double rule; Dictionary sections follow, separated by single rules. Both rules run the full width of the page to the thumb index.
-- **Headword column:** guide words (first and last headword shown) over a double rule, an optional note line (lemmatization, near matches), then the list, then four tabs: Suggestions, History, Word Book, Library.
+- **Headword column** starts with Headword index when the search field is empty and Lookup suggestions when it contains a query. History and Word Book use their own titles. A double rule separates the title from the list and its optional note about lemmatization or near matches. The four tabs sit below the list. Manage opens the Library and application settings.
 - **Density:** 26px index rows, 36px Dictionary headers, 28px buttons. Groups sit tight; separation comes from rules, not from padding.
 - **Responsive:** at 1100px and below the thumb index drops its captions and keeps only the notches. At 860px and below the column narrows to 200px. At 620px and below the column becomes an overlay over the page, opened by a toggle in the cover band or by typing, and put away by choosing a word, the toggle or Esc; the wordmark gives way, while window controls and back/forward stay.
 - **Native chrome:** the window controls are always the system's own. On macOS the cover band is the title bar: the traffic lights sit at its left (the wordmark moves right to clear them) and the band drags the window. On Windows and Linux the system title bar sits above the cover band. Where the system has a window material (Mica on Windows 11, sidebar vibrancy on macOS) it shows faintly through the headword column's paper (65%), as through a native sidebar; the page, the cover band and the narrow-window overlay stay solid. Without one (Windows 10, Linux) the window is solid throughout.
@@ -230,11 +230,11 @@ Square-cut, like print. Controls take a 2px corner at most (`sharp`). The one cu
 - **Icon buttons:** 26px square, Faded Ink at rest, ink on a Paper Shade ground on hover; toggled on is solid ink.
 
 ### Inputs / Fields
-- **Search field:** a slip of India Paper set into the cover band by day (Night Field after dark), 32px high, serif query text, a search icon on the left and the command-palette hint (Ctrl K) on the right.
+- **Search field** uses India Paper by day and Night Field after dark. It is 32px high with serif query text and a search icon on the left. An outlined Commands button sits beside the field, with the shortcut shown when space permits.
 - **Focus:** a 1px ring in the cover's paper colour. The vermilion caret already says where you are typing.
 
 ### Headword column
-- **Rows:** 26px, serif, count of answering Dictionaries at the right in tabular figures.
+- **Rows** are 26px high with serif headwords. When two or more Dictionaries file a headword, a count appears at the right in tabular figures.
 - **Selected:** Paper Shade ground, bold, and a 6px vermilion square in the margin.
 - **Tabs:** sans 12px; the active tab carries a 2px ink rule along its top edge and keeps the same weight as the others.
 

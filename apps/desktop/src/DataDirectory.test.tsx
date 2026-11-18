@@ -67,7 +67,7 @@ async function openDataSettings() {
       <App />
     </I18nProvider>,
   );
-  await userEvent.click(screen.getByRole("button", { name: "Library" }));
+  await userEvent.click(screen.getByRole("button", { name: "Manage" }));
   return screen.findByRole("region", { name: "Your data" });
 }
 

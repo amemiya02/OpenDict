@@ -87,7 +87,7 @@ function renderApp() {
 
 async function openSettings() {
   renderApp();
-  await userEvent.click(screen.getByRole("button", { name: "Library" }));
+  await userEvent.click(screen.getByRole("button", { name: "Manage" }));
   return screen.findByRole("region", { name: "Mini Window" });
 }
 

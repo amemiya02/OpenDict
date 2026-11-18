@@ -109,14 +109,16 @@ describe("headword column", () => {
     await waitFor(() => expect(pageHeadword()).toBe("【serendipity】"));
   });
 
-  it("shows how many Dictionaries have each suggestion", async () => {
+  it("shows a count only for suggestions found in two or more Dictionaries", async () => {
     fakeShell(words);
     const search = renderApp();
 
     await userEvent.type(search, "ser");
 
     const option = await within(column()).findByRole("option", { name: "serendipity, in 3 dictionaries" });
-    expect(option.textContent).toContain("3");
+    expect(option.textContent).toContain("3 dictionaries");
+    expect(within(column()).getByRole("option", { name: "shadow, in 2 dictionaries" }).textContent).toContain("2 dictionaries");
+    expect(within(column()).getByRole("option", { name: "serene" }).textContent).toBe("serene");
   });
 
   it("moves through the suggestions with the arrow keys, showing each at once, and Enter commits", async () => {
@@ -138,16 +140,26 @@ describe("headword column", () => {
     expect(search.value).toBe("serene");
   });
 
-  it("sets guide words, the first and last headwords shown, above the column", async () => {
+  it("titles the column according to whether a query is present", async () => {
     fakeShell(words);
-    const search = renderApp();
+    render(
+      <I18nProvider locale="zh-CN">
+        <App />
+      </I18nProvider>,
+    );
+    const search = screen.getByRole("combobox");
+    const sidebar = within(screen.getByRole("complementary", { name: "词头栏" }));
 
+    expect(sidebar.getByRole("button", { name: "词库与设置" })).toBeTruthy();
+    expect(sidebar.getByRole("heading", { name: "词头索引" })).toBeTruthy();
     await userEvent.type(search, "se");
-
-    const guide = await screen.findByTestId("guide-words");
-    await waitFor(() => expect(guide.textContent).toBe("seashadow"));
-    expect(within(guide).getByText("sea")).toBeTruthy();
-    expect(within(guide).getByText("shadow")).toBeTruthy();
+    expect(sidebar.getByRole("heading", { name: "查词联想" })).toBeTruthy();
+    await userEvent.click(sidebar.getByRole("button", { name: "历史" }));
+    expect(sidebar.getByRole("heading", { name: "历史" })).toBeTruthy();
+    await userEvent.click(sidebar.getByRole("button", { name: "联想" }));
+    expect(sidebar.getByRole("heading", { name: "查词联想" })).toBeTruthy();
+    await userEvent.clear(search);
+    expect(sidebar.getByRole("heading", { name: "词头索引" })).toBeTruthy();
   });
 
   it("shows the headword index to browse when the search field is empty", async () => {
@@ -184,7 +196,7 @@ describe("headword column", () => {
     await userEvent.type(search, "ser");
     await waitFor(() => expect(shownHeadwords()).toEqual(["serendipity", "serene", "shadow"]));
 
-    await userEvent.click(within(screen.getByRole("complementary", { name: "Headword column" })).getByRole("button", { name: "Library" }));
+    await userEvent.click(within(screen.getByRole("complementary", { name: "Headword column" })).getByRole("button", { name: "Manage" }));
     await userEvent.click(await screen.findByRole("button", { name: "Rescan" }));
 
     await waitFor(() => expect(calls.at(-1)).toEqual({ command: "suggest", args: { query: "ser", limit: PAGE_SIZE } }));

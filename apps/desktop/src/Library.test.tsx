@@ -122,7 +122,7 @@ function renderApp(locale: Locale = "en") {
 }
 
 async function openLibrary() {
-  await userEvent.click(await screen.findByRole("button", { name: "Library" }));
+  await userEvent.click(await screen.findByRole("button", { name: "Manage" }));
   return screen.findByRole("heading", { level: 1, name: "【Library】" });
 }
 
@@ -199,7 +199,7 @@ describe("Library view", () => {
   it("lists Dictionaries that failed to open with a plain reason", async () => {
     fakeShell(stocked);
     renderApp("ja");
-    await userEvent.click(await screen.findByRole("button", { name: "ライブラリ" }));
+    await userEvent.click(await screen.findByRole("button", { name: "辞書と設定" }));
 
     const failure = await screen.findByText("D:\\Dictionaries\\notes.mdx");
     expect(failure.closest("li")?.textContent).toContain("辞書ファイルではありません");

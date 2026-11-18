@@ -9,7 +9,7 @@ export interface ColumnItem {
 /** What the column lists: suggestions for what the reader typed, History, or the chosen Word Book. */
 export type ColumnList = "suggestions" | "history" | "wordBook";
 
-/** Height of one index row (DESIGN.md: index-row). Guide words are worked out from it. */
+/** Height of one index row (DESIGN.md: index-row). */
 const ROW = 26;
 /** Load more headwords when the reader scrolls within this many rows of the end. */
 const NEAR_END = 20;
@@ -22,9 +22,8 @@ export const COLUMN_ID = "headword-column";
 export const optionId = (index: number) => `headword-${index}`;
 
 /**
- * The headword column: guide words (the first and last headwords in view) over a double
- * rule, an optional note line, the headwords themselves with how many Dictionaries have
- * each, and the column's tabs. The search field drives it from the keyboard; rows can
+ * The headword column: a title, an optional note line, and the list of headwords
+ * with a count for those found in multiple Dictionaries. The search field drives it from the keyboard; rows can
  * also be clicked. The History tab lists committed Lookups instead, newest first, with a
  * way to clear them; the Word Book tab lists the chosen Word Book, newest first.
  */
@@ -32,6 +31,7 @@ export function HeadwordColumn({
   items,
   selected,
   note,
+  hasQuery,
   view,
   list = "suggestions",
   onPick,
@@ -47,6 +47,7 @@ export function HeadwordColumn({
   /** The current row, or -1. Nothing in the column is current while the Library is open. */
   selected: number;
   note: ReactNode;
+  hasQuery: boolean;
   view: "lookup" | "library" | "wordBook";
   list?: ColumnList;
   onPick: (index: number) => void;
@@ -61,38 +62,34 @@ export function HeadwordColumn({
 }) {
   const { t } = useI18n();
   const listRef = useRef<HTMLUListElement>(null);
-  const [inView, setInView] = useState<[number, number] | null>(null);
   const current = view === "lookup" ? selected : -1;
+  const title = {
+    suggestions: hasQuery ? t.lookupSuggestions : t.headwordIndex,
+    history: t.history,
+    wordBook: t.wordBook,
+  }[list];
 
   const needMore = useRef(onNeedMore);
   useEffect(() => {
     needMore.current = onNeedMore;
   }, [onNeedMore]);
 
-  // Which rows are in view. Without a layout (nothing measured yet) the guide words are
-  // the first and last headwords loaded.
-  const measure = useCallback(() => {
+  const checkNearEnd = useCallback(() => {
     const list = listRef.current;
-    if (!list || list.clientHeight === 0) {
-      setInView(null);
-      return;
-    }
-    const first = Math.floor(list.scrollTop / ROW);
-    const last = Math.floor((list.scrollTop + list.clientHeight - 1) / ROW);
-    setInView((now) => (now?.[0] === first && now[1] === last ? now : [first, last]));
+    if (!list || list.clientHeight === 0) return;
     if (list.scrollTop + list.clientHeight >= list.scrollHeight - NEAR_END * ROW) needMore.current();
   }, []);
 
-  useLayoutEffect(measure, [measure, items]);
+  useLayoutEffect(checkNearEnd, [checkNearEnd, items]);
 
   // A taller or shorter window shows more or fewer rows.
   useEffect(() => {
     const list = listRef.current;
     if (!list || typeof ResizeObserver === "undefined") return;
-    const observer = new ResizeObserver(measure);
+    const observer = new ResizeObserver(checkNearEnd);
     observer.observe(list);
     return () => observer.disconnect();
-  }, [measure]);
+  }, [checkNearEnd]);
 
   useEffect(() => {
     listRef.current?.querySelector('[aria-selected="true"]')?.scrollIntoView?.({ block: "nearest" });
@@ -104,12 +101,6 @@ export function HeadwordColumn({
     listRef.current?.scrollTo?.({ top: 0 });
   }, [first]);
 
-  const lastIndex = items.length - 1;
-  const guide: [ColumnItem, ColumnItem] | null =
-    items.length > 0
-      ? [items[Math.min(inView?.[0] ?? 0, lastIndex)]!, items[Math.min(inView?.[1] ?? lastIndex, lastIndex)]!]
-      : null;
-
   return (
     <aside
       id={COLUMN_ID}
@@ -117,50 +108,45 @@ export function HeadwordColumn({
       className="headword-column row-span-2 flex min-h-0 flex-col border-r border-rule select-none max-[620px]:hidden max-[620px]:data-open:fixed max-[620px]:data-open:top-12 max-[620px]:data-open:bottom-0 max-[620px]:data-open:left-0 max-[620px]:data-open:z-10 max-[620px]:data-open:flex max-[620px]:data-open:w-[min(280px,84vw)]"
       aria-label={t.headwordColumn}
     >
-      <div
-        data-testid="guide-words"
-        aria-hidden="true"
-        className="mx-lg flex justify-between gap-md border-b-[3px] border-double border-rule pt-md pb-1.5 font-serif text-[13px] font-bold"
-      >
-        {guide ? (
-          <>
-            <span className="truncate" lang={KANA.test(guide[0].headword) ? "ja" : undefined}>{guide[0].headword}</span>
-            <span className="truncate" lang={KANA.test(guide[1].headword) ? "ja" : undefined}>{guide[1].headword}</span>
-          </>
-        ) : (
-          <span>{t.suggestions}</span>
-        )}
-      </div>
+      <h2 className="mx-lg border-b-[3px] border-double border-rule pt-md pb-1.5 font-sans text-[13px] font-bold">
+        {title}
+      </h2>
       {note ? <p className="px-lg pt-sm pb-1.5 text-[12px] text-text-secondary">{note}</p> : null}
       <ul
         ref={listRef}
         id={LIST_ID}
         role="listbox"
         aria-label={t.headwords}
-        onScroll={measure}
+        onScroll={checkNearEnd}
         // Keep the caret in the search field when a row is clicked.
         onMouseDown={(event) => event.preventDefault()}
         className={`min-h-0 flex-1 overflow-y-auto outline-0 ${items.length === 0 ? "hidden" : ""}`}
       >
-        {items.map((item, index) => (
-          <li
-            key={item.headword}
-            id={optionId(index)}
-            role="option"
-            aria-selected={index === current}
-            aria-label={item.count === undefined ? item.headword : `${item.headword}, ${t.answered(item.count)}`}
-            data-headword={item.headword}
-            lang={KANA.test(item.headword) ? "ja" : undefined}
-            onClick={() => onPick(index)}
-            className="flex h-[26px] cursor-default items-center gap-sm pr-lg pl-[30px] font-serif text-index hover:bg-[color-mix(in_srgb,var(--paper-shade)_55%,transparent)] aria-selected:bg-shade aria-selected:pl-lg aria-selected:font-bold"
-          >
-            {index === current ? <i className="size-1.5 flex-none bg-here" aria-hidden="true" /> : null}
-            <span className="truncate">{item.headword}</span>
-            {item.count === undefined ? null : (
-              <small className="ml-auto font-sans text-[11px] font-normal text-text-secondary tabular-nums">{item.count}</small>
-            )}
-          </li>
-        ))}
+        {items.map((item, index) => {
+          const count = item.count ?? 0;
+          const showCount = count >= 2;
+          return (
+            <li
+              key={item.headword}
+              id={optionId(index)}
+              role="option"
+              aria-selected={index === current}
+              aria-label={showCount ? `${item.headword}, ${t.answered(count)}` : item.headword}
+              data-headword={item.headword}
+              lang={KANA.test(item.headword) ? "ja" : undefined}
+              onClick={() => onPick(index)}
+              className="flex h-[26px] cursor-default items-center gap-sm pr-lg pl-[30px] font-serif text-index hover:bg-[color-mix(in_srgb,var(--paper-shade)_55%,transparent)] aria-selected:bg-shade aria-selected:pl-lg aria-selected:font-bold"
+            >
+              {index === current ? <i className="size-1.5 flex-none bg-here" aria-hidden="true" /> : null}
+              <span className="truncate">{item.headword}</span>
+              {showCount ? (
+                <small className="ml-auto shrink-0 whitespace-nowrap font-sans text-[11px] font-normal text-text-secondary tabular-nums">
+                  {t.suggestionCount(count)}
+                </small>
+              ) : null}
+            </li>
+          );
+        })}
       </ul>
       {items.length === 0 ? (
         <p className="flex-1 px-lg py-3.5 text-text-secondary">
@@ -179,7 +165,7 @@ export function HeadwordColumn({
           {t.wordBook}
         </ColumnTab>
         <ColumnTab pressed={view === "library"} onClick={onToggleLibrary}>
-          {t.library}
+          {t.libraryAndSettings}
         </ColumnTab>
       </div>
     </aside>
@@ -226,7 +212,7 @@ function ColumnTab({ pressed, onClick, children }: { pressed: boolean; onClick: 
       type="button"
       aria-pressed={pressed}
       onClick={onClick}
-      className="h-9 min-w-0 flex-auto truncate px-sm text-[12px] text-text-secondary hover:bg-shade hover:text-text aria-pressed:text-text aria-pressed:shadow-[inset_0_2px_0_var(--rule)]"
+      className="h-9 min-w-min flex-auto px-1 text-[12px] leading-tight text-text-secondary hover:bg-shade hover:text-text aria-pressed:text-text aria-pressed:shadow-[inset_0_2px_0_var(--rule)] max-[860px]:px-0.5"
     >
       {children}
     </button>

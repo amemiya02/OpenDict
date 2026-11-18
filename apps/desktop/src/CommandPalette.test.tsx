@@ -148,6 +148,20 @@ afterEach(() => {
 });
 
 describe("the command palette", () => {
+  it("opens from a keyboard-accessible button beside the search field", async () => {
+    fakeShell();
+    renderApp();
+
+    const commands = screen.getByRole("button", { name: "Commands" });
+    expect(commands.getAttribute("aria-haspopup")).toBe("dialog");
+    expect(screen.getByRole("search").contains(commands)).toBe(false);
+    field().focus();
+    await userEvent.tab();
+    expect(document.activeElement).toBe(commands);
+    await userEvent.keyboard("{Enter}");
+    expect(await screen.findByRole("dialog", { name: "Command palette" })).toBeTruthy();
+  });
+
   it("opens with Ctrl+K and lists every action with its shortcut", async () => {
     fakeShell();
     renderApp();
@@ -163,7 +177,7 @@ describe("the command palette", () => {
     expect(shortcut("Go to Sample Atlas")).toBe("Alt 2");
     expect(shortcut("Zoom in")).toBe("Ctrl =");
     for (const label of [
-      "Open Library management",
+      "Open Library and Settings",
       "Show History",
       "Show Word Book",
       "Collapse all dictionaries",
@@ -314,7 +328,7 @@ describe("the interface language", () => {
   it("can also be chosen under Reading in the Library view", async () => {
     const shell = fakeShell();
     renderApp("en");
-    await userEvent.click(await screen.findByRole("button", { name: "Library" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Manage" }));
 
     const languages = await screen.findByRole("radiogroup", { name: "Interface language" });
     expect(within(languages).getByRole<HTMLInputElement>("radio", { name: "Follow system" }).checked).toBe(true);
@@ -343,7 +357,7 @@ describe("the interface language", () => {
   it("follows the system again once the reader picks that under Reading", async () => {
     const shell = fakeShell({ language: "ja" });
     renderApp("en");
-    await userEvent.click(await screen.findByRole("button", { name: "ライブラリ" }));
+    await userEvent.click(await screen.findByRole("button", { name: "辞書と設定" }));
 
     const languages = await screen.findByRole("radiogroup", { name: "表示言語" });
     expect(within(languages).getByRole<HTMLInputElement>("radio", { name: "日本語" }).checked).toBe(true);
